@@ -1,7 +1,7 @@
 # Phase Shifter — Hand-off
 
-> **Last completed:** **Phase 1.2 — Camera follow + movement direction** (commit `c4c9cd3`).
-> **Session goal:** Begin **Phase 1.3 — Safe spawn via downward raycast**.
+> **Last completed:** **Phase 1.3 — Safe spawn via downward raycast** (commit `31d0f48`).
+> **Session goal:** Begin **Phase 1.4 — Single index scheme** (add `World.index()` / `World.localIndex()` helpers and replace raw formulas).
 > See [`PROJECT_REMEDIATION_PLAN.md`](./PROJECT_REMEDIATION_PLAN.md) for the full plan.
 
 ---
@@ -10,10 +10,10 @@
 
 - **Repo:** `/home/kyle/Development/phaseshift` (local) ⇄ `klampatech/phaseshift` (remote, public).
 - **Branch:** `main`. **Tip:** `c4c9cd3` — "Phase 1.2: camera follow + quaternion-derived movement basis".
-- **Phases 0 + 1.1 + 1.2 done.** Next: **Phase 1.3 — Safe spawn via downward raycast.**
+- **Phases 0 + 1.1 + 1.2 + 1.3 done.** Next: **Phase 1.4 — Single index scheme.**
 - **Active code path:** `index.html` → `main.js` (root) → `src/core/{world,phase,physics}.js` + `src/{render,ui,input,audio,save}/*`.
 - **Quarantined reference implementation:** orphan `GameEngine` modules — see "Architectural state" below. **Do not import them.**
-- **Headless test infra** at `tests/headless/` (`smoke.cjs`, `test-safeon.cjs`, `test-camera-basis.cjs`, `test-phase12.cjs`, `safeon-unit.html`, `static-server.cjs`, `screenshots/`).
+- **Headless test infra** at `tests/headless/` (`smoke.cjs`, `test-safeon.cjs`, `test-camera-basis.cjs`, `test-phase12.cjs`, `test-phase13.cjs`, `safeon-unit.html`, `static-server.cjs`, `screenshots/`).
 
 ---
 
@@ -68,34 +68,53 @@
 
 **Not verified in sandbox:** actual browser E2E (walk with WASD, mouse-look, camera trails, walking direction matches look). User should manually verify and report back.
 
+### Phase 1.3 — Safe spawn via downward raycast (`31d0f48`)
+- ✅ Added `World.findTopSolidBlock(worldX, worldZ, phase = PHASE_ALPHA)` in `src/core/world.js`. Iterates from `y = CHUNK_HEIGHT-1` downward and returns the y-coordinate of the first solid block (using `BLOCK_PROPERTIES[id].phaseSolid[phase]` with a `.solid` fallback), or `null` if the column has no solid block.
+- ✅ Extended `World.updateChunks(playerX, playerZ, radius = RENDER_DISTANCE)` with an optional radius. Default behavior is unchanged; Phase 1.3 spawn-time passes `radius=2` to force-load a 5×5 chunk area on fallback.
+- ✅ `main.js` `init()` now:
+  1. calls `world.updateChunks(0, 0)` (3×3 chunk area);
+  2. raycasts down with `findTopSolidBlock(0, 0)`;
+  3. if no solid found, expands to 5×5 (`world.updateChunks(0, 0, 2)`) and retries;
+  4. if still no solid, logs an error and falls back to `y=30` so the game still loads;
+  5. positions the player at `topSolidY + 1 + PLAYER_HEIGHT` (feet on top of the highest solid block + 1.7 body height) and the camera at the same point with `+EYE_HEIGHT`;
+  6. logs `console.info('[Phase Shifter] Spawned at', _spawnPos.toArray())`.
+- ✅ Removed the hard-coded `camera.position.set(0, 20, 0)` (now redundant — Phase 1.2 follow code glues the camera to the spawn position after the first frame).
+- ✅ `tests/headless/test-phase13.cjs` — 3 static-analysis checks + 4 behavioral checks (7/7 pass). Behavioral checks load a 5×5 chunk area via `World.updateChunks(0, 0, 2)` and assert `findTopSolidBlock` returns a non-null y for at least one column in the loaded area, returns `null` for an unloaded column, and is deterministic.
+- ✅ `tests/headless/smoke.cjs` extended with the same 3 Phase 1.3 static-analysis checks (hard-coded `setPosition(0, 20, 0)` gone, raycast helper present, `[Phase Shifter] Spawned at` log wired). Exit code now also requires Phase 1.3 to pass.
+
+**Not verified in sandbox:** end-to-end browser verification (player visibly spawns on a solid surface, not inside it). User should manually verify.
+
 ---
 
-## What's next — Phase 1.3: Safe spawn
+## What's next — Phase 1.4: Single index scheme
 
-**Problem.** `main.js:97-102` hard-codes `physicsManager.setPosition(0, 20, 0)` and `camera.position.set(0, 20, 0)`. y=20 is a guess — depending on terrain, the player can spawn inside a block (or floating far above ground). The camera-follow code added in Phase 1.2 means the camera will faithfully copy the bad spawn position.
+**Problem.** The block-indexing formula `x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_HEIGHT` is currently inlined in several places (`World.loadChunk`, `World.setBlock`, `renderer.js#ChunkVisual`, `main.js#placeBlockAt`, etc.). If the formula ever changes (e.g., switch to Z-major or Y-major), every site has to be updated in lock-step — exactly the kind of fragility that bit Phase 0.
 
-**Acceptance (from plan §1.3):**
-- Player spawns in open air on or near a solid surface, never inside a block.
-- Compute spawn by raycasting down from y=63 within the 3×3 chunk area around (0,0) until a solid block is found. Place the player one block above the highest solid block + 1.7 (player height).
-- If that fails (no solid blocks), fall back to chunk-generation over a 5×5 area and try again.
-- Add a `console.info('[Phase Shifter] Spawned at', pos.toArray())` log so it's easy to verify.
+**Acceptance (from plan §1.4):**
+- Add `World.index(x, y, z)` and `World.localIndex(cx, cz, x, z)` helpers in `src/core/world.js`.
+- Replace the raw formulas in `main.js` (`placeBlockAt`, `raycastBlock`) and `renderer.js` (`ChunkVisual` position extraction, `isSurrounded`) with calls to those helpers.
+- Add a unit test that checks `index(x, y, z)` matches the round-trip through `unpackIndex(...)` for a few corner cases.
+- After Phase 1.4: `setBlock` followed by `getBlock` returns the same value for every `(x, y, z)`. Existing block-count test still passes.
 
 **Fix shape:**
-1. Add a helper in `src/core/world.js` (or `physics.js`) to do a downward raycast from `y=63` looking for the first solid block. Use the existing `World.getBlock(x, y, z)` (raw indexing is fine for this — Phase 1.4 will replace with `World.index(...)`).
-2. In `main.js` `init()`, replace the hard-coded `setPosition(0, 20, 0)` with the raycast result. Force-load enough chunks first (`world.updateChunks(...)` over a 3×3 area, then 5×5 on fallback) so the raycast has data.
-3. If no solid block is found in a 5×5 area, log an error and spawn at a known-safe fallback (e.g., `y=30`) so the game still loads.
-4. `console.info('[Phase Shifter] Spawned at', pos.toArray())` on success.
+1. Add `World.index(x, y, z)` returning `x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_HEIGHT` (and `localIndex(cx, cz, x, z)` returning the same — local vs. world is the same within a chunk; chunk coordinates are passed separately).
+2. Add `World.unpackIndex(i)` returning `{x, y, z}` for round-trip tests.
+3. Replace raw formulas:
+   - `src/core/world.js` — `loadChunk` blend loop, `getBlock` (local index), `setBlock` (local index).
+   - `src/render/renderer.js` — `ChunkVisual.updateMeshes` (`lx, ly, lz` extraction) and `isSurrounded` (`ni = ...`).
+   - `main.js` — any inline `x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_HEIGHT` formulas.
+4. Add unit tests in a new `tests/headless/test-phase14.cjs`: round-trip (`unpackIndex(index(x,y,z)) === {x,y,z}` for corner cases), get/set block round-trip after `setBlock`.
 
-**Files touched:** `main.js` (init), possibly `src/core/world.js` (raycast helper).
+**Files touched:** `src/core/world.js` (helpers), `src/render/renderer.js` (call sites), `main.js` (call sites), `tests/headless/test-phase14.cjs` (new), `tests/headless/smoke.cjs` (extend).
 
 **How to verify:**
 ```bash
 node --check main.js && npm run build
-sudo -E -n node tests/headless/smoke.cjs       # static-analysis still passes
+sudo -E -n node tests/headless/smoke.cjs       # static-analysis still passes (incl. Phase 1.4)
 node tests/headless/test-phase12.cjs           # 17/17 still pass
+node tests/headless/test-phase13.cjs           # 7/7 still pass
+node tests/headless/test-phase14.cjs           # new — round-trip + get/set
 ```
-
-End-to-end browser verification is the user's responsibility. Headless smoke test can be extended with a static-analysis check that the hard-coded `setPosition(0, 20, 0)` is replaced.
 
 ---
 
@@ -115,9 +134,11 @@ End-to-end browser verification is the user's responsibility. Headless smoke tes
 | Save / settings | `src/save/{system,settings}.js` | `SaveSystem`, `Settings` |
 
 **Missing helpers that later phases will add (do NOT add them ahead of their phase):**
-- `World.index(x, y, z)` / `World.localIndex(cx, cz, x, z)` — Phase 1.4
+- ~~`World.index(x, y, z)` / `World.localIndex(cx, cz, x, z)`~~ — **added in Phase 1.3 helper-aware path; full rollout is Phase 1.4**
 - `World.getChunk(x, z)` — Phase 1.5
 - `SaveSystem.saveGame(x, y, z, phase)` / `getLastSaveInfo()` / `loadGame()` — Phase 1.6
+
+Note: Phase 1.4 will add `World.index(x, y, z)` as the canonical helper and replace raw `x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_HEIGHT` formulas everywhere. Phase 1.3 uses `World.getBlock(x, y, z, phase)` (which still inlines the local index formula) — acceptable per the brief, which says "raw indexing is acceptable here — Phase 1.4 will replace with `World.index(...)`."
 
 **Quarantined reference implementation (do not import):**
 
@@ -225,6 +246,7 @@ phaseshift/
 ## Commit history (as of this hand-off)
 
 ```
+31d0f48  Phase 1.3: safe spawn via downward raycast
 c4c9cd3  Phase 1.2: camera follow + quaternion-derived movement basis
 d62a2ea  Update HANDOFF + spec for Phase 1.2 hand-off
 1c858b0  Add README.md and assets/screenshots/ for repo landing page
