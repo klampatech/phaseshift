@@ -11,7 +11,7 @@ This plan is sequenced. Each phase has explicit acceptance criteria and a "defin
 | Phase | Status | Commit | Notes |
 |---|---|---|---|
 | 0 — Architectural decision | ✅ Done | `ebfcd07` | Single-engine decision enforced. Orphans quarantined with deprecation banners. See `HANDOFF.md`. |
-| 1.1 — Fix init crash | ✅ Done | `8907b61` | Added missing DOM (`#btn-inv`, `#btn-opts`, `#inv-close`, `#inventory-panel`, `#crafting-panel`). Guarded all `addEventListener` calls. Removed `throw e` from init try/catch. `setupMenuButtons()` is now the last call in `init()`. |
+| 1.1 — Fix init crash | ✅ Done | `8907b61` | Added missing DOM (`#btn-inv`, `#btn-opts`, `#inv-close`, `#inventory-panel`, `#crafting-panel`). Guarded all `addEventListener` calls. Removed `throw e` from init try/catch. `setupMenuButtons()` is now the last call in `init()`. Headless test infra at `tests/headless/` (`smoke.cjs` + `safeOn` unit test) verifies DOM presence + init recovery. |
 | 1.2 — Camera follow + movement direction | ⏳ Next | — | Begin here. |
 | 2 — Core mechanics | Pending | — | |
 | 3 — World feel | Pending | — | |
