@@ -3,7 +3,7 @@
 > **Session goal:** Implement Phase 1.3 — Safe spawn via downward raycast.
 > **Parent plan:** `PROJECT_REMEDIATION_PLAN.md` §1.3.
 > **Repo:** `/home/kyle/Development/phaseshift` (use `GIT_DIR=/tmp/phaseshift-git` for git ops — see `HANDOFF.md` §Sandbox quirks).
-> **Branch:** `main` · **Tip before starting:** `1282069` · **Remote:** `klampatech/phaseshift`.
+> **Branch:** `main` · **Tip before starting:** `cc8ed0a` · **Remote:** `klampatech/phaseshift`.
 
 ---
 
