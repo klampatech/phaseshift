@@ -134,8 +134,7 @@ function init() {
   // Handle window resize
   window.addEventListener('resize', onResize);
 
-  // Menu button wiring
-  setupMenuButtons();
+  // Menu button wiring is at the end of init() (see below).
 
   // Phase cycling via right-click (when not in pointer lock context menu)
   document.addEventListener('contextmenu', (e) => {
@@ -193,53 +192,68 @@ function init() {
   // Show phase name
   hud.showNotification('ALPHA', '#5aa85a');
 
+  // Menu wiring is the LAST step so a failure here can't block gameplay
+  // listeners attached above. (Phase 1.1.)
+  setupMenuButtons();
+
   console.log('Phase Shifter initialized!');
 }
 
 function setupMenuButtons() {
+  // Each button is wired only if its DOM element exists, so missing markup
+  // never crashes init(). (Phase 1.1.)
+  const safeOn = (id, evt, handler) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(evt, handler);
+    return el;
+  };
+
   const pauseMenu = document.getElementById('pause-menu');
   const inventoryPanel = document.getElementById('inventory-panel');
   const optionsPanel = document.getElementById('options-panel');
 
   // Pause menu buttons
-  document.getElementById('btn-resume').addEventListener('click', () => {
+  safeOn('btn-resume', 'click', () => {
     pauseMenu.style.display = 'none';
     gamePaused = false;
     renderer.domElement.requestPointerLock();
   });
-  document.getElementById('btn-inv').addEventListener('click', () => {
+  safeOn('btn-inv', 'click', () => {
     pauseMenu.style.display = 'none';
-    inventoryPanel.style.display = 'flex';
-    updateInventoryUI();
+    if (inventoryPanel) {
+      inventoryPanel.style.display = 'flex';
+      updateInventoryUI();
+    }
   });
-  document.getElementById('btn-save').addEventListener('click', () => {
+  safeOn('btn-save', 'click', () => {
     saveGame();
   });
-  document.getElementById('btn-opts').addEventListener('click', () => {
+  safeOn('btn-opts', 'click', () => {
     pauseMenu.style.display = 'none';
-    optionsPanel.style.display = 'flex';
+    if (optionsPanel) optionsPanel.style.display = 'flex';
   });
-  document.getElementById('btn-quit').addEventListener('click', () => {
+  safeOn('btn-quit', 'click', () => {
     gameRunning = false;
     gamePaused = true;
-    pauseMenu.style.display = 'none';
-    inventoryPanel.style.display = 'none';
-    optionsPanel.style.display = 'none';
+    if (pauseMenu) pauseMenu.style.display = 'none';
+    if (inventoryPanel) inventoryPanel.style.display = 'none';
+    if (optionsPanel) optionsPanel.style.display = 'none';
     document.exitPointerLock();
     document.getElementById('blocker').classList.remove('hidden');
   });
 
   // Inventory panel
-  document.getElementById('inv-close').addEventListener('click', () => {
-    inventoryPanel.style.display = 'none';
+  safeOn('inv-close', 'click', () => {
+    if (inventoryPanel) inventoryPanel.style.display = 'none';
   });
 
   // Options panel
-  document.getElementById('opts-close').addEventListener('click', () => {
-    optionsPanel.style.display = 'none';
+  safeOn('opts-close', 'click', () => {
+    if (optionsPanel) optionsPanel.style.display = 'none';
   });
-  document.getElementById('opt-autosave').addEventListener('click', () => {
+  safeOn('opt-autosave', 'click', () => {
     const opts = document.getElementById('opt-autosave');
+    if (!opts) return;
     if (opts.textContent.includes('ON')) {
       opts.textContent = 'Auto-Save: OFF';
       if (settings) settings.setAutoSave(false);
@@ -972,9 +986,11 @@ if (typeof window !== 'undefined') {
 }
 
 // Start the game
+// Phase 1.1: don't rethrow. A non-fatal init failure (missing DOM, etc.)
+// used to kill the whole script before listeners attached. Now we log and
+// recover so the page is at least partially functional.
 try {
   init();
 } catch (e) {
-  console.error('[Phase Shifter] Init failed:', e);
-  throw e;
+  console.error('[Phase Shifter] Init failed (recovered):', e);
 }

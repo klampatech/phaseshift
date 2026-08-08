@@ -129,6 +129,8 @@
     <h2>PAUSED</h2>
     <button id="btn-resume">Resume</button>
     <button id="btn-save">Save Game</button>
+    <button id="btn-inv">Inventory</button>
+    <button id="btn-opts">Options</button>
     <button id="btn-quit">Quit to Title</button>
     <div id="save-info"></div>
   </div>
@@ -137,6 +139,27 @@
     <div style="color: #aaa; margin-bottom: 15px;">Game options coming soon...</div>
     <div id="opt-autosave" style="color: #88ccff;">Auto-Save: ON</div>
     <button id="opts-close">Close</button>
+  </div>
+  <div id="inventory-panel">
+    <h2>INVENTORY</h2>
+    <div id="tool-grid"></div>
+    <h3 style="margin-top: 20px;">AMPLIFIERS</h3>
+    <div id="amplifier-grid"></div>
+    <h3 style="margin-top: 20px;">ECHOES</h3>
+    <div id="echo-list" style="font-size: 11px; color: #88ccff; max-width: 500px;">
+      <em style="color: #666;">No echoes collected yet.</em>
+    </div>
+    <h3 style="margin-top: 20px;">CRAFTING</h3>
+    <div id="crafting-grid"></div>
+    <div id="progress-info"></div>
+    <button id="inv-close" style="margin-top: 20px;">Close</button>
+  </div>
+  <div id="crafting-panel">
+    <h2>CRAFTING</h2>
+    <div id="crafting-recipes" style="font-size: 11px; color: #88ccff; max-width: 500px;">
+      <em style="color: #666;">Recipes will appear here as you discover them.</em>
+    </div>
+    <button id="craft-close" style="margin-top: 20px;">Close</button>
   </div>
   <script type="module" src="./main.js"></script>
 </body>
