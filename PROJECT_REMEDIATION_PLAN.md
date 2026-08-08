@@ -6,6 +6,25 @@ This plan is sequenced. Each phase has explicit acceptance criteria and a "defin
 
 ---
 
+## Progress
+
+| Phase | Status | Commit | Notes |
+|---|---|---|---|
+| 0 — Architectural decision | ✅ Done | `ebfcd07` | Single-engine decision enforced. Orphans quarantined with deprecation banners. See `HANDOFF.md`. |
+| 1 — Stop the bleeding | ⏳ Next | — | Begin with 1.1 (init crash). |
+| 2 — Core mechanics | Pending | — | |
+| 3 — World feel | Pending | — | |
+| 4 — Polish | Pending | — | |
+| 5 — Enjoyable | Pending | — | |
+| 6 — Tests | Pending | — | |
+| 7 — Release prep | Pending | — | |
+
+**Repo:** https://github.com/klampatech/phaseshift (public, `main`).
+**Hand-off doc:** [`HANDOFF.md`](./HANDOFF.md).
+
+
+---
+
 ## 0. Architectural Decision (before any code changes)
 
 **The single biggest reason the project is in its current state is dual code paths.** Before fixing bugs, we must pick one engine. This decision is load-bearing for every subsequent phase.
