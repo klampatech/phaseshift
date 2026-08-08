@@ -139,6 +139,27 @@ const CHROMIUM_ARGS = [
   const initRecovered = pageErrors.some(e => /Init failed \(recovered\)/.test(e));
   const handlersWork = clickResults.every(r => r.actual === r.expected);
 
+  // ── Phase 1.2 static-analysis checks (against source main.js) ──────────
+  // Source-level checks are robust to Vite minification (which renames every
+  // identifier). Bundle-level checks were tried first and abandoned because
+  // `camera` becomes `Qt`, `EYE_HEIGHT` becomes `Ym`, etc. — too brittle.
+  const fs2 = require('fs');
+  const mainSrc = path.resolve(__dirname, '..', '..', 'main.js');
+  const srcText = fs2.existsSync(mainSrc) ? fs2.readFileSync(mainSrc, 'utf8') : '';
+  // Old broken formula: atan2(camera.position.x - pos.x, ...)
+  const OLD_BROKEN = /atan2\s*\(\s*camera\.position\.x\s*-\s*pos\.x/;
+  // New camera-follow: camera.position.set(... + EYE_HEIGHT, ...)
+  const NEW_FOLLOW = /camera\.position\.set\s*\([^)]*\+\s*EYE_HEIGHT\b/;
+  // New quaternion-derived basis: applyQuaternion(camera.quaternion)
+  const NEW_BASIS = /applyQuaternion\s*\(\s*camera\.quaternion\s*\)/;
+  const phase12 = {
+    old_atan2_gone: srcText ? !OLD_BROKEN.test(srcText) : null,
+    new_camera_follow_present: srcText ? NEW_FOLLOW.test(srcText) : null,
+    new_quaternion_basis_present: srcText ? NEW_BASIS.test(srcText) : null,
+  };
+  console.log('\n=== Phase 1.2 static-analysis (against main.js) ===');
+  console.log(JSON.stringify(phase12, null, 2));
+
   const summary = {
     http_ok: resp.status() === 200,
     structural_dom_all_present: domOk,
@@ -147,15 +168,27 @@ const CHROMIUM_ARGS = [
     init_recovered_when_webgl_failed: webglErr.length > 0 ? initRecovered : null,
     click_handlers_work: handlersWork,
     page_errors: pageErrors,
+    phase12_old_atan2_gone: phase12.old_atan2_gone,
+    phase12_new_camera_follow_present: phase12.new_camera_follow_present,
+    phase12_new_quaternion_basis_present: phase12.new_quaternion_basis_present,
   };
-  console.log('\n=== Phase 1.1 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
   if (server) server.kill('SIGTERM');
   const webglWorked = summary.init_recovered_when_webgl_failed === null;
   const regression = webglWorked && !summary.click_handlers_work;
-  process.exit(summary.structural_dom_all_present && summary.no_unrelated_pageerrors && !regression ? 0 : 1);
+  const phase12Ok =
+    summary.phase12_old_atan2_gone !== false &&
+    summary.phase12_new_camera_follow_present !== false &&
+    summary.phase12_new_quaternion_basis_present !== false;
+  process.exit(
+    summary.structural_dom_all_present &&
+    summary.no_unrelated_pageerrors &&
+    !regression &&
+    phase12Ok ? 0 : 1
+  );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);
   if (server) server.kill('SIGTERM');

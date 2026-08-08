@@ -9,6 +9,11 @@ import { HUD } from './src/ui/hud.js';
 import { AudioManager } from './src/audio/manager.js';
 import { SaveSystem, Settings } from './src/save/system.js';
 
+// Eye height: distance from feet to eyes. Player physics height is 1.7 (see
+// src/core/physics.js PLAYER_HEIGHT); 1.6 is a comfortable eye offset for a
+// first-person voxel game.
+const EYE_HEIGHT = 1.6;
+
 // Game state
 let scene, camera, renderer, controls, hud, audioManager;
 let world, phaseManager, physicsManager;
@@ -411,24 +416,42 @@ function gameLoop(time) {
     
     const speed = ctrlState.sprint ? 1.5 : 1;
     
-    // Apply camera direction
+    // Apply camera direction (Phase 1.2: quaternion-derived basis)
     if (moveX !== 0 || moveZ !== 0) {
-      const forward = new THREE.Vector3(0, 0, -1);
-      const right = new THREE.Vector3(1, 0, 0);
-      const direction = new THREE.Vector3();
-      
-      // Get camera yaw (horizontal rotation)
-      const yaw = Math.atan2(camera.position.x - pos.x, camera.position.z - pos.z);
-      
-      direction.x = (Math.sin(yaw) * moveZ + Math.cos(yaw) * moveX) * speed;
-      direction.z = (Math.cos(yaw) * moveZ - Math.sin(yaw) * moveX) * speed;
-      
+      // controls._onMouseMove already applies yaw/pitch to camera.quaternion
+      // via THREE.Euler(pitch, yaw, 0, 'YXZ'). Derive the horizontal movement
+      // basis from that quaternion so walking direction matches look direction
+      // (including pitch — looking up/down no longer rotates the wrong way).
+      // Derive the horizontal movement basis from camera.quaternion
+      // (controls._onMouseMove already applies yaw/pitch via
+      //  THREE.Euler(pitch, yaw, 0, 'YXZ')). This means walking direction
+      // always matches look direction — including looking up/down, where
+      // pitch would have warped the old atan2() formula.
+      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+      const right   = new THREE.Vector3(1, 0,  0).applyQuaternion(camera.quaternion);
+      forward.y = 0; forward.normalize();
+      right.y   = 0; right.normalize();
+
+      // Sign convention: controls.js sets moveZ=-1 for W (forward) and
+      // moveX=+1 for D (strafe right). Three.js camera convention is
+      // forward = -Z at identity. So W → -moveZ scales forward; D → moveX
+      // scales right.
+      const direction = new THREE.Vector3()
+        .addScaledVector(forward, -moveZ)
+        .addScaledVector(right,    moveX)
+        .multiplyScalar(speed);
+
       physicsManager.update(deltaTime, direction.x, direction.z);
     } else {
       physicsManager.update(deltaTime);
     }
   }
   // End of game loop ground physics else block
+
+  // Camera follow (Phase 1.2): trail the player with eye-height offset.
+  // Done after every physics tick so the camera reflects the freshest position.
+  const _camFollowPos = physicsManager.getPos();
+  camera.position.set(_camFollowPos.x, _camFollowPos.y + EYE_HEIGHT, _camFollowPos.z);
 
   // Handle Jump (Space)
   if (ctrlState.jump && physicsManager.isGrounded) {
