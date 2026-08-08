@@ -5,3 +5,4 @@ test-results/
 reports/
 *.log
 .DS_Store
+tests/headless/*.png
