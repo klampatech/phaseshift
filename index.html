@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phase Shifter</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; }
+    #blocker {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.7); display: flex; align-items: center;
+      justify-content: center; cursor: pointer; z-index: 100;
+      flex-direction: column; color: #fff; font-family: monospace;
+    }
+    #blocker h1 { font-size: 24px; margin-bottom: 10px; color: #88ccff; }
+    #blocker p { font-size: 14px; color: #aaa; margin: 4px 0; }
+    #blocker .key { color: #88ccff; background: #222; padding: 2px 6px; border-radius: 3px; }
+    #crosshair {
+      position: absolute; top: 50%; left: 50%; width: 20px; height: 20px;
+      transform: translate(-50%, -50%); pointer-events: none; z-index: 50;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ''; position: absolute; background: #fff;
+    }
+    #crosshair::before { width: 2px; height: 20px; left: 9px; top: 0; }
+    #crosshair::after { height: 2px; width: 20px; top: 9px; left: 0; }
+    #phase-indicator {
+      position: absolute; top: 15px; left: 15px; width: 12px; height: 12px;
+      border-radius: 50%; z-index: 50; pointer-events: none;
+      border: 1px solid #fff;
+    }
+    #phase-name {
+      position: absolute; top: 15px; left: 32px; color: #fff;
+      font-family: monospace; font-size: 12px; z-index: 50; pointer-events: none;
+    }
+    #energy-bar {
+      position: absolute; bottom: 20px; left: 20px; width: 200px; height: 12px;
+      background: #333; border: 1px solid #555; z-index: 50; pointer-events: none;
+    }
+    #energy-fill {
+      height: 100%; width: 100%; background: #4488ff; transition: width 0.3s;
+    }
+    #energy-text {
+      position: absolute; bottom: 35px; left: 20px; color: #88ccff;
+      font-family: monospace; font-size: 11px; z-index: 50; pointer-events: none;
+    }
+    #notification {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -80px);
+      color: #88ccff; font-family: monospace; font-size: 16px; z-index: 50;
+      pointer-events: none; opacity: 0; transition: opacity 0.5s;
+      text-shadow: 0 0 10px rgba(136,204,255,0.5);
+    }
+    #block-hint {
+      position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%);
+      color: #aaa; font-family: monospace; font-size: 11px; z-index: 50; pointer-events: none;
+    }
+    #stats {
+      position: absolute; bottom: 20px; right: 20px; color: #666;
+      font-family: monospace; font-size: 11px; z-index: 50; pointer-events: none; text-align: right;
+    }
+    #biome-info {
+      position: absolute; top: 15px; right: 20px; color: #888;
+      font-family: monospace; font-size: 11px; z-index: 50; pointer-events: none;
+    }
+    #phase-step-container {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      text-align: center; pointer-events: none; z-index: 50;
+    }
+    #phase-step-bar {
+      height: 3px; background: #5aa85a; border-radius: 2px;
+      transition: width 0.1s ease, background 0.3s ease;
+    }
+    #phase-step-label {
+      font-size: 10px; color: #5aa85a; font-family: monospace;
+      margin-top: 3px; letter-spacing: 1px;
+    }
+    #pause-menu, #inventory-panel, #options-panel {
+      display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.8); z-index: 90; flex-direction: column;
+      align-items: center; justify-content: center; color: #fff; font-family: monospace;
+    }
+    #pause-menu h2 { color: #88ccff; font-size: 20px; margin-bottom: 20px; }
+    #pause-menu button, #inventory-panel button, #options-panel button {
+      background: #222; color: #88ccff; border: 1px solid #444; padding: 10px 30px;
+      margin: 5px; cursor: pointer; font-family: monospace; font-size: 14px; border-radius: 4px;
+    }
+    #pause-menu button:hover, #inventory-panel button:hover, #options-panel button:hover {
+      background: #333; border-color: #88ccff;
+    }
+    #inventory-panel, #crafting-panel { display: none; padding: 20px; }
+    #inventory-panel h3, #crafting-panel h3 { color: #88ccff; margin-bottom: 15px; }
+    #tool-grid, #amplifier-grid {
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; max-width: 500px;
+    }
+    #tool-grid > div, #amplifier-grid > div {
+      padding: 8px; background: rgba(255,255,255,0.05); border: 1px solid #444;
+      border-radius: 4px; font-size: 11px; color: #88ccff;
+    }
+    #progress-info { color: #666; font-size: 11px; margin-top: 15px; white-space: pre-line; }
+    #save-info { color: #4488ff; font-size: 11px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div id="blocker">
+    <h1>PHASE SHIFTER</h1>
+    <p><span class="key">WASD</span> Move &nbsp; <span class="key">T</span> Phase Shift</p>
+    <p><span class="key">Q</span> Phase Step &nbsp; <span class="key">E</span> Phase Walk (hold)</p>
+    <p><span class="key">LMB</span> Break block &nbsp; <span class="key">RMB</span> Place block</p>
+    <p><span class="key">Shift+Click</span> Phase Anchor &nbsp; <span class="key">F</span> Temporary anchor</p>
+    <p><span class="key">ESC</span> Pause &nbsp; <span class="key">J</span> Minimap &nbsp; <span class="key">Space</span> Jump</p>
+    <p style="margin-top: 15px; color: #88ccff;">Click anywhere to play</p>
+  </div>
+  <div id="hud">
+    <div id="crosshair"></div>
+    <div id="phase-indicator"></div>
+    <div id="phase-name"></div>
+    <div id="energy-bar"><div id="energy-fill"></div></div>
+    <div id="energy-text">Energy: 100%</div>
+    <div id="notification"></div>
+    <div id="block-hint">Phase: ALPHA</div>
+    <div id="stats">BLOCKS: 0 | RESONANCES: 0 | SHIFTS: 0</div>
+    <div id="biome-info">BIOME: FOREST</div>
+    <div id="phase-step-container">
+      <div id="phase-step-bar" style="width:100%;height:3px;background:#5aa85a;"></div>
+      <div id="phase-step-label" style="font-size:10px;color:#5aa85a;">PHASE STEP READY</div>
+    </div>
+  </div>
+  <div id="pause-menu">
+    <h2>PAUSED</h2>
+    <button id="btn-resume">Resume</button>
+    <button id="btn-save">Save Game</button>
+    <button id="btn-quit">Quit to Title</button>
+    <div id="save-info"></div>
+  </div>
+  <div id="options-panel">
+    <h2>OPTIONS</h2>
+    <div style="color: #aaa; margin-bottom: 15px;">Game options coming soon...</div>
+    <div id="opt-autosave" style="color: #88ccff;">Auto-Save: ON</div>
+    <button id="opts-close">Close</button>
+  </div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

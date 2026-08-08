@@ -1,0 +1,22 @@
+{
+  "name": "phaseshift",
+  "version": "1.0.0",
+  "description": "Phase Shifter - A voxel exploration game with phase-shifting mechanics",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "playwright test",
+    "test:unit": "playwright test tests/unit.spec.js",
+    "test:constants": "playwright test tests/constants.spec.js",
+    "test:game": "playwright test tests/game.spec.js"
+  },
+  "dependencies": {
+    "three": "^0.160.0",
+    "vite": "^5.4.14"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}
