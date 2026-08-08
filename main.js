@@ -97,13 +97,44 @@ function init() {
   // Audio (must be before pointerlock handler)
   audioManager = new AudioManager();
 
-  // Position player at spawn
-  physicsManager.setPosition(0, 20, 0);
-  camera.position.set(0, 20, 0);
-
-  // Load initial chunks around player
+  // Phase 1.3: Compute a safe spawn via downward raycast instead of
+  // hard-coding y=20 (which can put the player inside a block or floating
+  // far above the surface). The camera-follow code added in Phase 1.2 will
+  // keep the camera glued to whatever position we set here.
+  //
+  // Strategy:
+  //   1. Load a 3×3 chunk area around (0, 0).
+  //   2. Raycast straight down from y=CHUNK_HEIGHT-1 to find the highest
+  //      solid block at (0, 0).
+  //   3. If none found, expand to a 5×5 chunk area and retry.
+  //   4. If still none, fall back to a known-safe y=30 so the game still
+  //      loads. Logged as an error so it's visible.
   world.updateChunks(0, 0);
   console.log("Initial chunks loaded:", world.getChunks().size);
+
+  let topSolidY = world.findTopSolidBlock(0, 0);
+  if (topSolidY === null) {
+    console.warn('[Phase Shifter] No solid block at (0, 0); expanding to 5x5 chunk area');
+    world.updateChunks(0, 0, 2); // radius=2 → 5x5 chunks around (0, 0)
+    topSolidY = world.findTopSolidBlock(0, 0);
+  }
+
+  if (topSolidY !== null) {
+    // Feet on top of the highest solid block: pos.y = blockY + 1 (top
+    // surface) + PLAYER_HEIGHT (1.7). PLAYER_HEIGHT is defined in
+    // src/core/physics.js.
+    physicsManager.setPosition(0, topSolidY + 1 + 1.7, 0);
+  } else {
+    console.error('[Phase Shifter] No solid block found in 5x5 area; falling back to y=30');
+    physicsManager.setPosition(0, 30, 0);
+  }
+
+  // Initialize the camera at the spawn position (with EYE_HEIGHT offset).
+  // The Phase 1.2 follow code in gameLoop keeps it glued afterwards.
+  const _spawnPos = physicsManager.getPos();
+  camera.position.set(_spawnPos.x, _spawnPos.y + EYE_HEIGHT, _spawnPos.z);
+
+  console.info('[Phase Shifter] Spawned at', _spawnPos.toArray());
 
   // Setup controls
   const blocker = document.getElementById('blocker');

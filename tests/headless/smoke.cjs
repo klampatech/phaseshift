@@ -145,7 +145,9 @@ const CHROMIUM_ARGS = [
   // `camera` becomes `Qt`, `EYE_HEIGHT` becomes `Ym`, etc. — too brittle.
   const fs2 = require('fs');
   const mainSrc = path.resolve(__dirname, '..', '..', 'main.js');
+  const worldSrc = path.resolve(__dirname, '..', '..', 'src', 'core', 'world.js');
   const srcText = fs2.existsSync(mainSrc) ? fs2.readFileSync(mainSrc, 'utf8') : '';
+  const worldText = fs2.existsSync(worldSrc) ? fs2.readFileSync(worldSrc, 'utf8') : '';
   // Old broken formula: atan2(camera.position.x - pos.x, ...)
   const OLD_BROKEN = /atan2\s*\(\s*camera\.position\.x\s*-\s*pos\.x/;
   // New camera-follow: camera.position.set(... + EYE_HEIGHT, ...)
@@ -160,6 +162,19 @@ const CHROMIUM_ARGS = [
   console.log('\n=== Phase 1.2 static-analysis (against main.js) ===');
   console.log(JSON.stringify(phase12, null, 2));
 
+  // Phase 1.3: hard-coded spawn gone, raycast helper present, log wired.
+  const PH13_HARDCODED = /physicsManager\.setPosition\s*\(\s*0\s*,\s*20\s*,\s*0\s*\)/;
+  const PH13_HELPER = /(?:findTopSolidBlock|findHighestSolid|raycastDown)/;
+  const PH13_LOG = /console\.info\s*\(\s*['"`]\[Phase Shifter\] Spawned at['"`]/;
+  const phase13 = {
+    hardcoded_setposition_y20_gone: srcText ? !PH13_HARDCODED.test(srcText) : null,
+    downward_raycast_helper_present:
+      (srcText && PH13_HELPER.test(srcText)) || (worldText && PH13_HELPER.test(worldText)),
+    spawn_info_log_wired: srcText ? PH13_LOG.test(srcText) : null,
+  };
+  console.log('\n=== Phase 1.3 static-analysis (against main.js + src/core/world.js) ===');
+  console.log(JSON.stringify(phase13, null, 2));
+
   const summary = {
     http_ok: resp.status() === 200,
     structural_dom_all_present: domOk,
@@ -171,8 +186,11 @@ const CHROMIUM_ARGS = [
     phase12_old_atan2_gone: phase12.old_atan2_gone,
     phase12_new_camera_follow_present: phase12.new_camera_follow_present,
     phase12_new_quaternion_basis_present: phase12.new_quaternion_basis_present,
+    phase13_hardcoded_setposition_y20_gone: phase13.hardcoded_setposition_y20_gone,
+    phase13_downward_raycast_helper_present: phase13.downward_raycast_helper_present,
+    phase13_spawn_info_log_wired: phase13.spawn_info_log_wired,
   };
-  console.log('\n=== Phase 1.1 + 1.2 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -183,11 +201,16 @@ const CHROMIUM_ARGS = [
     summary.phase12_old_atan2_gone !== false &&
     summary.phase12_new_camera_follow_present !== false &&
     summary.phase12_new_quaternion_basis_present !== false;
+  const phase13Ok =
+    summary.phase13_hardcoded_setposition_y20_gone !== false &&
+    summary.phase13_downward_raycast_helper_present !== false &&
+    summary.phase13_spawn_info_log_wired !== false;
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
     !regression &&
-    phase12Ok ? 0 : 1
+    phase12Ok &&
+    phase13Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

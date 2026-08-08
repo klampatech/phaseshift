@@ -233,18 +233,21 @@ export class World {
     }
   }
 
-  // Update chunks within render distance
-  updateChunks(playerX, playerZ) {
+  // Update chunks within render distance (or a custom radius, in chunks).
+  // Phase 1.3: spawn-time uses radius=2 to load a 5×5 chunk area before the
+  // downward raycast runs. The runtime path still passes no radius and gets
+  // the default RENDER_DISTANCE.
+  updateChunks(playerX, playerZ, radius = RENDER_DISTANCE) {
     const pcx = Math.floor(playerX / CHUNK_SIZE);
     const pcz = Math.floor(playerZ / CHUNK_SIZE);
 
     // Load new chunks
-    for (let dx = -RENDER_DISTANCE; dx <= RENDER_DISTANCE; dx++) {
-      for (let dz = -RENDER_DISTANCE; dz <= RENDER_DISTANCE; dz++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) {
         const cx = pcx + dx;
         const cz = pcz + dz;
         const dist = Math.sqrt(dx * dx + dz * dz);
-        if (dist <= RENDER_DISTANCE) {
+        if (dist <= radius) {
           const chunk = this.ensureChunk(cx, cz);
           if (chunk.loadOrder === 0) {
             chunk.loadOrder = ++this.nextLoadOrder;
@@ -262,6 +265,30 @@ export class World {
         this.chunks.delete(key);
       }
     }
+  }
+
+  // ── Spawn-time helpers (Phase 1.3) ────────────────────────────────
+
+  /**
+   * Find the highest solid block in the column at (worldX, worldZ), scanning
+   * from y = CHUNK_HEIGHT-1 downward. "Solid" means solid in the given phase
+   * (uses BLOCK_PROPERTIES[id].phaseSolid[phase] when available, falls back
+   * to the legacy .solid boolean). Returns the block's y-coordinate, or
+   * null if no solid block exists in the column.
+   *
+   * Callers are expected to have loaded enough chunks for the column to be
+   * populated (see World.updateChunks). Unloaded columns report all air.
+   */
+  findTopSolidBlock(worldX, worldZ, phase = PHASE_ALPHA) {
+    for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+      const block = this.getBlock(worldX, y, worldZ, phase);
+      if (block === BLOCK_AIR) continue;
+      const props = BLOCK_PROPERTIES[block];
+      if (!props) continue;
+      const isSolid = props.phaseSolid ? props.phaseSolid[phase] : props.solid;
+      if (isSolid) return y;
+    }
+    return null;
   }
 
   getChunks() { return this.chunks; }
