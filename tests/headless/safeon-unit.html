@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>safeOn unit test</title></head>
+<body>
+  <h1>safeOn unit test</h1>
+  <div id="results"></div>
+  <button id="exists-yes">Exists Yes</button>
+  <script>
+    // Inline copy of main.js's safeOn helper
+    function safeOn(id, evt, handler) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener(evt, handler);
+      return el;
+    }
+
+    const results = [];
+    const log = (label, ok) => {
+      results.push({ label, ok });
+      document.getElementById('results').insertAdjacentHTML('beforeend',
+        `<div data-test="${label}" style="color:${ok ? '#5a5' : '#a55'}">[${ok ? 'PASS' : 'FAIL'}] ${label}</div>`);
+    };
+
+    // Test 1: existing element gets handler attached
+    let clicked = 0;
+    safeOn('exists-yes', 'click', () => { clicked++; });
+    document.getElementById('exists-yes').click();
+    log('click handler fires on existing element', clicked === 1);
+
+    // Test 2: missing element does NOT throw
+    let threw = false;
+    try {
+      const r = safeOn('does-not-exist', 'click', () => {});
+      log('missing element returns null without throwing', r === null);
+    } catch (e) {
+      threw = true;
+      log('missing element returns null without throwing', false);
+    }
+
+    // Test 3: multiple safeOn calls don't double-bind
+    let count = 0;
+    safeOn('exists-yes', 'click', () => { count++; });
+    document.getElementById('exists-yes').click();
+    log('only one handler per call (no double-bind)', count === 1);
+
+    // Test 4: safeOn returns the element on hit
+    const r = safeOn('exists-yes', 'click', () => {});
+    log('returns the element when found', r === document.getElementById('exists-yes'));
+
+    // Output pass/fail counts for Playwright to scrape
+    window.__test_results__ = {
+      total: results.length,
+      passed: results.filter(r => r.ok).length,
+      failed: results.filter(r => !r.ok).length,
+      cases: results,
+    };
+    document.title = `safeOn unit (${window.__test_results__.passed}/${results.length})`;
+  </script>
+</body>
+</html>
