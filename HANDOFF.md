@@ -1,6 +1,7 @@
 # Phase Shifter — Hand-off
 
-> **Session goal:** Begin **Phase 1.1 — Fix the init crash**.
+> **Last completed:** **Phase 1.1 — Fix the init crash** (commit `8907b61`).
+> **Session goal:** Begin **Phase 1.2 — Camera follow + movement direction**.
 > See [`PROJECT_REMEDIATION_PLAN.md`](./PROJECT_REMEDIATION_PLAN.md) for the full plan.
 
 ---
@@ -78,51 +79,83 @@ These files have a 19-line `REFERENCE IMPLEMENTATION — DO NOT IMPORT` banner a
 - ✅ Verified `vite build` succeeds; orphans tree-shaken out of `dist/assets/*.js`.
 
 ---
+---
+
+## Phase 1.1 — what got committed in `8907b61`
+
+- ✅ Added missing DOM in `index.html`:
+  - Pause menu: `btn-inv`, `btn-opts` buttons.
+  - `#inventory-panel` with placeholders (`#tool-grid`, `#amplifier-grid`, `#echo-list`, `#progress-info`, `#inv-close`). The CSS already styled this panel.
+  - `#crafting-panel` with placeholder recipes and `#craft-close`.
+- ✅ Rewrote `setupMenuButtons()` to use a `safeOn(id, evt, handler)` helper that no-ops when the element is missing. Defensive: future markup changes can't crash init.
+- ✅ Moved `setupMenuButtons()` to be the last call in `init()` (after the mousemove listener). A failure in menu wiring can no longer block gameplay listeners.
+- ✅ Removed `throw e` from the bottom try/catch. Non-fatal init errors are logged and the page recovers.
+- ✅ Verified: `node --check main.js` OK, all 19 IDs referenced in `main.js` exist in `index.html`, `npm run build` succeeds (535.45 kB / 139.28 kB gzipped).
+
+**Not yet verified in this sandbox:** the actual browser smoke test (page loads with no console errors, `chunkCount === 29`, `phase === 0`, all 5 pause-menu buttons work). The user should do this manually and report back.
+
+---
 
 ## Phase 1 — what to do next
+
 
 The plan's Phase 1 is "Stop the bleeding" — make the page load, the canvas render, the player move, the camera follow. Sub-tasks:
 
 | # | Task | Key file(s) |
 |---|---|---|
-| **1.1** | **Fix the init crash** | `index.html`, `main.js` |
-| 1.2 | Camera follow + camera-derived movement basis + eye-height offset | `main.js` (gameLoop), `src/input/controls.js` |
+| 1.1 | Fix the init crash | `index.html`, `main.js` |
+| **1.2** | **Camera follow + camera-derived movement basis + eye-height offset** | `main.js` (gameLoop), `src/input/controls.js` |
 | 1.3 | Safe spawn via downward raycast | `main.js` |
 | 1.4 | Single index scheme + `World.index(x, y, z)` | `src/core/world.js` |
 | 1.5 | `World.getChunk(x, z)`; stop using `chunk.x`/`chunk.z` | `src/core/world.js`, `main.js`, `src/render/renderer.js` |
 | 1.6 | `SaveSystem.saveGame` / `loadGame` / `getLastSaveInfo` | `src/save/system.js`, `main.js` |
 
-### 1.1 — Fix the init crash (start here)
+### 1.2 — Camera follow + movement direction (start here)
 
-**Problem.** `setupMenuButtons()` (around `main.js:200`) calls `document.getElementById('btn-inv').addEventListener(...)` and `document.getElementById('inv-close').addEventListener(...)`. Those elements don't exist in `index.html` (it has `#pause-menu` with `btn-resume`/`btn-save`/`btn-quit` and `#options-panel` with `opts-close`/`opt-autosave`, but no `#inventory-panel`/`#crafting-panel`). Page crashes before any listeners attach, so even `controls` and `hud` aren't fully wired.
+**Problem.** After the init crash is fixed, the page will load but the camera doesn't track the player. Look at `main.js:375-405` — the gameLoop's movement-direction code does this:
 
-**Acceptance.** Page loads with no console errors. `window.__phaseShifter__` is set. `chunkCount === 29`. `phase === 0`.
-
-**Two acceptable fixes (pick one and document the choice in the commit):**
-- **Option A (preferred per plan):** Add `#inventory-panel` and `#crafting-panel` to `index.html`, plus the buttons `btn-inv` and `inv-close` in the pause menu. The plan calls for these panels eventually (inventory + crafting are part of Phase 3).
-- **Option B (faster):** Guard each `addEventListener` call with `if (btn)`. Smaller diff, but doesn't add the missing DOM that the spec references.
-
-**Also:** remove `throw e` from the global `try/catch` (if any) so a non-fatal init error doesn't kill the script. Log + recover instead. Move `setupMenuButtons()` to be the **last** call in `init()`.
-
-**How to test in this sandbox:**
-```bash
-# Syntax check
-node --check main.js && node --check src/core/world.js
-
-# Build (catches import errors and unused-symbol issues)
-npm run build
+```js
+// CURRENT (broken): ignores camera pitch, only uses XZ delta to player.
+const yaw = Math.atan2(camera.position.x - pos.x, camera.position.z - pos.z);
+direction.x = (Math.sin(yaw) * moveZ + Math.cos(yaw) * moveX) * speed;
+direction.z = (Math.cos(yaw) * moveZ - Math.sin(yaw) * moveX) * speed;
 ```
 
-You cannot boot a browser here — the user will do the visual smoke test. Note in the commit message what the user should see.
+This is wrong because:
+1. **The camera never copies the player position** each tick — so `camera.position - pos` is from the initial spawn, not the current frame.
+2. **`atan2(dx, dz)` ignores pitch** — walking while looking up/down rotates the wrong way.
+3. **No eye-height offset** — the camera is at the player's feet, not their head.
 
-### 1.2 — Camera follow (next)
+**Acceptance (from plan):**
+- Player moves with WASD, the camera trails.
+- Walking direction matches where the player is looking.
+- Camera sits at head height (y += 1.6).
 
-After the page loads, the camera sits at the player's start position but does not track movement. Specifically:
-- After every physics tick, do `camera.position.copy(physicsManager.getPos())` (offset by eye height — `y += 1.6`).
-- Apply `controls.yaw`/`pitch` to the camera's Euler/quaternion.
-- In `gameLoop`, derive the movement basis from `camera.quaternion` (forward = `-z` transformed by the quaternion), **not** from `Math.atan2(camera.position.x - pos.x, camera.position.z - pos.z)`. That formula is wrong because it ignores camera pitch.
+**Fix:**
+1. After every physics tick (in `gameLoop`, after `physicsManager.update(...)`):
+   ```js
+   const p = physicsManager.getPos();
+   camera.position.set(p.x, p.y + 1.6, p.z);
+   ```
+2. Apply the look delta from `controls.yaw` / `controls.pitch` to the camera quaternion. Look at how `Controls` exposes its state — check `src/input/controls.js` for `getState()` and any yaw/pitch properties.
+3. Replace the `atan2` formula with a quaternion-derived basis:
+   ```js
+   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+   const right   = new THREE.Vector3(1, 0,  0).applyQuaternion(camera.quaternion);
+   forward.y = 0; forward.normalize();
+   right.y   = 0; right.normalize();
+   const direction = new THREE.Vector3()
+     .addScaledVector(forward, moveZ)
+     .addScaledVector(right,   moveX)
+     .multiplyScalar(speed);
+   ```
 
-**Acceptance:** player moves with WASD, the camera trails, and walking direction matches where the player is looking.
+**How to test:**
+```bash
+node --check main.js && npm run build
+```
+
+You cannot boot a browser here. The user should manually verify: spawn → WASD → look around with mouse → camera follows and walking direction matches look direction.
 
 Continue through 1.3 → 1.6 sequentially. Acceptance criteria are listed in the plan.
 
