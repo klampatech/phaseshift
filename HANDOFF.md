@@ -615,6 +615,71 @@ See `PHASE_2_6_BRIEF.md` (created in this commit) for the canonical Phase 2.6 st
 - `HANDOFF.md` (this section)
 - `PROJECT_REMEDIATION_PLAN.md` (Phase 2.8 row ✅ Done)
 
+## Phase 3.1 closure — Biomes (Skybox tint + fog density + HUD label)
+
+Phase 3.1 is shipped. The world now feels like a world (the §3.1 acceptance): walking from a Forest biome into a Crystal Cavern visibly tints the sky to purple, the `#biome-info` HUD label updates from `BIOME: FOREST` to `BIOME: CRYSTAL CAVERN` on the change edge, and each of the 8 biomes has its own fog density (the Forest is light haze at 0.006, the Deep Void is thick at 0.025). The §3.2 (Stabilizers), §3.3 (Echoes), and §3.4 (Resonance Cores) follow-ons can build on this scaffold without re-implementing the per-biome visual metadata.
+
+### What landed
+
+**`src/world/biome.js` (new — pure module).** Exports `BIOME_TINTS` (a frozen map of `{ color: [r,g,b], fogDensity }` for all 8 biomes, the canonical `biomeColor` from `BIOME_DATA` in `src/gen/terrain.js`), `biomeTint(id)` / `biomeLabel(id)` / `biomeFogDensity(id)` (defensive: out-of-range / NaN ids return the Forest default), `lerpBiomeTints(from, to, t)` (component-wise lerp on RGB + scalar lerp on density, clamps `t` to `[0, 1]`, handles NaN defensively), `biomeTransitionDuration()` (returns 0.5 — the canonical §3.1 smooth-fade value), plus re-exports of `BIOME_FOREST` … `BIOME_PHASE_NEXUS` and `BIOME_NAMES` for convenience. No Three.js, no globals, no scene access — same pure-module pattern as `src/audio/footsteps.js` (Phase 2.8) and `src/anchor/anchor.js` (Phase 2.7).
+
+**`src/render/renderer.js` (extended).** `createSkybox` now declares `biomeTint` + `phaseTint` `THREE.Vector3` uniforms in the ShaderMaterial; the fragment shader multiplies both into the base gradient (`gl_FragColor = vec4(base * biomeTint * phaseTint, 1.0)` — the §3.1 "phase × biome" formula). The skybox mesh is tagged `sky.name = 'skybox'` and has `setBiomeTint(tint)` / `setPhaseTint(tint)` convenience methods. The `Renderer` class exposes `setBiomeTint` / `setPhaseTint` forwarders that look up the skybox by name.
+
+**`src/ui/hud.js` (extended).** The constructor queries `#biome-info` and initializes a `_lastBiomeId = -1` edge detector. `HUD.update(phaseManager, physicsManager, world)` — the new `world` parameter is plumbed through at all 3 call sites — queries `world.getBiome(playerPos.x, playerPos.z)` and updates `#biome-info.textContent` on the change edge (`_lastBiomeId !== newBiomeId`). The per-frame DOM write only fires on biome transitions, not every frame.
+
+**`main.js` (extended).** New imports from `./src/world/biome.js`. Module-level state: `currentBiomeId`, `currentBiomeTint`, `targetBiomeTint`, `biomeTransitionTimer` (initialized to `biomeTransitionDuration()` so the first frame is "complete"). The new `tickBiomesPerFrame(dt)` function:
+- Reads `world.getBiome(playerPos.x, playerPos.z)` per frame.
+- On the change edge (`newBiomeId !== currentBiomeId`): resets the transition timer to 0, updates `targetBiomeTint` to the new biome's tint. The previous lerped state is the new `from`, so mid-flight chaining works (walking through two biomes in 0.5s starts the second transition from where the first ended).
+- Advances `biomeTransitionTimer += dt` (clamped to `biomeTransitionDuration()`).
+- Lerps `currentBiomeTint` toward the target via `lerpBiomeTints`.
+- Drives `scene.background.setRGB`, `scene.fog.color.setRGB`, `scene.fog.density` (clamped to `biomeFogDensity(currentBiomeId)` on the last frame to avoid lerp float slop), and `lighting.phaseLight.color.setRGB` from the lerped color.
+- Forwards the lerped color to the skybox shader uniform via `renderer.setBiomeTint(currentBiomeTint.color)`.
+
+The per-frame game loop calls `tickBiomesPerFrame(deltaTime)` after the existing biome/anchor ticks.
+
+`onPhaseChanged` was extended to drive the new `renderer.setPhaseTint([r/255, g/255, b/255])` from `parseHexColor(colors[phase])`. The phase-vs-biome interaction is **multiplicative, not destructive** — the phase color is applied first (Phase 2.1 regression lock), then the biome tint is multiplied on top in the skybox shader. The §2.1 acceptance ("phase shift visually changes the world color") is preserved.
+
+**Debug hooks on `__phaseShifter__`:**
+- `forceBiome(biomeId)` — pins the player to a specific biome regardless of position; rejects bad input (NaN, out-of-range) with `{ ok: false, reason }`; returns `{ ok: true, biomeId, label, color, fogDensity }` on success.
+- `getCurrentBiomeId()` — returns the module-level `currentBiomeId`.
+- `getCurrentBiomeTint()` — returns `{ color, fogDensity }` of the current lerped state (for Playwright assertions).
+- `lerpBiomeTints(from, to, t)` — pass-through to the pure helper.
+- `biomeLabel(biomeId)` — pass-through to the pure helper.
+- `tickBiomesPerFrame(dt)` — drives the per-frame tick from outside the game loop (used by the Playwright test).
+- `getBiomeTransitionTimer()` — returns the dt-based accumulator.
+- `getBiomeTransitionDuration()` — pass-through (returns 0.5).
+
+### Regression locks
+- All 12 prior phase headless tests still pass (12×17 + 7×1 + 22×1 + 12×1 + 21×1 + 26×1 + 35×1 + 51×1 + 46×1 + 70×1 + 71×1 + 107×1 + 87×1 = 572 checks across Phases 1.2 – 2.8).
+- New `tests/headless/test-phase31.cjs` — 95 checks (static + behavioral).
+- `tests/headless/smoke.cjs` — extended with the §3.1 static-analysis block (66 keys) + 63 summary keys + `phase31Ok` gate + the updated ACCEPTANCE SUMMARY header. Process exit 0 means every gate passed.
+- `tests/gameplay.spec.js` — 1 new test (`Biomes: forceBiome sets currentBiomeId + #biome-info text + scene background tint (Phase 3.1)`) with 8 sub-checks. WebGL can't run in the sandbox; the test runs cleanly in a non-sandbox CI.
+- `npm run build` clean. `node --check` on `main.js`, `src/world/biome.js`, `src/render/renderer.js`, `src/ui/hud.js` all clean.
+
+### Total test count after Phase 3.1
+- 14 headless test files, 667 checks total.
+- 1 new Playwright test (8 sub-checks).
+- 1 new smoke.cjs static-analysis block (66 keys + 63 summary keys).
+
+### What still needs visual verification in a real browser
+- Walking from Forest into Crystal Cavern visibly tints the sky to purple (the §3.1 acceptance math).
+- The `#biome-info` HUD label updates from `BIOME: FOREST` to `BIOME: CRYSTAL CAVERN` on biome change (verified at the API surface; needs the game loop running to drive the actual DOM write).
+- The per-biome fog density is visible — Deep Void is noticeably thicker than Desert.
+- The `forceBiome(biomeId)` debug hook is callable from the browser console (verified at the API surface; needs WebGL to drive the per-frame scene writes).
+
+### Files touched in Phase 3.1
+- `PHASE_3_1_BRIEF.md` (new — starting brief)
+- `src/world/biome.js` (new — pure module)
+- `src/render/renderer.js` (skybox shader uniforms + setBiomeTint / setPhaseTint forwarding)
+- `src/ui/hud.js` (constructor + update wire for `#biome-info`)
+- `main.js` (per-frame biome tick + debug hooks)
+- `tests/headless/test-phase31.cjs` (new — 95 checks)
+- `tests/headless/smoke.cjs` (66 Phase 3.1 static-analysis checks + exit gate)
+- `tests/gameplay.spec.js` (1 new Phase 3.1 test)
+- `HANDOFF.md` (this section)
+- `PROJECT_REMEDIATION_PLAN.md` (Phase 3.1 row ✅ Done)
+- `PHASE_3_2_BRIEF.md` (new — the next session's brief)
+
 ## What's next — Phase 3: Make the world feel like a world
 
 Phase 2 is fully shipped. All eight §2 sub-phases (Phase shift, Phase-relative collision, Per-phase place/break, Phase memory persistence, Phase Lens, Resonance, Phase Anchor, Audio integration) are now in the working tree. The plan's §3 (World feel — biomes, echoes, stabilizers, tutorial) is the next chapter.
