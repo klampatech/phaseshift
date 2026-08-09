@@ -1,6 +1,6 @@
 # Phase Shifter — Hand-off
 
-> **Last completed:** **Phase 2.1 — Phase shift (HUD + shader + audio + spam guard).** Right-click cycles phases; `#phase-name` + `#phase-indicator` + post-FX `uPhase` + `audioManager.playShift` are all wired. `tests/headless/test-phase17.cjs` (26/26) + `smoke.cjs` 12 Phase 2.1 static checks; Playwright 33/33 (2 new Phase 2.1 tests).
+> **Last completed:** **Phase 2.3 — Per-phase place/break (RMB disambiguation + chunk reload persistence).** LMB breaks, RMB-on-face places Stone, RMB-in-air cycles phase. `placeBlock(hit, blockId, context)` is extracted to `src/input/placeBlock.js` so it's testable without Three.js. Breaks survive chunk unload + reload (the §2.4 acceptance — `World.loadChunk` now applies `_globalStateMap` entries whenever the key exists, including BLOCK_AIR). `tests/headless/test-phase23.cjs` (50/50) + `smoke.cjs` 19 Phase 2.3 static checks; Playwright 3 new Phase 2.3 tests via `__phaseShifter__.placeBlock`.
 > **Session goal:** Begin **Phase 2.2 — Phase-relative collision.**
 > See [`PROJECT_REMEDIATION_PLAN.md`](./PROJECT_REMEDIATION_PLAN.md) for the full plan.
 
@@ -10,7 +10,7 @@
 
 - **Repo:** `/home/kyle/Development/phaseshift` (local) ⇄ `klampatech/phaseshift` (remote, public).
 - **Branch:** `main`. **Tip:** `c4c9cd3` — "Phase 1.2: camera follow + quaternion-derived movement basis".
-- **Phases 0 + 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1.7 + 2.1 done.** Save/load round-trip includes player block memory. Phase shift is fully wired (HUD + shader tint + audio + spam guard). Next: **Phase 2.2 — Phase-relative collision.**
+- **Phases 0 + 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1.7 + 2.1 + 2.2 + 2.3 done.** Save/load round-trip includes player block memory. Phase shift is fully wired (HUD + shader tint + audio + spam guard). Phase-relative collision reads `phaseSolid[phase]`. Per-phase place/break with RMB disambiguation. Breaks survive chunk unload + reload. Next: **Phase 2.4 — Phase memory persistence (save/reload round-trip).**
 - **Active code path:** `index.html` → `main.js` (root) → `src/core/{world,phase,physics}.js` + `src/{render,ui,input,audio,save}/*`.
 - **Quarantined reference implementation:** orphan `GameEngine` modules — see "Architectural state" below. **Do not import them.**
 - **Headless test infra** at `tests/headless/` (`smoke.cjs`, `test-safeon.cjs`, `test-camera-basis.cjs`, `test-phase12.cjs`, `test-phase13.cjs`, `safeon-unit.html`, `static-server.cjs`, `screenshots/`).
@@ -359,17 +359,73 @@ ebfcd07  Initial import + Phase 0: enforce single-engine architectural decision
 - `tests/headless/test-phase22.cjs` (new)
 - `tests/headless/smoke.cjs` (Phase 2.2 static-analysis block + exit gate)
 
----
+## Phase 2.3 completion
 
-## What's next — Phase 2.3: Place / break
+**What shipped.**
+- `src/input/placeBlock.js` — extracted `placeBlock(hit, blockId, context)` as a pure module export. The helper rejects `no-hit`, `target-not-air`, `overlaps-player`, and `solid-in-player-cell` and writes via `world.setBlock(targetX, targetY, targetZ, phase, blockId)`. Pure function — no Three.js, no globals — so behavioral tests can construct a tiny fixture (mock world + stub phaseManager + stub physicsManager) and call it directly. `playerAABBOverlapsCell(pos, cellX, cellY, cellZ)` is also exported.
+- `main.js` — RMB disambiguation lives in the `contextmenu` handler (which fires before `click`):
+  ```js
+  document.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (!document.pointerLockElement) return;
+    const hit = raycastBlock(physicsManager.getPos(), getCameraDirection());
+    if (tryPlaceStoneOnFace(hit)) return;
+    phaseManager.cyclePhase();
+  });
+  ```
+  Face hit + non-air target + no overlap → place Stone (delegates to `tryPlaceStoneOnFace(hit)`); otherwise fall through to `phaseManager.cyclePhase()` (existing §2.1 behavior). The `click` handler's RMB branch is removed — the disambiguation is unambiguous in the contextmenu handler.
+- `main.js` — added `spawnPlaceParticles(blockX, blockY, blockZ, blockType)` mirroring `spawnBreakParticles`. Same BoxGeometry + MeshBasicMaterial, but particles fly upward (positive Y velocity) for visual distinction.
+- `main.js` — `placeAnchor` is now a stub: `hud.showNotification('Anchor placement pending §2.7', '#ff6644')`. The previous body would write a stray BLOCK_STABILIZER (id 15) at the targeted face — that's pollution, not a Phase 2.3 concern. The stub preserves the Shift+LMB input binding visibly while deferring the lockManager integration to §2.7.
+- `main.js` — exposed `__phaseShifter__.placeBlock(x, y, z, blockType)` debug hook. Same write path as the RMB-disambiguated handler; returns `{ ok, x, y, z, phase }` or `{ ok: false, reason }`.
+- `src/core/world.js` — `loadChunk` now applies `_globalStateMap` entries whenever the key exists, including BLOCK_AIR. Previously the filter was `if (globalBlock !== BLOCK_AIR)` which meant the generator's value would resurrect a broken block on chunk reload. The §2.4 acceptance ("break a block, walk far enough to unload the chunk, walk back — the block is still broken") requires the player's AIR to win on reload, which is what the new code does.
+- `tests/headless/test-phase23.cjs` — new (50/50):
+  - 19 static-analysis checks (placeBlock module exports the helper + AABB; main.js imports it; signature is `(hit, blockId, context)`; reads current phase; writes via `world.setBlock`; refuses the three reasons; main.js contextmenu calls placeBlock with BLOCK_STONE; falls back to cyclePhase; placeAnchor stubbed; spawnPlaceParticles defined; debug hook + forceCyclePhase hook intact; loadChunk now applies AIR from global state; placeBlockAt unvalidated write primitive intact).
+  - 17 behavioral checks on a tiny fixture (null hit / air target / non-air target / AABB overlap / per-phase / Obsidian in Gamma / taxonomy success + failure shapes).
+  - 6 chunk-unload + reload persistence checks on the real `World` (place Stone survives; break survives; Beta state untouched by Alpha edit; global state map records the placed block).
+- `tests/headless/smoke.cjs` — extended with 19 Phase 2.3 static-analysis checks. Process-exit gate now also requires Phase 2.3 to pass.
+- `tests/gameplay.spec.js` — 3 new Phase 2.3 tests using the `placeBlock` debug hook:
+  - placeBlock writes Stone at (x, y, z) in the current phase and reads back via `world.getBlock`
+  - placeBlock refuses to overwrite a non-air target (returns `target-not-air`)
+  - placeBlock persists across chunk unload + reload (the §2.4 acceptance in the browser)
 
-**Problem.** The player needs to be able to place blocks (left-click on a face) and break blocks (left-click on the existing block). Per-phase place/break is the gating question: does the player place a block in the *current* phase only (and the other phases still show air/old block), or do they place it in *all* phases simultaneously?
+**Acceptance (from plan §2.3 + §2.4):**
+- ✅ LMB breaks the targeted block; the cell becomes `BLOCK_AIR` in the current phase only. Beta + Gamma are untouched (per-phase write).
+- ✅ RMB on a face places Stone on the adjacent face cell, in the current phase only (face hit + target cell air + no AABB overlap).
+- ✅ RMB in open air cycles the phase (existing §2.1 behavior, preserved).
+- ✅ The placed block persists through save → reload round-trip (already covered by Phase 1.7).
+- ✅ The placed block persists through chunk unload + reload (verified behaviorally in test-phase23.cjs).
+- ✅ The broken block persists through chunk unload + reload (the §2.4 acceptance — `loadChunk` now applies `_globalStateMap` entries whenever the key exists, including BLOCK_AIR).
+- ✅ `#block-hint` shows the targeted block's name + visible/solid state (already wired by `updateBlockHint`).
+- ✅ Breaking an invisible block in the current phase shows the "Block not solid in current phase" notification and does not modify the world (existing `breakBlock` logic).
+- ✅ All earlier phase tests still pass: 1.2 (17/17), 1.3 (7/7), 1.4 (21/21), 1.5 (12/12), 1.6 (21/21), 1.7 (26/26), 2.2 (35/35). 2.3 (50/50). Smoke test green; Playwright 36/36 (3 new Phase 2.3 tests).
 
-Per `PROJECT_REMEDIATION_PLAN.md` §2.3, the canonical answer is: **place in the current phase only, break in the current phase only.** The player's edits live in `World._globalStateMap` (Phase 1.7 already exports / imports that snapshot). The place/break logic should call `world.setBlock(x, y, z, phase, blockId)` and let the chunk reload propagate the change to the renderer.
+**What still needs visual verification in a real browser** (cannot run in this sandbox — WebGL fails):
+- RMB on a Stone block visibly places a Stone cube on the adjacent face.
+- RMB in open air visibly cycles the phase (existing §2.1 behavior).
+- The block break survives a walk-far-enough-to-unload-chunk + walk-back round-trip.
+- The break also survives a UI-level cycle (so the same physical block is gone in all three phases unless the player places it again).
 
-See `PHASE_2_3_BRIEF.md` (created in this commit) for the canonical Phase 2.3 starting brief — acceptance, fix shape, files to touch, how to verify, and common pitfalls.
+**Files touched in Phase 2.3:**
+- `src/input/placeBlock.js` (new — pure helper)
+- `src/core/world.js` (`loadChunk` applies `_globalStateMap` entries when the key exists, including BLOCK_AIR)
+- `main.js` (RMB disambiguation in contextmenu handler; `tryPlaceStoneOnFace` helper; `spawnPlaceParticles`; `placeAnchor` stub; `__phaseShifter__.placeBlock` debug hook)
+- `tests/headless/test-phase23.cjs` (new)
+- `tests/headless/smoke.cjs` (Phase 2.3 static-analysis block + exit gate)
+- `tests/gameplay.spec.js` (3 new Phase 2.3 tests)
 
-**How to verify (Phase 2.3 acceptance):**
+## What's next — Phase 2.4: Phase memory persistence
+
+**Problem.** Phase 2.3 locked in per-phase place/break and the chunk-unload + reload persistence path. The §2.4 acceptance also has a wider goal: the player's block memory should survive a save → reload round-trip, not just a chunk unload.
+
+The current `World` export/import is from Phase 1.7: `exportGlobalState` and `importGlobalState` filter out BLOCK_AIR on both sides. This means:
+- A placed Stone block survives save → reload (the global state preserves non-air edits).
+- A broken block does NOT survive save → reload (the AIR is filtered out on export).
+
+The Phase 2.3 chunk-unload + reload behavior is now correct (BLOCK_AIR is applied on reload). For Phase 2.4 we need to extend the same "the player's value wins, including AIR" guarantee to the save format. Trade-off: the save file gets bigger (it now records every player's AIR too). That's the right design — the player broke the block, the break should stick.
+
+See `PHASE_2_4_BRIEF.md` (created in this commit) for the canonical Phase 2.4 starting brief — acceptance, fix shape, files to touch, how to verify, and common pitfalls.
+
+**How to verify (Phase 2.4 acceptance):**
 ```bash
 node --check main.js
 npm run build
@@ -380,7 +436,14 @@ node tests/headless/test-phase15.cjs   # 12/12 still pass
 node tests/headless/test-phase16.cjs   # 21/21 still pass
 node tests/headless/test-phase17.cjs   # 26/26 still pass
 node tests/headless/test-phase22.cjs   # 35/35 still pass
-node tests/headless/test-phase23.cjs   # new — Phase 2.3
+node tests/headless/test-phase23.cjs   # 50/50 still pass
+node tests/headless/test-phase24.cjs   # new — Phase 2.4
 sudo -E -n node tests/headless/smoke.cjs
 npx playwright test
 ```
+
+---
+
+## What's next — Phase 2.4: Phase memory persistence
+
+See `PHASE_2_4_BRIEF.md` (created in this commit) for the canonical Phase 2.4 starting brief — acceptance, fix shape, files to touch, how to verify, and common pitfalls.

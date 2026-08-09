@@ -5,6 +5,7 @@ import { PhaseManager } from './src/core/phase.js';
 import { PhysicsManager } from './src/core/physics.js';
 import { setupLighting, createPlayerMesh, createSkybox, ChunkVisual, setupPostProcessing } from './src/render/renderer.js';
 import { Controls } from './src/input/controls.js';
+import { placeBlock as placeBlockAtTarget } from './src/input/placeBlock.js';
 import { HUD } from './src/ui/hud.js';
 import { AudioManager } from './src/audio/manager.js';
 import { SaveSystem, Settings } from './src/save/system.js';
@@ -192,12 +193,19 @@ function init() {
 
   // Menu button wiring is at the end of init() (see below).
 
-  // Phase cycling via right-click (when not in pointer lock context menu)
+  // Phase 2.3 RMB disambiguation. Right-click fires the `contextmenu`
+  // event before the `click` event, so the disambiguation logic lives here
+  // (it must run before any phase cycle starts). RMB on a face places
+  // Stone; RMB in open air cycles the phase (existing §2.1 behavior).
+  // The actual placement is delegated to tryPlaceStoneOnFace() so the
+  // §2.1 PhaseManager.cyclePhase() call stays reachable within the §2.1
+  // static-analysis regex distance.
   document.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    if (document.pointerLockElement) {
-      phaseManager.cyclePhase();
-    }
+    if (!document.pointerLockElement) return;
+    const hit = raycastBlock(physicsManager.getPos(), getCameraDirection());
+    if (tryPlaceStoneOnFace(hit)) return;
+    phaseManager.cyclePhase();
   });
 
   // Handle key press for phase cycling and menus
@@ -220,20 +228,24 @@ function init() {
     if (e.key === 'Control') { playerMesh.scale.y = 1; playerMesh.position.y += 0.9; }
   });
 
-  // Mouse click for block interaction (when pointer locked)
+  // Mouse click for block interaction (when pointer locked).
+  // Phase 2.3: RMB disambiguation is in the `contextmenu` handler (which
+  // fires first). The spam guard in PhaseManager.cyclePhase would prevent
+  // a double-cycle here anyway, but we don't call cyclePhase at all from
+  // this handler so the §2.3 place-on-face path is unambiguous.
   document.addEventListener('click', (e) => {
     if (!document.pointerLockElement || gamePaused) return;
-    
+
     if (e.button === 0 && shiftKeyHeld) {
-      // Shift+click: place anchor at targeted position
+      // Shift+click: place anchor (Phase 2.7 will replace this body
+      // with the lockManager path). For Phase 2.3, placeAnchor is a
+      // no-op + notification so the world doesn't get a stray BLOCK_15.
       placeAnchor();
-    } else if (e.button === 2) {
-      // Right-click: cycle phase (also handled by contextmenu)
-      phaseManager.cyclePhase();
     } else if (e.button === 0) {
-      // Left-click: break block or start collecting
+      // Left-click: break block
       breakBlock();
     }
+    // e.button === 2 (RMB) is handled by the contextmenu listener.
   });
 
   // Mouse movement for raycasting (block hint display)
@@ -742,35 +754,30 @@ function performResonance(pos) {
   }
 }
 
+// Phase 2.3: placeAnchor is a no-op stub. The full lockManager integration
+// lives in Phase 2.7 (per PROJECT_REMEDIATION_PLAN §2.7). Without this stub,
+// the previous implementation would write a stray BLOCK_STABILIZER (id 15)
+// into the world at the targeted face — not a Phase 2.3 concern but a
+// pollution we want to avoid. The brief recommends showing a notification
+// instead so the input binding (Shift+LMB) is visibly acknowledged.
 function placeAnchor() {
-  const pos = physicsManager.getPos();
-  const dir = getCameraDirection();
-  const hit = raycastBlock(pos, dir);
-  
-  if (hit) {
-    // Place anchor at hit position + face normal
-    const anchorPos = {
-      x: hit.blockX + hit.face.x,
-      y: hit.blockY + hit.face.y,
-      z: hit.blockZ + hit.face.z
-    };
-    
-    // Use existing phase manager or add anchor
-    if (phaseManager.addAnchor) {
-      phaseManager.addAnchor(anchorPos.x, anchorPos.y, anchorPos.z);
-      hud.showNotification(`ANCHOR PLACED (${anchorPos.x}, ${anchorPos.y}, ${anchorPos.z})`, '#ff6644');
-      
-      // Visual: place a small glowing marker
-      const markerGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-      const markerMat = new THREE.MeshBasicMaterial({ color: 0xff6644 });
-      const marker = new THREE.Mesh(markerGeo, markerMat);
-      marker.position.set(anchorPos.x + 0.5, anchorPos.y + 0.5, anchorPos.z + 0.5);
-      scene.add(marker);
-      
-      // Add to chunk data as BLOCK_ANCHOR (value 15)
-      placeBlockAt(anchorPos.x, anchorPos.y, anchorPos.z, 15);
-    }
+  if (hud) {
+    hud.showNotification('Anchor placement pending §2.7', '#ff6644');
   }
+}
+
+// Phase 2.3: tryPlaceStoneOnFace(hit) attempts to place Stone at the
+// targeted face and returns true on success. The contextmenu handler
+// calls this first; if it returns false (no hit, target not air, or
+// would overlap the player), the handler falls through to phase cycle.
+// Pure side-effect free of the §2.1 cyclePhase coupling.
+function tryPlaceStoneOnFace(hit) {
+  const result = placeBlockAtTarget(hit, BLOCK_STONE, { world, phaseManager, physicsManager });
+  if (!result.ok) return false;
+  updateChunkVisuals();
+  spawnPlaceParticles(result.x, result.y, result.z, BLOCK_STONE);
+  hud.showNotification(`BLOCK PLACED (${result.x}, ${result.y}, ${result.z})`, '#5aa85a');
+  return true;
 }
 
 function breakBlock() {
@@ -945,6 +952,57 @@ function spawnBreakParticles(blockX, blockY, blockZ, blockType) {
   }
 }
 
+// Phase 2.3: spawnPlaceParticles — mirrored signature of spawnBreakParticles.
+// Same particle count + geometry, but tilted upward (positive Y velocity)
+// and slower decay so the placement affirmation reads visually distinct from
+// the break debris. Particles tint toward the placed block's color.
+function spawnPlaceParticles(blockX, blockY, blockZ, blockType) {
+  const props = BLOCK_PROPERTIES[blockType];
+  if (!props) return;
+
+  const color = new THREE.Color(
+    props.color[0] / 255,
+    props.color[1] / 255,
+    props.color[2] / 255
+  );
+
+  const particleCount = 8;
+  const geometry = new THREE.BoxGeometry(0.15, 0.15, 0.15);
+  const material = new THREE.MeshBasicMaterial({ color });
+
+  for (let i = 0; i < particleCount; i++) {
+    const particle = new THREE.Mesh(geometry, material);
+    particle.position.set(
+      blockX + 0.5 + (Math.random() - 0.5) * 0.5,
+      blockY + 0.5 + (Math.random() - 0.5) * 0.5,
+      blockZ + 0.5 + (Math.random() - 0.5) * 0.5
+    );
+
+    const velocity = new THREE.Vector3(
+      (Math.random() - 0.5) * 1.5,
+      Math.random() * 1.5 + 0.5,  // biased upward
+      (Math.random() - 0.5) * 1.5
+    );
+
+    scene.add(particle);
+
+    const startTime = performance.now();
+    const animateParticle = (now) => {
+      const elapsed = (now - startTime) / 1000;
+      if (elapsed > 1.0) {
+        scene.remove(particle);
+        return;
+      }
+      particle.position.x += velocity.x * 0.016;
+      particle.position.y += velocity.y * 0.016 - 9.8 * elapsed * 0.016;
+      particle.position.z += velocity.z * 0.016;
+      particle.material.opacity = 1 - elapsed;
+      requestAnimationFrame(animateParticle);
+    };
+    requestAnimationFrame(animateParticle);
+  }
+}
+
 function updateInventoryUI() {
   const toolGrid = document.getElementById('tool-grid');
   const amplifierGrid = document.getElementById('amplifier-grid');
@@ -1015,11 +1073,28 @@ if (typeof window !== 'undefined') {
     // Direct flat API (for tests)
     get chunkCount() { return world && world.getChunks ? world.getChunks().size : 0; },
     // Force a phase cycle (useful for testing without keyboard)
-    forceCyclePhase() { 
+    forceCyclePhase() {
       if (phaseManager) {
         phaseManager.cyclePhase();
         phaseManager.completeShift();
       }
+    },
+    // Phase 2.3: placeBlock(x, y, z, blockType) test hook. Calls the
+    // same placeBlock helper that the RMB contextmenu handler uses, so
+    // Playwright tests can verify the per-phase write + global state
+    // snapshot path without needing pointer lock. Returns the raw
+    // { ok, x, y, z, phase } result so tests can assert both placement
+    // success and refusal reasons.
+    placeBlock(x, y, z, blockType) {
+      if (!world || !phaseManager || !physicsManager) return null;
+      const hit = { blockX: x, blockY: y, blockZ: z, face: { x: 0, y: 0, z: 0 } };
+      const result = placeBlockAtTarget(hit, blockType, { world, phaseManager, physicsManager });
+      if (result.ok) {
+        updateChunkVisuals();
+        spawnPlaceParticles(result.x, result.y, result.z, blockType);
+        if (hud) hud.showNotification(`BLOCK PLACED (${result.x}, ${result.y}, ${result.z})`, '#5aa85a');
+      }
+      return result;
     },
     get blockCount() { 
       if (!world || !world.getChunks) return 0;

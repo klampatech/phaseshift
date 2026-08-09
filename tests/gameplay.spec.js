@@ -139,4 +139,104 @@ test.describe('Phase Shifter - Gameplay Tests', () => {
     expect(typeof currentPhase === 'number');
     expect(afterShift.phaseName).not.toBe('');
   });
+
+test('placeBlock debug hook writes Stone at (x, y, z) in the current phase (Phase 2.3)', async ({ page }) => {
+    // Find a known-empty cell that is reachable from the spawn position. We
+    // aim at y=20-ish, which is mid-air in the Forest biome (the floor is
+    // around y=10-15). Calling placeBlock should:
+    //   - return { ok: true, x, y, z, phase }
+    //   - write a Stone block at those coordinates in the player's phase
+    //   - the next world.getBlock(...) call reads back Stone
+    await page.waitForTimeout(500);
+
+    const target = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const phase = ps.phase;
+      // The Forest surface is around y=8-15; pick a y well above the
+      // surface so the cell is mid-air and definitely writable.
+      const x = 10, y = 30, z = 10;
+      const result = ps.placeBlock(x, y, z, 1 /* BLOCK_STONE */);
+      // Read back via world.getBlock(x, y, z, phase) so we verify the
+      // write hit the chunk data, not just the spinner state.
+      const world = ps.world;
+      const after = world.getBlock(x, y, z, phase);
+      return { result, after, phase };
+    });
+
+    expect(target.result.ok).toBe(true);
+    expect(target.result.x).toBe(10);
+    expect(target.result.y).toBe(30);
+    expect(target.result.z).toBe(10);
+    expect(target.result.phase).toBe(target.phase);
+    expect(target.after).toBe(1); // BLOCK_STONE
+  });
+
+  test('placeBlock refuses to overwrite non-air target cell (Phase 2.3)', async ({ page }) => {
+    // Place Stone at (12, 30, 12) twice. The second call should refuse
+    // (target-not-air) and the cell should still be Stone (id 1).
+    await page.waitForTimeout(500);
+
+    const result = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const phase = ps.phase;
+      const first = ps.placeBlock(12, 30, 12, 1);
+      const second = ps.placeBlock(12, 30, 12, 1);
+      const after = ps.world.getBlock(12, 30, 12, phase);
+      return { first, second, after, phase };
+    });
+
+    expect(result.first.ok).toBe(true);
+    expect(result.second.ok).toBe(false);
+    expect(result.second.reason).toBe('target-not-air');
+    expect(result.after).toBe(1);
+  });
+
+  test('placeBlock persists across chunk unload + reload (Phase 2.3 / 2.4)', async ({ page }) => {
+    // §2.4 acceptance: a placed block survives chunk unload + reload.
+    // Walks the player far enough to unload the chunk, then back, and
+    // asserts the cell is still Stone. (The headless test-phase23.cjs
+    // exercises the unit-level unload via chunks.delete; this is the
+    // browser-level counterpart.)
+    await page.waitForTimeout(500);
+
+    const target = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const phase = ps.phase;
+      const x = 14, y = 30, z = 14;
+      const before = ps.world.getBlock(x, y, z, phase);
+      const placed = ps.placeBlock(x, y, z, 1);
+      return { x, y, z, phase, before, placed };
+    });
+
+    expect(target.placed.ok).toBe(true);
+    expect(target.before).toBe(0); // air before
+
+    // Force the chunk to be unloaded by reaching into the chunks Map.
+    // The §2.4 acceptance test bypasses the in-game UNLOAD_CHUNK_DIST
+    // walk (which is slow) and pokes the data path directly. Walking
+    // works in a real browser E2E; this is the in-page equivalent.
+    const reloaded = await page.evaluate(({ x, y, z, phase }) => {
+      const ps = window.__phaseShifter__;
+      const world = ps.world;
+      // Find the chunk containing (x, z).
+      const CHUNK_SIZE = 16;
+      const cx = Math.floor(x / CHUNK_SIZE);
+      const cz = Math.floor(z / CHUNK_SIZE);
+      const key = `${cx},${cz}`;
+      // Unload it.
+      if (world.chunks.has(key)) {
+        world.chunks.delete(key);
+      }
+      // Force a load (ensureChunk calls loadChunk via the generator +
+      // _globalStateMap apply).
+      if (world.ensureChunk) {
+        world.ensureChunk(cx, cz);
+      }
+      // Read back. The cell should still be Stone because the
+      // _globalStateMap recorded the player's edit.
+      return world.getBlock(x, y, z, phase);
+    }, target);
+
+    expect(reloaded).toBe(1); // BLOCK_STONE survives reload
+  });
 });

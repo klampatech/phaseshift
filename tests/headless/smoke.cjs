@@ -240,6 +240,39 @@ const CHROMIUM_ARGS = [
   // BLOCK_PROPERTIES[id].phaseSolid[phase] with a .solid fallback.
   // PhysicsManager._isBlockSolid delegates to it; the renderer must NOT
   // reach into phaseSolid for culling (visibility is per-phase data).
+  // Phase 2.3: per-phase place/break. placeBlock is extracted to
+  // src/input/placeBlock.js with a (hit, blockId, context) signature so
+  // it's testable without Three.js. main.js imports it from there and
+  // wires the contextmenu handler to do the RMB disambiguation:
+  //   - face hit + non-air target + no overlap → place Stone, skip cycle
+  //   - otherwise → cyclePhase() (existing §2.1 behavior)
+  // placeAnchor is stubbed (no BLOCK_15 stray write — §2.7 will replace
+  // it). World.loadChunk applies _globalStateMap entries on reload so
+  // breaks survive chunk unload (the §2.4 acceptance).
+  const placeBlockSrc = path.resolve(__dirname, '..', '..', 'src', 'input', 'placeBlock.js');
+  const placeBlockText = fs2.existsSync(placeBlockSrc) ? fs2.readFileSync(placeBlockSrc, 'utf8') : '';
+  const phase23 = {
+    place_block_module_exports_place_block: /export\s+function\s+placeBlock\s*\(/.test(placeBlockText),
+    place_block_module_exports_aabb_helper: /export\s+function\s+playerAABBOverlapsCell\s*\(/.test(placeBlockText),
+    main_imports_place_block: /import\s*\{[^}]*placeBlock[^}]*\}\s*from\s*['"]\.\/src\/input\/placeBlock\.js['"]/.test(srcText),
+    place_block_signature_is_hit_block_id_context: /export\s+function\s+placeBlock\s*\(\s*hit\s*,\s*blockId\s*,\s*context\s*\)/.test(placeBlockText),
+    place_block_reads_current_phase: /phaseManager\.getCurrentPhase\s*\(/.test(placeBlockText),
+    place_block_writes_via_set_block: /world\.setBlock\s*\(\s*targetX\s*,\s*targetY\s*,\s*targetZ\s*,\s*phase\s*,\s*blockId\s*\)/.test(placeBlockText),
+    place_block_refuses_no_hit: /reason:\s*['"]no-hit['"]/.test(placeBlockText),
+    place_block_refuses_non_air_target: /existing\s*!==\s*BLOCK_AIR[\s\S]{0,200}?reason:\s*['"]target-not-air['"]/.test(placeBlockText),
+    place_block_refuses_player_overlap: /playerAABBOverlapsCell[\s\S]{0,200}?reason:\s*['"]overlaps-player['"]/.test(placeBlockText),
+    contextmenu_calls_place_block_with_stone: /addEventListener\(\s*['"]contextmenu['"][\s\S]*?placeBlockAtTarget\s*\([^,]+,\s*BLOCK_STONE/.test(srcText),
+    contextmenu_falls_back_to_cycle_phase: /addEventListener\(\s*['"]contextmenu['"][\s\S]*?phaseManager\.cyclePhase\s*\(\s*\)/.test(srcText),
+    place_anchor_no_stray_block_15: !/placeBlockAt\s*\([^)]*,\s*15\s*\)/.test(srcText),
+    place_anchor_shows_deferred_notification: /placeAnchor[\s\S]{0,400}?Anchor placement pending §2\.7/.test(srcText),
+    spawn_place_particles_defined: /function\s+spawnPlaceParticles\s*\(\s*blockX\s*,\s*blockY\s*,\s*blockZ\s*,\s*blockType\s*\)/.test(srcText),
+    place_block_debug_hook_present: /__phaseShifter__[\s\S]*?placeBlock\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*blockType\s*\)/.test(srcText),
+    force_cycle_phase_hook_intact: /__phaseShifter__[\s\S]*?forceCyclePhase\s*\(/.test(srcText),
+    load_chunk_applies_air_from_global_state: /this\._globalStateMap\.has\s*\(\s*globalKey\s*\)/.test(worldText),
+    main_unvalidated_write_primitive_intact: /function\s+placeBlockAt\s*\([^)]*\)[\s\S]*?world\.setBlock\s*\(/.test(srcText),
+  };
+  console.log('\n=== Phase 2.3 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase23, null, 2));
   const physicsSrc = path.resolve(__dirname, '..', '..', 'src', 'core', 'physics.js');
   const physicsText2 = fs2.existsSync(physicsSrc) ? fs2.readFileSync(physicsSrc, 'utf8') : '';
   const phase22 = {
@@ -341,8 +374,26 @@ const CHROMIUM_ARGS = [
     phase21_main_drives_shift_overlay: phase21.main_drives_shift_overlay,
     phase21_force_cycle_phase_hook_intact: phase21.force_cycle_phase_hook_intact,
     phase21_contextmenu_prevent_default_intact: phase21.contextmenu_prevent_default_intact,
+    phase23_place_block_module_exports_place_block: phase23.place_block_module_exports_place_block,
+    phase23_place_block_module_exports_aabb_helper: phase23.place_block_module_exports_aabb_helper,
+    phase23_main_imports_place_block: phase23.main_imports_place_block,
+    phase23_place_block_signature_is_hit_block_id_context: phase23.place_block_signature_is_hit_block_id_context,
+    phase23_place_block_reads_current_phase: phase23.place_block_reads_current_phase,
+    phase23_place_block_writes_via_set_block: phase23.place_block_writes_via_set_block,
+    phase23_place_block_refuses_no_hit: phase23.place_block_refuses_no_hit,
+    phase23_place_block_refuses_non_air_target: phase23.place_block_refuses_non_air_target,
+    phase23_place_block_refuses_player_overlap: phase23.place_block_refuses_player_overlap,
+    phase23_contextmenu_calls_place_block_with_stone: phase23.contextmenu_calls_place_block_with_stone,
+    phase23_contextmenu_falls_back_to_cycle_phase: phase23.contextmenu_falls_back_to_cycle_phase,
+    phase23_place_anchor_no_stray_block_15: phase23.place_anchor_no_stray_block_15,
+    phase23_place_anchor_shows_deferred_notification: phase23.place_anchor_shows_deferred_notification,
+    phase23_spawn_place_particles_defined: phase23.spawn_place_particles_defined,
+    phase23_place_block_debug_hook_present: phase23.place_block_debug_hook_present,
+    phase23_force_cycle_phase_hook_intact: phase23.force_cycle_phase_hook_intact,
+    phase23_load_chunk_applies_air_from_global_state: phase23.load_chunk_applies_air_from_global_state,
+    phase23_main_unvalidated_write_primitive_intact: phase23.main_unvalidated_write_primitive_intact,
   };
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -363,6 +414,7 @@ const CHROMIUM_ARGS = [
   const phase17Ok = Object.values(phase17).every(Boolean);
   const phase21Ok = Object.values(phase21).every(Boolean);
   const phase22Ok = Object.values(phase22).every(Boolean);
+  const phase23Ok = Object.values(phase23).every(Boolean);
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -374,7 +426,8 @@ const CHROMIUM_ARGS = [
     phase16Ok &&
     phase17Ok &&
     phase21Ok &&
-    phase22Ok ? 0 : 1
+    phase22Ok &&
+    phase23Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

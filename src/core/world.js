@@ -194,7 +194,13 @@ export class World {
     // Gamma: more inverted + special blocks
     chunk.gammaData = gen.invertForPhase(chunk.betaData, PHASE_GAMMA);
 
-    // Blend with global state (memory)
+    // Blend with global state (memory). Phase 2.3 + 2.4: a player break
+    // writes BLOCK_AIR to _globalStateMap, and we MUST re-apply it on
+    // reload — otherwise the generator's value would resurrect the block
+    // (§2.4 acceptance: "break a block, walk far enough to unload the
+    // chunk, walk back — the block is still broken"). The presence of
+    // the key in the map is the canonical "player has touched this cell"
+    // signal; the stored value (AIR or non-air) is what wins on reload.
     for (let p = 0; p < PHASE_COUNT; p++) {
       const data = [chunk.alphaData, chunk.betaData, chunk.gammaData][p];
       for (let i = 0; i < data.length; i++) {
@@ -203,10 +209,11 @@ export class World {
         const wy = by;
         const wz = cz * CHUNK_SIZE + bz;
 
-        // Check global state (player memory)
-        const globalBlock = this.getGlobalBlock(wx, wy, wz, p);
-        if (globalBlock !== BLOCK_AIR) {
-          data[i] = globalBlock;
+        // Check global state (player memory). The key existence is the
+        // signal; the value (including BLOCK_AIR) wins on reload.
+        const globalKey = this._globalKey(wx, wy, wz, p);
+        if (this._globalStateMap.has(globalKey)) {
+          data[i] = this._globalStateMap.get(globalKey);
         }
       }
     }
