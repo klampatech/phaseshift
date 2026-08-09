@@ -450,13 +450,14 @@ ebfcd07  Initial import + Phase 0: enforce single-engine architectural decision
 
 ---
 
-## What's next — Phase 3 (Scan, Resonance, Anchor, Audio)
+## What's next — Phase 2.5: Scan / Phase Lens
 
-Phase 2 is done. The four §2 sub-phases (Phase shift, Phase-relative collision, Per-phase place/break, Phase memory persistence) all ship. Phase 3 is the next group from the plan:
+Phase 2 is done. The four §2 sub-phases (Phase shift, Phase-relative collision, Per-phase place/break, Phase memory persistence) all ship. The plan's §2.5–§2.8 (Scan, Resonance, Anchor, Audio) are still on the queue, but each one is its own session-sized phase with its own brief.
 
-- **2.5 Scan (E)** — hold E to highlight phase-different blocks in a 4-block radius; energy cost 0.5/sec.
-- **2.6 Resonance (Q)** — one-shot on Q press; `world.resonate(x, y, z, radius=1)`; energy cost 15.
-- **2.7 Phase Anchor (Shift+LMB)** — port `lockManager` from the orphan `src/core/phaseLockManager.js`; 10s lock duration.
-- **2.8 Audio integration** — `audioManager.init()` on blocker click; ambient music per phase; footstep throttling; playShift/playBlockBreak/playBlockPlace/playCollapse hooks.
+Phase 2.5 (the immediate next session) is the Scan / Phase Lens mechanic — the player holds E to *see* phase differences in the world around them. The plan's acceptance is:
 
-The placeAnchor stub from Phase 2.3 is the placeholder for the §2.7 implementation. See `PROJECT_REMEDIATION_PLAN.md` §2.5–§2.8 for the canonical next-step spec. A new `PHASE_3_BRIEF.md` (covering §2.5 + §2.6 + §2.7 + §2.8) should be written at the start of the next session.
+> Holding E in a dense Forest shows colored wireframes around blocks that differ from the current phase. The energy bar ticks down.
+
+The current code has scaffolding: `World.scanNearby` (Phase 1.4) returns multi-phase blocks; `main.js#performScan` does a one-shot count; `updatePhaseLensVisibility` fades non-current phases. But the implementation is partial — no colored wireframes per phase, no energy drain on hold, no beam-from-camera, no unit tests.
+
+See `PHASE_2_5_BRIEF.md` (created in this commit) for the canonical Phase 2.5 starting brief — acceptance, fix shape, files to touch, how to verify, and common pitfalls. The §2.6 (Resonance), §2.7 (Phase Anchor), and §2.8 (Audio integration) briefs will be created in their own sessions; the placeAnchor stub from Phase 2.3 is the placeholder for the §2.7 implementation.
