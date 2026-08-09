@@ -345,7 +345,14 @@ export function createPlayerMesh() {
   return group;
 }
 
-// Create skybox (gradient)
+// Create skybox (gradient). Phase 3.1: the skybox shader now
+// blends a per-biome tint with a per-phase tint. The renderer's
+// `setBiomeTint` / `setPhaseTint` methods update the uniforms;
+// the game loop's per-frame biome tick calls them after lerping
+// toward the target biome color. The two tints are multiplied
+// (the §3.1 "phase × biome" formula) so the visible skybox
+// reads as the player's current phase tinted by the current
+// biome — multiplicative blend, not destructive replacement.
 export function createSkybox(scene) {
   const skyGeom = new THREE.SphereGeometry(500, 32, 32);
   const skyMat = new THREE.ShaderMaterial({
@@ -354,6 +361,13 @@ export function createSkybox(scene) {
       bottomColor: { value: new THREE.Color(0xffffff) },
       offset: { value: 20 },
       exponent: { value: 0.6 },
+      // Phase 3.1: per-biome tint and per-phase tint (THREE.Vector3
+      // of RGB in [0, 1]). Both default to white (1, 1, 1) so the
+      // pre-Phase-3.1 skybox rendering is unchanged until the
+      // game loop starts driving the uniforms. The fragment shader
+      // multiplies both tints into the base gradient.
+      biomeTint: { value: new THREE.Vector3(1, 1, 1) },
+      phaseTint: { value: new THREE.Vector3(1, 1, 1) },
     },
     vertexShader: `
       varying vec3 vWorldPosition;
@@ -368,16 +382,52 @@ export function createSkybox(scene) {
       uniform vec3 bottomColor;
       uniform float offset;
       uniform float exponent;
+      // Phase 3.1: per-biome tint + per-phase tint. Both are
+      // THREE.Vector3 of [r, g, b] in [0, 1]. The base gradient
+      // is multiplied by both tints so the visible skybox reads
+      // as (biomeTint * phaseTint) (the §3.1
+      // "phase × biome" formula). The tints default to white so
+      // the pre-Phase-3.1 rendering is preserved.
+      uniform vec3 biomeTint;
+      uniform vec3 phaseTint;
       varying vec3 vWorldPosition;
       void main() {
         float h = normalize(vWorldPosition + offset).y;
-        gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+        vec3 base = mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0));
+        gl_FragColor = vec4(base * biomeTint * phaseTint, 1.0);
       }
     `,
     side: THREE.BackSide,
   });
   const sky = new THREE.Mesh(skyGeom, skyMat);
+  // Phase 3.1: tag the mesh so the game loop can find it without
+  // relying on a `userData` mutation. The renderer's setBiomeTint /
+  // setPhaseTint methods look it up by name.
+  sky.name = 'skybox';
   scene.add(sky);
+
+  // Phase 3.1: convenience methods on the mesh. The game loop calls
+  // these after lerping the biome color toward the target. `tint`
+  // is the [r, g, b] array in [0, 1] (the canonical
+  // `biomeTint(biomeId).color` shape from src/world/biome.js).
+  // Defensive: missing / non-finite channels fall back to 1.0
+  // (white) so the skybox never goes black from a bad call.
+  sky.setBiomeTint = function setBiomeTint(tint) {
+    const v = (tint && typeof tint === 'object') ? tint : [1, 1, 1];
+    skyMat.uniforms.biomeTint.value.set(
+      Number.isFinite(v[0]) ? v[0] : 1,
+      Number.isFinite(v[1]) ? v[1] : 1,
+      Number.isFinite(v[2]) ? v[2] : 1,
+    );
+  };
+  sky.setPhaseTint = function setPhaseTint(tint) {
+    const v = (tint && typeof tint === 'object') ? tint : [1, 1, 1];
+    skyMat.uniforms.phaseTint.value.set(
+      Number.isFinite(v[0]) ? v[0] : 1,
+      Number.isFinite(v[1]) ? v[1] : 1,
+      Number.isFinite(v[2]) ? v[2] : 1,
+    );
+  };
   return sky;
 }
 
@@ -1129,6 +1179,27 @@ export class Renderer {
   // existing renderer-API smoke tests don't break.
   showScanResults(results) {
     if (this.scanOverlay) this.scanOverlay.showScanHighlights(results, this.phaseManager ? this.phaseManager.getCurrentPhase() : 0);
+  }
+
+  // Phase 3.1: thin wrappers over the skybox shader uniforms so
+  // main.js has a single dispatcher API. The skybox is a Mesh
+  // (returned by createSkybox) with `setBiomeTint` / `setPhaseTint`
+  // methods; the renderer forwards to them. The skybox is looked
+  // up by name (`skybox`) so a missing scene object is a no-op.
+  // `tint` is an [r, g, b] array in [0, 1] — the canonical
+  // `biomeTint(biomeId).color` shape from src/world/biome.js, or
+  // a hex/RGB array from the phase color.
+  setBiomeTint(tint) {
+    const sky = this.scene ? this.scene.getObjectByName('skybox') : null;
+    if (sky && typeof sky.setBiomeTint === 'function') {
+      sky.setBiomeTint(tint);
+    }
+  }
+  setPhaseTint(tint) {
+    const sky = this.scene ? this.scene.getObjectByName('skybox') : null;
+    if (sky && typeof sky.setPhaseTint === 'function') {
+      sky.setPhaseTint(tint);
+    }
   }
 
   // Update or create a chunk's visual representation

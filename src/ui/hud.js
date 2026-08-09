@@ -1,4 +1,6 @@
 // HUD rendering (DOM-based, minimal overlay)
+import { biomeLabel as biomeLabelFromId } from '../world/biome.js';
+
 export class HUD {
   constructor(container) {
     this.container = container;
@@ -9,6 +11,16 @@ export class HUD {
     this._phaseJustShifted = false;
     this._shiftDirection = 0;
     this._blockHintThrottle = 0;
+    // Phase 3.1: per-frame biome tracking. The DOM element is
+    // pre-existing in index.html (the `#biome-info` div at line
+    // 136). The text is updated ONLY on the change edge
+    // (`_lastBiomeId !== newBiomeId`) — not every frame — to
+    // avoid unnecessary DOM writes (the §3.1 brief's "edge
+    // detector" pitfall).
+    this._lastBiomeId = -1;
+    this._biomeInfoEl = (typeof document !== 'undefined')
+      ? document.querySelector('#biome-info')
+      : null;
     this._createElements();
   }
 
@@ -69,6 +81,40 @@ export class HUD {
     const phase = phaseManager.getCurrentPhase();
     const energy = phaseManager.getEnergy();
     const maxEnergy = phaseManager.getMaxEnergy();
+
+    // Phase 3.1: update the #biome-info text on biome change. The
+    // biome id comes from `world.getBiome(playerPos.x, playerPos.z)`
+    // (the deterministic per-region assignment in src/core/world.js).
+    // The text is updated ONLY on the change edge
+    // (`_lastBiomeId !== newBiomeId`) — the per-frame biome read
+    // happens elsewhere (in the game loop's per-frame biome tick),
+    // and the HUD only owns the DOM text. The label is
+    // "BIOME: <label>" (the §3.1 brief's contract). Defensive:
+    // when `world` is null or the player is mid-init, no text
+    // change fires (the previous label stays).
+    if (world && typeof world.getBiome === 'function' && this._biomeInfoEl) {
+      const p = (physicsManager && typeof physicsManager.getPos === 'function')
+        ? physicsManager.getPos()
+        : null;
+      if (p && Number.isFinite(p.x) && Number.isFinite(p.z)) {
+        const newBiomeId = world.getBiome(p.x, p.z);
+        if (newBiomeId !== this._lastBiomeId) {
+          // Lazy import to avoid a circular dependency: the
+          // biome.js module sits at src/world/biome.js and the
+          // HUD sits at src/ui/hud.js. The dynamic import keeps
+          // the static-analysis simple.
+          // For a one-shot lookup we can read the label via
+          // `BIOME_NAMES[biomeId - 1]` (the canonical array in
+          // src/core/constants.js — same convention as the
+          // src/world/biome.js pure module).
+          // We import the helper module eagerly at the top of
+          // the file (see imports below) so this stays a
+          // synchronous call.
+          this._biomeInfoEl.textContent = `BIOME: ${biomeLabelFromId(newBiomeId)}`;
+          this._lastBiomeId = newBiomeId;
+        }
+      }
+    }
 
     // Phase shift detection
     const wasShifting = this._lastShift;

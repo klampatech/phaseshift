@@ -688,6 +688,99 @@ const CHROMIUM_ARGS = [
   console.log('\n=== Phase 2.1 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase21, null, 2));
 
+
+  // ── Phase 3.1 (Biomes) ────────────────────────────────────────
+  // The Phase 3.1 work surfaces the current biome in the HUD, tints
+  // the skybox + fog per biome, and lays the ground for §3.2-3.4.
+  // The pure module src/world/biome.js exports BIOME_TINTS (8 entries)
+  // + biomeTint / biomeLabel / biomeFogDensity / lerpBiomeTints /
+  // biomeTransitionDuration. main.js wires the per-frame biome tick
+  // (tickBiomesPerFrame) and the debug hooks (forceBiome,
+  // getCurrentBiomeId, etc). The renderer's skybox shader now blends
+  // a per-biome tint with a per-phase tint multiplicatively. The HUD
+  // updates the #biome-info DOM element on the change edge.
+  const biomeSrc = path.resolve(__dirname, '..', '..', 'src', 'world', 'biome.js');
+  const biomeText = fs2.existsSync(biomeSrc) ? fs2.readFileSync(biomeSrc, 'utf8') : '';
+  const phase31 = {
+    // src/world/biome.js module shape
+    biome_module_exports_biome_tints: /export\s+const\s+BIOME_TINTS\s*=\s*Object\.freeze\s*\(/.test(biomeText),
+    biome_module_exports_biome_tint_fn: /export\s+function\s+biomeTint\s*\(/.test(biomeText),
+    biome_module_exports_biome_label_fn: /export\s+function\s+biomeLabel\s*\(/.test(biomeText),
+    biome_module_exports_biome_fog_density_fn: /export\s+function\s+biomeFogDensity\s*\(/.test(biomeText),
+    biome_module_exports_lerp_biome_tints_fn: /export\s+function\s+lerpBiomeTints\s*\(/.test(biomeText),
+    biome_module_exports_biome_transition_duration_fn: /export\s+function\s+biomeTransitionDuration\s*\(/.test(biomeText),
+    biome_module_re_exports_biome_forest: /export\s*\{[^}]*\bBIOME_FOREST\b[^}]*\}\s*;?/.test(biomeText),
+    biome_module_re_exports_biome_crystal_cavern: /export\s*\{[^}]*\bBIOME_CRYSTAL_CAVERN\b[^}]*\}\s*;?/.test(biomeText),
+    biome_module_re_exports_biome_phase_nexus: /export\s*\{[^}]*\bBIOME_PHASE_NEXUS\b[^}]*\}\s*;?/.test(biomeText),
+    biome_module_re_exports_biome_names: /export\s*\{[^}]*\bBIOME_NAMES\b[^}]*\}\s*;?/.test(biomeText),
+    // BIOME_TINTS shape (8 entries, each with color + fogDensity)
+    biome_tints_has_forest_entry: /\[BIOME_FOREST\][\s\S]{0,80}?fogDensity:\s*0\.006/.test(biomeText),
+    biome_tints_has_caves_entry: /\[BIOME_CAVES\][\s\S]{0,80}?fogDensity:\s*0\.012/.test(biomeText),
+    biome_tints_has_deep_void_entry: /\[BIOME_DEEP_VOID\][\s\S]{0,80}?fogDensity:\s*0\.025/.test(biomeText),
+    biome_tints_has_ruins_entry: /\[BIOME_RUINS\][\s\S]{0,80}?fogDensity:\s*0\.008/.test(biomeText),
+    biome_tints_has_desert_entry: /\[BIOME_DESERT\][\s\S]{0,80}?fogDensity:\s*0\.004/.test(biomeText),
+    biome_tints_has_crystal_cavern_entry: /\[BIOME_CRYSTAL_CAVERN\][\s\S]{0,80}?fogDensity:\s*0\.014/.test(biomeText),
+    biome_tints_has_sky_ruins_entry: /\[BIOME_SKY_RUINS\][\s\S]{0,80}?fogDensity:\s*0\.005/.test(biomeText),
+    biome_tints_has_phase_nexus_entry: /\[BIOME_PHASE_NEXUS\][\s\S]{0,80}?fogDensity:\s*0\.018/.test(biomeText),
+    // main.js imports from src/world/biome.js
+    main_imports_biome_tint_from_biome_module: /import\s*\{[^}]*\bbiomeTint\b[^}]*\}\s*from\s*['"]\.\/src\/world\/biome\.js['"]/.test(srcText),
+    main_imports_biome_label_from_biome_module: /import\s*\{[^}]*\bbiomeLabel\b[^}]*\}\s*from\s*['"]\.\/src\/world\/biome\.js['"]/.test(srcText),
+    main_imports_biome_fog_density_from_biome_module: /import\s*\{[^}]*\bbiomeFogDensity\b[^}]*\}\s*from\s*['"]\.\/src\/world\/biome\.js['"]/.test(srcText),
+    main_imports_lerp_biome_tints_from_biome_module: /import\s*\{[^}]*\blerpBiomeTints\b[^}]*\}\s*from\s*['"]\.\/src\/world\/biome\.js['"]/.test(srcText),
+    main_imports_biome_transition_duration_from_biome_module: /import\s*\{[^}]*\bbiomeTransitionDuration\b[^}]*\}\s*from\s*['"]\.\/src\/world\/biome\.js['"]/.test(srcText),
+    // main.js module-level state
+    main_module_level_current_biome_id_decl: /^\s*let\s+currentBiomeId\s*=/m.test(srcText),
+    main_module_level_current_biome_tint_decl: /^\s*let\s+currentBiomeTint\s*=/m.test(srcText),
+    main_module_level_target_biome_tint_decl: /^\s*let\s+targetBiomeTint\s*=/m.test(srcText),
+    main_module_level_biome_transition_timer_decl: /^\s*let\s+biomeTransitionTimer\s*=/m.test(srcText),
+    // main.js tickBiomesPerFrame + game loop wiring
+    main_tick_biomes_per_frame_defined: /function\s+tickBiomesPerFrame\s*\(/.test(srcText),
+    main_tick_biomes_per_frame_reads_world_get_biome: /function\s+tickBiomesPerFrame[\s\S]{0,2000}?world\.getBiome\s*\(/.test(srcText),
+    main_tick_biomes_per_frame_uses_lerp_biome_tints: /function\s+tickBiomesPerFrame[\s\S]{0,2000}?lerpBiomeTints\s*\(/.test(srcText),
+    main_tick_biomes_per_frame_drives_scene_background: /function\s+tickBiomesPerFrame[\s\S]{0,6000}?scene\.background\.setRGB/.test(srcText),
+    main_tick_biomes_per_frame_drives_scene_fog_color: /function\s+tickBiomesPerFrame[\s\S]{0,6000}?scene\.fog\.color\.setRGB/.test(srcText),
+    main_tick_biomes_per_frame_drives_scene_fog_density: /function\s+tickBiomesPerFrame[\s\S]{0,6000}?scene\.fog\.density/.test(srcText),
+    main_tick_biomes_per_frame_drives_phase_light_color: /function\s+tickBiomesPerFrame[\s\S]{0,6000}?lighting\.phaseLight\.color/.test(srcText),
+    main_tick_biomes_per_frame_drives_renderer_set_biome_tint: /function\s+tickBiomesPerFrame[\s\S]{0,6000}?renderer\.setBiomeTint\s*\(/.test(srcText),
+    main_game_loop_calls_tick_biomes_per_frame: /tickBiomesPerFrame\s*\(\s*deltaTime\s*\)/.test(srcText),
+    // main.js onPhaseChanged drives the phase tint uniform
+    main_on_phase_changed_calls_set_phase_tint: /function\s+onPhaseChanged[\s\S]*?renderer\.setPhaseTint\s*\(/.test(srcText),
+    // main.js hud.update passes world
+    main_game_loop_calls_hud_update_with_world: /hud\.update\s*\(\s*phaseManager\s*,\s*physicsManager\s*,\s*world\s*\)/.test(srcText),
+    main_init_calls_hud_update_with_world: /function\s+init[\s\S]{0,15000}?hud\.update\s*\(\s*phaseManager\s*,\s*physicsManager\s*,\s*world\s*\)/.test(srcText),
+    // main.js debug hooks
+    debug_force_biome_hook_present: /__phaseShifter__[\s\S]*?forceBiome\s*\(\s*biomeId\s*\)/.test(srcText),
+    debug_force_biome_rejects_bad_input: /__phaseShifter__[\s\S]*?forceBiome[\s\S]{0,500}?bad-input/.test(srcText) || /__phaseShifter__[\s\S]*?forceBiome[\s\S]{0,500}?out-of-range/.test(srcText),
+    debug_get_current_biome_id_hook_present: /__phaseShifter__[\s\S]*?getCurrentBiomeId\s*\(/.test(srcText),
+    debug_lerp_biome_tints_hook_present: /__phaseShifter__[\s\S]*?lerpBiomeTints\s*\(\s*from\s*,\s*to\s*,\s*t\s*\)/.test(srcText),
+    debug_biome_label_hook_present: /__phaseShifter__[\s\S]*?biomeLabel\s*\(\s*biomeId\s*\)/.test(srcText),
+    debug_get_current_biome_tint_hook_present: /__phaseShifter__[\s\S]*?getCurrentBiomeTint\s*\(/.test(srcText),
+    debug_tick_biomes_per_frame_hook_present: /__phaseShifter__[\s\S]*?tickBiomesPerFrame\s*\(\s*dt\s*\)/.test(srcText),
+    debug_get_biome_transition_timer_hook_present: /__phaseShifter__[\s\S]*?getBiomeTransitionTimer\s*\(/.test(srcText),
+    debug_get_biome_transition_duration_hook_present: /__phaseShifter__[\s\S]*?getBiomeTransitionDuration\s*\(/.test(srcText),
+    // src/render/renderer.js skybox shader uniforms
+    renderer_create_skybox_has_biome_tint_uniform: /createSkybox[\s\S]*?biomeTint\s*:\s*\{\s*value:\s*new\s+THREE\.Vector3/.test(rendererText),
+    renderer_create_skybox_has_phase_tint_uniform: /createSkybox[\s\S]*?phaseTint\s*:\s*\{\s*value:\s*new\s+THREE\.Vector3/.test(rendererText),
+    renderer_create_skybox_fragment_shader_multiplies_tints: /biomeTint\s*\*\s*phaseTint/.test(rendererText),
+    renderer_create_skybox_mesh_has_set_biome_tint: /sky\.setBiomeTint\s*=\s*function\s+setBiomeTint/.test(rendererText),
+    renderer_create_skybox_mesh_has_set_phase_tint: /sky\.setPhaseTint\s*=\s*function\s+setPhaseTint/.test(rendererText),
+    renderer_create_skybox_mesh_named_skybox: /sky\.name\s*=\s*['"]skybox['"]/.test(rendererText),
+    renderer_renderer_class_set_biome_tint_forwards: /setBiomeTint\s*\(\s*tint\s*\)\s*\{[\s\S]*?this\.scene\.getObjectByName\s*\(\s*['"]skybox['"]\s*\)[\s\S]*?sky\.setBiomeTint/.test(rendererText),
+    renderer_renderer_class_set_phase_tint_forwards: /setPhaseTint\s*\(\s*tint\s*\)\s*\{[\s\S]*?this\.scene\.getObjectByName\s*\(\s*['"]skybox['"]\s*\)[\s\S]*?sky\.setPhaseTint/.test(rendererText),
+    // src/ui/hud.js biome wire
+    hud_constructor_queries_biome_info_element: /constructor[\s\S]{0,1500}?#biome-info/.test(hudText2),
+    hud_constructor_initializes_last_biome_id: /constructor[\s\S]{0,2000}?_lastBiomeId\s*=\s*-1/.test(hudText2),
+    hud_update_queries_world_get_biome: /update\([\s\S]*?world\.getBiome\s*\(/.test(hudText2),
+    hud_update_writes_biome_info_text: /update\([\s\S]*?_biomeInfoEl[\s\S]{0,800}?textContent\s*=\s*[`'"]BIOME:/.test(hudText2),
+    // index.html has the #biome-info element
+    html_biome_info_element_present: /<div\s+id\s*=\s*["']biome-info["'][^>]*>\s*BIOME:\s*FOREST\s*</.test(htmlText2),
+    html_biome_info_inside_hud_container: /<div\s+id\s*=\s*["']hud["'][\s\S]*?<div\s+id\s*=\s*["']biome-info["']/.test(htmlText2),
+    // World.getBiome exists (the per-region deterministic read)
+    world_get_biome_method_present: /getBiome\s*\(\s*x\s*,\s*z\s*\)/.test(worldText),
+  };
+  console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase31, null, 2));
+
   const summary = {
     http_ok: resp.status() === 200,
     structural_dom_all_present: domOk,
@@ -925,8 +1018,71 @@ const CHROMIUM_ARGS = [
     phase28_debug_play_footstep_debug_hook: phase28.debug_play_footstep_debug_hook,
     phase28_debug_start_ambient_music_debug_hook: phase28.debug_start_ambient_music_debug_hook,
     phase28_debug_stop_ambient_music_debug_hook: phase28.debug_stop_ambient_music_debug_hook,
+    phase31_biome_module_exports_biome_tints: phase31.biome_module_exports_biome_tints,
+    phase31_biome_module_exports_biome_tint_fn: phase31.biome_module_exports_biome_tint_fn,
+    phase31_biome_module_exports_biome_label_fn: phase31.biome_module_exports_biome_label_fn,
+    phase31_biome_module_exports_biome_fog_density_fn: phase31.biome_module_exports_biome_fog_density_fn,
+    phase31_biome_module_exports_lerp_biome_tints_fn: phase31.biome_module_exports_lerp_biome_tints_fn,
+    phase31_biome_module_exports_biome_transition_duration_fn: phase31.biome_module_exports_biome_transition_duration_fn,
+    phase31_biome_module_re_exports_biome_forest: phase31.biome_module_re_exports_biome_forest,
+    phase31_biome_module_re_exports_biome_crystal_cavern: phase31.biome_module_re_exports_biome_crystal_cavern,
+    phase31_biome_module_re_exports_biome_phase_nexus: phase31.biome_module_re_exports_biome_phase_nexus,
+    phase31_biome_module_re_exports_biome_names: phase31.biome_module_re_exports_biome_names,
+    phase31_biome_tints_has_forest_entry: phase31.biome_tints_has_forest_entry,
+    phase31_biome_tints_has_caves_entry: phase31.biome_tints_has_caves_entry,
+    phase31_biome_tints_has_deep_void_entry: phase31.biome_tints_has_deep_void_entry,
+    phase31_biome_tints_has_ruins_entry: phase31.biome_tints_has_ruins_entry,
+    phase31_biome_tints_has_desert_entry: phase31.biome_tints_has_desert_entry,
+    phase31_biome_tints_has_crystal_cavern_entry: phase31.biome_tints_has_crystal_cavern_entry,
+    phase31_biome_tints_has_sky_ruins_entry: phase31.biome_tints_has_sky_ruins_entry,
+    phase31_biome_tints_has_phase_nexus_entry: phase31.biome_tints_has_phase_nexus_entry,
+    phase31_main_imports_biome_tint_from_biome_module: phase31.main_imports_biome_tint_from_biome_module,
+    phase31_main_imports_biome_label_from_biome_module: phase31.main_imports_biome_label_from_biome_module,
+    phase31_main_imports_biome_fog_density_from_biome_module: phase31.main_imports_biome_fog_density_from_biome_module,
+    phase31_main_imports_lerp_biome_tints_from_biome_module: phase31.main_imports_lerp_biome_tints_from_biome_module,
+    phase31_main_imports_biome_transition_duration_from_biome_module: phase31.main_imports_biome_transition_duration_from_biome_module,
+    phase31_main_module_level_current_biome_id_decl: phase31.main_module_level_current_biome_id_decl,
+    phase31_main_module_level_current_biome_tint_decl: phase31.main_module_level_current_biome_tint_decl,
+    phase31_main_module_level_target_biome_tint_decl: phase31.main_module_level_target_biome_tint_decl,
+    phase31_main_module_level_biome_transition_timer_decl: phase31.main_module_level_biome_transition_timer_decl,
+    phase31_main_tick_biomes_per_frame_defined: phase31.main_tick_biomes_per_frame_defined,
+    phase31_main_tick_biomes_per_frame_reads_world_get_biome: phase31.main_tick_biomes_per_frame_reads_world_get_biome,
+    phase31_main_tick_biomes_per_frame_uses_lerp_biome_tints: phase31.main_tick_biomes_per_frame_uses_lerp_biome_tints,
+    phase31_main_tick_biomes_per_frame_drives_scene_background: phase31.main_tick_biomes_per_frame_drives_scene_background,
+    phase31_main_tick_biomes_per_frame_drives_scene_fog_color: phase31.main_tick_biomes_per_frame_drives_scene_fog_color,
+    phase31_main_tick_biomes_per_frame_drives_scene_fog_density: phase31.main_tick_biomes_per_frame_drives_scene_fog_density,
+    phase31_main_tick_biomes_per_frame_drives_phase_light_color: phase31.main_tick_biomes_per_frame_drives_phase_light_color,
+    phase31_main_tick_biomes_per_frame_drives_renderer_set_biome_tint: phase31.main_tick_biomes_per_frame_drives_renderer_set_biome_tint,
+    phase31_main_game_loop_calls_tick_biomes_per_frame: phase31.main_game_loop_calls_tick_biomes_per_frame,
+    phase31_main_on_phase_changed_calls_set_phase_tint: phase31.main_on_phase_changed_calls_set_phase_tint,
+    phase31_main_game_loop_calls_hud_update_with_world: phase31.main_game_loop_calls_hud_update_with_world,
+    phase31_main_init_calls_hud_update_with_world: phase31.main_init_calls_hud_update_with_world,
+    phase31_debug_force_biome_hook_present: phase31.debug_force_biome_hook_present,
+    phase31_debug_force_biome_rejects_bad_input: phase31.debug_force_biome_rejects_bad_input,
+    phase31_debug_get_current_biome_id_hook_present: phase31.debug_get_current_biome_id_hook_present,
+    phase31_debug_lerp_biome_tints_hook_present: phase31.debug_lerp_biome_tints_hook_present,
+    phase31_debug_biome_label_hook_present: phase31.debug_biome_label_hook_present,
+    phase31_debug_get_current_biome_tint_hook_present: phase31.debug_get_current_biome_tint_hook_present,
+    phase31_debug_tick_biomes_per_frame_hook_present: phase31.debug_tick_biomes_per_frame_hook_present,
+    phase31_debug_get_biome_transition_timer_hook_present: phase31.debug_get_biome_transition_timer_hook_present,
+    phase31_debug_get_biome_transition_duration_hook_present: phase31.debug_get_biome_transition_duration_hook_present,
+    phase31_renderer_create_skybox_has_biome_tint_uniform: phase31.renderer_create_skybox_has_biome_tint_uniform,
+    phase31_renderer_create_skybox_has_phase_tint_uniform: phase31.renderer_create_skybox_has_phase_tint_uniform,
+    phase31_renderer_create_skybox_fragment_shader_multiplies_tints: phase31.renderer_create_skybox_fragment_shader_multiplies_tints,
+    phase31_renderer_create_skybox_mesh_has_set_biome_tint: phase31.renderer_create_skybox_mesh_has_set_biome_tint,
+    phase31_renderer_create_skybox_mesh_has_set_phase_tint: phase31.renderer_create_skybox_mesh_has_set_phase_tint,
+    phase31_renderer_create_skybox_mesh_named_skybox: phase31.renderer_create_skybox_mesh_named_skybox,
+    phase31_renderer_renderer_class_set_biome_tint_forwards: phase31.renderer_renderer_class_set_biome_tint_forwards,
+    phase31_renderer_renderer_class_set_phase_tint_forwards: phase31.renderer_renderer_class_set_phase_tint_forwards,
+    phase31_hud_constructor_queries_biome_info_element: phase31.hud_constructor_queries_biome_info_element,
+    phase31_hud_constructor_initializes_last_biome_id: phase31.hud_constructor_initializes_last_biome_id,
+    phase31_hud_update_queries_world_get_biome: phase31.hud_update_queries_world_get_biome,
+    phase31_hud_update_writes_biome_info_text: phase31.hud_update_writes_biome_info_text,
+    phase31_html_biome_info_element_present: phase31.html_biome_info_element_present,
+    phase31_html_biome_info_inside_hud_container: phase31.html_biome_info_inside_hud_container,
+    phase31_world_get_biome_method_present: phase31.world_get_biome_method_present,
   };
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 + 3.1 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -953,6 +1109,7 @@ const CHROMIUM_ARGS = [
   const phase26Ok = Object.values(phase26).every(Boolean);
   const phase27Ok = Object.values(phase27).every(Boolean);
   const phase28Ok = Object.values(phase28).every(Boolean);
+  const phase31Ok = Object.values(phase31).every(Boolean);
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -970,7 +1127,8 @@ const CHROMIUM_ARGS = [
     phase25Ok &&
     phase26Ok &&
     phase27Ok &&
-    phase28Ok ? 0 : 1
+    phase28Ok &&
+    phase31Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

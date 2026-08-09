@@ -16,6 +16,13 @@ import { resonateResults, resonateRadius, resonateCost, totalSwappedCount } from
 // the helper is the pure module.
 import { shouldPlayFootstep, materialFromBlock, footstepInterval, FOOTSTEP_MATERIALS } from './src/audio/footsteps.js';
 import { placeAnchorAt, snapYForCell, cellUnderPlayer, anchorLifetime, ANCHOR_FILL_COLOR, ANCHOR_BORDER_COLOR } from './src/anchor/anchor.js';
+// Phase 3.1: per-biome color palette, fog density, label, and
+// smooth cross-biome transition tween. The pure module is the
+// single source of truth for the per-biome tints; the renderer's
+// skybox shader + the per-frame game-loop tick both delegate to it.
+import { biomeTint, biomeLabel as biomeLabelFromHelper, biomeFogDensity, lerpBiomeTints, biomeTransitionDuration,
+  BIOME_TINTS, BIOME_NAMES, BIOME_FOREST, BIOME_CAVES, BIOME_DEEP_VOID, BIOME_RUINS,
+  BIOME_DESERT, BIOME_CRYSTAL_CAVERN, BIOME_SKY_RUINS, BIOME_PHASE_NEXUS } from './src/world/biome.js';
 
 // Eye height: distance from feet to eyes. Player physics height is 1.7 (see
 // src/core/physics.js PLAYER_HEIGHT); 1.6 is a comfortable eye offset for a
@@ -77,6 +84,20 @@ let resonance_insufficientNotifiedThisPress = false;
 // "every 0.4s"). The accumulator lives in main.js (the game loop owns
 // it) so the audio engine stays scene-agnostic.
 let footstepTimer = 0;
+// Phase 3.1: biome tracking state. `currentBiomeId` mirrors the
+// `currentPhase` pattern (it's the cached id the game loop read
+// on the last frame). `currentBiomeTint` is the per-frame lerped
+// tint that drives the skybox shader + scene fog + phase light.
+// `biomeTransitionTimer` is the dt-based accumulator for the
+// 0.5s cross-biome tween (the §3.1 brief's smooth transition);
+// when it reaches `biomeTransitionDuration()`, the transition is
+// done and the lerped tint snaps to the target biome's tint.
+// `targetBiomeTint` is the destination of the in-flight transition
+// (the most recent world.getBiome() result).
+let currentBiomeId = BIOME_FOREST;
+let currentBiomeTint = biomeTint(BIOME_FOREST);
+let targetBiomeTint = biomeTint(BIOME_FOREST);
+let biomeTransitionTimer = biomeTransitionDuration();
 let currentBlockPlaced = null; // block type for shift+click placement
 let blockBreaking = false;
 let blockBreakProgress = 0;
@@ -250,7 +271,7 @@ function init() {
         gameRunning = true;
         lastTime = performance.now();
         // Initial HUD update so phase names show immediately
-        hud.update(phaseManager, physicsManager);
+        hud.update(phaseManager, physicsManager, world);
         requestAnimationFrame(gameLoop);
       }
     } else {
@@ -261,7 +282,7 @@ function init() {
 
   // HUD
   hud = new HUD(document.getElementById('hud'));
-  hud.update(phaseManager, physicsManager);
+  hud.update(phaseManager, physicsManager, world);
 
   // Handle window resize
   window.addEventListener('resize', onResize);
@@ -520,6 +541,19 @@ function onPhaseChanged(phaseManager) {
     postProcessing.setPhase(phase);
   }
 
+  // Phase 3.1: drive the skybox shader's phaseTint uniform. The
+  // shader multiplies phaseTint * biomeTint into the base
+  // gradient (the §3.1 "phase × biome" formula). The phase tint
+  // is the [r, g, b] float triple from PHASE_COLORS[phase]; the
+  // biome tint is driven per-frame by tickBiomesPerFrame.
+  // Conversion: PHASE_COLORS are 0xRRGGBB hex strings; the shader
+  // uniform takes [0, 1] floats. We divide the parseHexColor()
+  // output (0-255 ints) by 255.
+  if (renderer && typeof renderer.setPhaseTint === 'function') {
+    const [pr, pg, pb] = parseHexColor(colors[phase]);
+    renderer.setPhaseTint([pr / 255, pg / 255, pb / 255]);
+  }
+
   // Phase 2.8 audio on phase change. The plan's order is:
   //   1) stopAmbientMusic()    — tear down the current track
   //   2) startAmbientMusic(phase) — spin up the new track
@@ -570,7 +604,7 @@ function gameLoop(time) {
   phaseManager.update(deltaTime);
 
   // Update HUD
-  if (hud) hud.update(phaseManager, physicsManager);
+  if (hud) hud.update(phaseManager, physicsManager, world);
 
   // Handle Pause (P) - when pointer is NOT locked
   if (gamePaused) {
@@ -799,6 +833,19 @@ function gameLoop(time) {
   // gate — the per-frame cost is O(active anchors), which is small
   // in practice (a few anchors at most).
   tickAnchorsPerFrame(deltaTime);
+
+  // Phase 3.1: per-frame biome tick. Mirrors the footstep + anchor
+  // pattern — read the player's current biome, detect the change
+  // edge, smoothly tween the scene colors toward the target tint.
+  // The biome id comes from `world.getBiome(playerPos.x, playerPos.z)`
+  // (the deterministic per-region assignment in src/core/world.js).
+  // The transition tween is dt-based (the same pattern as the §2.7
+  // anchor lifetime + §2.8 footstep timer); `dt` is clamped by the
+  // game loop's `Math.min(..., 0.05)` ceiling so a tab-switch pause
+  // can't dump the entire pause into the timer. The biome id is
+  // the player's CURRENT biome — the `forceBiome` debug hook
+  // bypasses this read and pins the player to a specific biome.
+  tickBiomesPerFrame(deltaTime);
 
   // Handle Block Interaction (Mouse)
   // Already handled by event listeners
@@ -1035,6 +1082,130 @@ function tickAnchorsPerFrame(dt) {
   //    wireframes whose key is in removedKeys.
   if (renderer && typeof renderer.updateAnchors === 'function') {
     renderer.updateAnchors(snapshot, removedKeys);
+  }
+}
+
+// Phase 3.1: per-frame biome tick. Reads the player's current
+// biome (via `world.getBiome(playerPos.x, playerPos.z)`), detects
+// the change edge, and smoothly tweens the scene colors toward
+// the target biome tint. The transition is 0.5s (the §3.1 brief's
+// smooth fade — instant transitions feel janky). The tween is
+// dt-based: `biomeTransitionTimer` accumulates `dt` and the
+// lerp factor is `biomeTransitionTimer / biomeTransitionDuration()`.
+//
+// What the tick drives:
+//   1. `scene.background` — tinted by the lerped biome color
+//      (multiplicatively on top of the phase color which was set
+//      in `onPhaseChanged`).
+//   2. `scene.fog.color` — same lerped biome color, so the fog
+//      hue matches the skybox.
+//   3. `scene.fog.density` — lerped per-biome density (Forest
+//      0.006 → Deep Void 0.025, etc).
+//   4. `lighting.phaseLight.color` — also lerped (the §3.1 brief's
+//      "phase light tints to the current biome" requirement).
+//   5. The skybox shader uniforms (via renderer.setBiomeTint) so
+//      the gradient sphere reads as the biome-tinted skybox.
+//
+// Edge cases:
+//   - On the change edge (newBiomeId !== currentBiomeId), the
+//     transition timer resets to 0 and the target tint is the
+//     new biome's tint.
+//   - The `#biome-info` text update is the HUD's responsibility
+//     (it reads the same world.getBiome on the next frame and
+//     fires the text-change edge detector).
+//   - `forceBiome(biomeId)` debug hook bypasses the world.getBiome
+//     read and pins the player to a specific biome (the §3.1
+//     brief's "pin without flying" pattern).
+function tickBiomesPerFrame(dt) {
+  if (!world || typeof world.getBiome !== 'function') return;
+  const d = Number.isFinite(dt) && dt > 0 ? dt : 0;
+
+  // 1. Read the player's current biome. The `forceBiome` debug
+  //    hook sets `currentBiomeId` directly; the production path
+  //    reads from the world (the per-region deterministic
+  //    assignment, hash of `floor(x / 64)` × `floor(z / 64)`).
+  const playerPos = (physicsManager && typeof physicsManager.getPos === 'function')
+    ? physicsManager.getPos()
+    : null;
+  if (!playerPos || !Number.isFinite(playerPos.x) || !Number.isFinite(playerPos.z)) return;
+
+  const newBiomeId = world.getBiome(playerPos.x, playerPos.z);
+  if (newBiomeId !== currentBiomeId) {
+    // Biome change edge: reset the transition timer and update
+    // the target. The previous lerped state is the new "from"
+    // so mid-flight chaining works (the §3.1 brief's pitfall:
+    // "if the player walks through two biome regions in 0.5s,
+    // the second transition starts from where the first one
+    // ended, not from the original biome's target").
+    currentBiomeId = newBiomeId;
+    targetBiomeTint = biomeTint(newBiomeId);
+    biomeTransitionTimer = 0;
+  }
+
+  // 2. Advance the transition tween. Clamp to the duration so
+  //    a frame that happens to be larger than 0.05s (the
+  //    game-loop ceiling) doesn't overshoot.
+  if (d > 0) {
+    biomeTransitionTimer = Math.min(biomeTransitionTimer + d, biomeTransitionDuration());
+  }
+  const t = biomeTransitionTimer / biomeTransitionDuration();
+
+  // 3. Lerp the current tint toward the target. The `from` is
+  //    whatever the scene is currently rendering (so mid-flight
+  //    chaining works), the `to` is the new biome's tint.
+  currentBiomeTint = lerpBiomeTints(currentBiomeTint, targetBiomeTint, t);
+
+  // 4. Drive the scene. The phase color is applied first (the
+  //    existing onPhaseChanged path), then the biome tint is
+  //    layered on top. The visible skybox is the shader sphere
+  //    (the §3.1 brief's "the biome tint applies to the skybox
+  //    shader, not just the background" requirement).
+  if (scene) {
+    // scene.background + scene.fog.color — same RGB triplet.
+    if (scene.background && typeof scene.background.setRGB === 'function') {
+      scene.background.setRGB(
+        currentBiomeTint.color[0],
+        currentBiomeTint.color[1],
+        currentBiomeTint.color[2],
+      );
+    }
+    if (scene.fog) {
+      if (typeof scene.fog.color.setRGB === 'function') {
+        scene.fog.color.setRGB(
+          currentBiomeTint.color[0],
+          currentBiomeTint.color[1],
+          currentBiomeTint.color[2],
+        );
+      }
+      // Per-biome fog density (the §3.1 brief's "Forest is less
+      // foggy than the Deep Void" requirement). Use `=` rather
+      // than lerp for the very last frame so the density lands
+      // exactly on the target value (floating-point slop from
+      // the lerp would otherwise leave the fog slightly wrong).
+      if (biomeTransitionTimer >= biomeTransitionDuration()) {
+        scene.fog.density = biomeFogDensity(currentBiomeId);
+      } else {
+        scene.fog.density = currentBiomeTint.fogDensity;
+      }
+    }
+  }
+  // The phase light tints by the biome too (the §3.1 brief's
+  // "phase light tints to the current biome" requirement).
+  if (lighting && lighting.phaseLight) {
+    lighting.phaseLight.color.setRGB(
+      currentBiomeTint.color[0],
+      currentBiomeTint.color[1],
+      currentBiomeTint.color[2],
+    );
+  }
+  // The skybox shader reads the biome tint via a uniform — the
+  // renderer's setBiomeTint forwards to the skybox mesh. The
+  // fragment shader multiplies the biome tint by the phase tint
+  // (the §3.1 "phase × biome" formula). The phase tint is
+  // driven by the existing onPhaseChanged path (Phase 2.1
+  // regression lock) — only the biome side is set here.
+  if (renderer && typeof renderer.setBiomeTint === 'function') {
+    renderer.setBiomeTint(currentBiomeTint.color);
   }
 }
 
@@ -1655,6 +1826,92 @@ if (typeof window !== 'undefined') {
         audioManager.playCollapse();
       }
       return { ok: true, phase, energy: phaseManager.getEnergy() };
+    },
+    // Phase 3.1: forceBiome(biomeId) test hook. Pins the player
+    // to a specific biome regardless of position. The production
+    // path uses `world.getBiome(playerPos.x, playerPos.z)` (the
+    // deterministic per-region assignment); the debug hook
+    // bypasses that read so the test can verify the per-frame
+    // biome tick + the `#biome-info` text update + the scene
+    // background lerp without flying to a far-away biome. The
+    // hook resets the transition timer so the per-frame lerp
+    // tween fires from the current state to the new target. The
+    // `world` parameter is read-only; the hook only mutates the
+    // module-level `currentBiomeId` / `targetBiomeTint` / timer.
+    forceBiome(biomeId) {
+      if (!Number.isFinite(biomeId)) {
+        return { ok: false, reason: 'bad-input' };
+      }
+      const id = Math.floor(biomeId);
+      if (id < 1 || id > 8) {
+        return { ok: false, reason: 'out-of-range' };
+      }
+      currentBiomeId = id;
+      targetBiomeTint = biomeTint(id);
+      biomeTransitionTimer = 0;
+      return {
+        ok: true,
+        biomeId: id,
+        label: biomeLabelFromHelper(id),
+        color: targetBiomeTint.color.slice(),
+        fogDensity: targetBiomeTint.fogDensity,
+      };
+    },
+    // Phase 3.1: getCurrentBiomeId() test hook. Returns the
+    // module-level `currentBiomeId`. The Playwright test asserts
+    // that the value matches the biome set by `forceBiome`.
+    getCurrentBiomeId() {
+      return currentBiomeId;
+    },
+    // Phase 3.1: lerpBiomeTints(from, to, t) test hook.
+    // Pass-through to the pure helper. Used by the static-analysis
+    // check + the Playwright test that asserts the transition
+    // math mid-flight.
+    lerpBiomeTints(from, to, t) {
+      return lerpBiomeTints(from, to, t);
+    },
+    // Phase 3.1: biomeLabel(biomeId) test hook. Pass-through to
+    // the pure helper. Used by the Playwright test that asserts
+    // the `#biome-info` text matches the canonical label.
+    biomeLabel(biomeId) {
+      return biomeLabelFromHelper(biomeId);
+    },
+    // Phase 3.1: getCurrentBiomeTint() test hook. Returns the
+    // module-level `currentBiomeTint` so the Playwright test can
+    // assert the per-frame lerp is converging toward the target
+    // after a `forceBiome` call.
+    getCurrentBiomeTint() {
+      return {
+        color: currentBiomeTint.color.slice(),
+        fogDensity: currentBiomeTint.fogDensity,
+      };
+    },
+    // Phase 3.1: tickBiomesPerFrame(dt) test hook. Drives the
+    // per-frame biome tick from outside the game loop. The
+    // Playwright test uses this to advance the transition
+    // tween past 0.5s and assert the scene background has
+    // reached the target biome color.
+    tickBiomesPerFrame(dt) {
+      const d = (typeof dt === 'number') ? dt : 0;
+      tickBiomesPerFrame(d);
+      return {
+        biomeId: currentBiomeId,
+        color: currentBiomeTint.color.slice(),
+        fogDensity: currentBiomeTint.fogDensity,
+        timer: biomeTransitionTimer,
+      };
+    },
+    // Phase 3.1: getBiomeTransitionTimer() test hook. The
+    // transition timer is the dt-based accumulator; the test
+    // reads it to assert the tween is advancing.
+    getBiomeTransitionTimer() {
+      return biomeTransitionTimer;
+    },
+    // Phase 3.1: getBiomeTransitionDuration() test hook.
+    // Pass-through to the pure helper. The test asserts the
+    // canonical 0.5s value.
+    getBiomeTransitionDuration() {
+      return biomeTransitionDuration();
     },
     // Phase 2.3: placeBlock(x, y, z, blockType) test hook. Calls the
     // same placeBlock helper that the RMB contextmenu handler uses, so
