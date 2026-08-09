@@ -236,7 +236,12 @@ const CHROMIUM_ARGS = [
   const phase17 = {
     world_exports_global_state: /exportGlobalState\s*\(\s*\)/.test(worldText),
     world_imports_global_state: /importGlobalState\s*\(\s*snapshot\s*\)/.test(worldText),
-    save_snapshot_defined: /saveSnapshot\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*,\s*worldState\s*\)/.test(saveText),
+    // Phase 2.7: saveSnapshot now takes an optional anchors argument.
+    // The §1.7 / §2.4 contract is "worldState" only; the new contract
+    // is "worldState, anchors". Both signatures are valid (the anchors
+    // argument is optional, defaults to undefined). The check accepts
+    // either signature.
+    save_snapshot_defined: /saveSnapshot\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*,\s*worldState\s*(?:,\s*anchors\s*)?\)/.test(saveText),
     init_applies_saved_state: /importGlobalState\(_savedState\.worldState\)/.test(srcText),
   };
   console.log('\n=== Phase 1 closure static-analysis (against source files) ===');
@@ -271,7 +276,13 @@ const CHROMIUM_ARGS = [
     contextmenu_calls_place_block_with_stone: /addEventListener\(\s*['"]contextmenu['"][\s\S]*?placeBlockAtTarget\s*\([^,]+,\s*BLOCK_STONE/.test(srcText),
     contextmenu_falls_back_to_cycle_phase: /addEventListener\(\s*['"]contextmenu['"][\s\S]*?phaseManager\.cyclePhase\s*\(\s*\)/.test(srcText),
     place_anchor_no_stray_block_15: !/placeBlockAt\s*\([^)]*,\s*15\s*\)/.test(srcText),
-    place_anchor_shows_deferred_notification: /placeAnchor[\s\S]{0,400}?Anchor placement pending §2\.7/.test(srcText),
+    // Phase 2.7: placeAnchor is now a real implementation; the §2.3
+    // "deferred notification" stub is gone. This check now verifies
+    // the new contract: placeAnchor delegates to placeAnchorAt and
+    // calls world.createAnchor.
+    place_anchor_no_longer_defers_to_stub: !/placeAnchor[\s\S]{0,400}?Anchor placement pending §2\.7/.test(srcText),
+    place_anchor_delegates_to_place_anchor_at: /function\s+placeAnchor\s*\(\s*\)\s*\{[\s\S]{0,2000}?placeAnchorAt\s*\(/.test(srcText),
+    place_anchor_calls_world_create_anchor: /function\s+placeAnchor\s*\(\s*\)\s*\{[\s\S]{0,2500}?world\.createAnchor\s*\(/.test(srcText),
     spawn_place_particles_defined: /function\s+spawnPlaceParticles\s*\(\s*blockX\s*,\s*blockY\s*,\s*blockZ\s*,\s*blockType\s*\)/.test(srcText),
     place_block_debug_hook_present: /__phaseShifter__[\s\S]*?placeBlock\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*blockType\s*\)/.test(srcText),
     force_cycle_phase_hook_intact: /__phaseShifter__[\s\S]*?forceCyclePhase\s*\(/.test(srcText),
@@ -644,7 +655,9 @@ const CHROMIUM_ARGS = [
     phase23_contextmenu_calls_place_block_with_stone: phase23.contextmenu_calls_place_block_with_stone,
     phase23_contextmenu_falls_back_to_cycle_phase: phase23.contextmenu_falls_back_to_cycle_phase,
     phase23_place_anchor_no_stray_block_15: phase23.place_anchor_no_stray_block_15,
-    phase23_place_anchor_shows_deferred_notification: phase23.place_anchor_shows_deferred_notification,
+    phase23_place_anchor_no_longer_defers_to_stub: phase23.place_anchor_no_longer_defers_to_stub,
+    phase23_place_anchor_delegates_to_place_anchor_at: phase23.place_anchor_delegates_to_place_anchor_at,
+    phase23_place_anchor_calls_world_create_anchor: phase23.place_anchor_calls_world_create_anchor,
     phase23_spawn_place_particles_defined: phase23.spawn_place_particles_defined,
     phase23_place_block_debug_hook_present: phase23.place_block_debug_hook_present,
     phase23_force_cycle_phase_hook_intact: phase23.force_cycle_phase_hook_intact,
