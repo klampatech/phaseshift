@@ -165,6 +165,12 @@ export const PHASE_DRAIN_RATE_GAMMA = 0.4;
 export const MAX_FATIGUE = 100;
 export const SCAN_COST = 3;
 export const RESONATE_COST = 15;
+// Phase 2.5: Phase Lens hold-drain (energy per second while E is held).
+export const PHASE_LENS_DRAIN_RATE = 0.5;
+// Phase 2.5: scan radius (block units, cubic). The plan's §2.5 acceptance
+// calls for a 4-block radius. Used by both the one-shot press (E) and
+// the Phase Lens hold (E).
+export const SCAN_RADIUS = 4;
 export const ENERGY_REGEN_RATE = 0.005;
 export const PHASE_DRAIN_RATE = 0.02;
 export const WATER_DRAIN = 0.15;

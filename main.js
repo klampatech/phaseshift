@@ -1,14 +1,15 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, WORLD_SEED, BLOCK_PROPERTIES } from './src/core/constants.js';
+import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS } from './src/core/constants.js';
 import { World } from './src/core/world.js';
 import { PhaseManager } from './src/core/phase.js';
 import { PhysicsManager } from './src/core/physics.js';
-import { setupLighting, createPlayerMesh, createSkybox, ChunkVisual, setupPostProcessing } from './src/render/renderer.js';
+import { setupLighting, createPlayerMesh, createSkybox, ChunkVisual, setupPostProcessing, ScanOverlay } from './src/render/renderer.js';
 import { Controls } from './src/input/controls.js';
 import { placeBlock as placeBlockAtTarget } from './src/input/placeBlock.js';
 import { HUD } from './src/ui/hud.js';
 import { AudioManager } from './src/audio/manager.js';
 import { SaveSystem, Settings } from './src/save/system.js';
+import { scanResults, phaseLensDrain, lensRadius, belowDrainThreshold, hasDifferences } from './src/scan/lens.js';
 
 // Eye height: distance from feet to eyes. Player physics height is 1.7 (see
 // src/core/physics.js PLAYER_HEIGHT); 1.6 is a comfortable eye offset for a
@@ -41,6 +42,15 @@ const rayDir = new THREE.Vector3();
 let anchorPlaced = false;
 let scanActive = false;
 let phaseLensActive = false;
+// Phase 2.5: one-shot gate for the "Insufficient energy" notification.
+// Reset on E release so the next press can re-trigger.
+let lens_insufficientNotifiedThisPress = false;
+// Phase 2.5: Phase Lens scan overlay (wireframes + beam). Separate
+// from the THREE.WebGLRenderer (`renderer`) — the brief is explicit
+// that the overlay lives in its own THREE.Group so the chunk-mesh
+// group is untouched. The overlay is created once in init() and
+// reused for every press/hold/release cycle.
+let scanOverlay = null;
 let lastInteractedPos = null;
 let shiftKeyHeld = false;
 let eKeyHeld = false;
@@ -67,6 +77,12 @@ function init() {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   document.body.appendChild(renderer.domElement);
+
+  // Phase 2.5: Phase Lens scan overlay (wireframes + beam). The
+  // overlay adds its own THREE.Group to the scene. The chunk visuals
+  // and the overlay are independent — clearing the overlay never
+  // touches the chunk meshes.
+  scanOverlay = new ScanOverlay(scene);
 
   // Setup post-processing (bloom + phase color grading)
   postProcessing = setupPostProcessing(renderer, scene, camera);
@@ -550,23 +566,80 @@ function gameLoop(time) {
     phaseManager.cyclePhase();
   }
 
-  // Handle Scanning (E)
-  if (ctrlState.scanning && !scanActive) {
-    scanActive = true;
-    performScan(pos);
-  }
-  if (!ctrlState.scanning) {
-    scanActive = false;
+  // Phase 2.5: Phase Lens (hold E). The lens is a continuous affordance:
+  // while ctrlState.scanning is true, the renderer must show colored
+  // wireframes around cells that differ from the current phase, plus a
+  // beam from the camera in the crosshair direction, and energy must
+  // drain at PHASE_LENS_DRAIN_RATE per second. When the player releases
+  // E, the lens clears within one frame and no further energy is
+  // consumed.
+  if (ctrlState.scanning) {
+    // Edge: rising edge of E (just pressed). Fire the one-shot scan
+    // notification (existing §2.5 acceptance #1) and set the gate so
+    // we don't double-fire.
+    if (!scanActive) {
+      scanActive = true;
+      performScan(pos);
+    }
+    // Hold path: check energy, drain, and render the overlay.
+    if (phaseManager.getEnergy() < PHASE_LENS_DRAIN_RATE * deltaTime) {
+      // Insufficient energy: turn the lens off and notify once per
+      // press (the loop is gated by scanActive so the notification
+      // is exactly one-shot). Brief acceptance #3.
+      if (lens_insufficientNotifiedThisPress !== true) {
+        hud.showNotification('Insufficient energy', '#ff8844');
+        lens_insufficientNotifiedThisPress = true;
+      }
+      // Force-clear the lens without consuming more energy.
+      ctrlState.scanning = false;
+      scanActive = false;
+      if (postProcessing && postProcessing.composer) {
+        // Renderer API: clear highlights + beam.
+      }
+      if (scanOverlay) {
+        scanOverlay.clearScanHighlights();
+        scanOverlay.hideScanBeam();
+      }
+    } else {
+      // Normal hold path: drain energy per dt, then redraw the
+      // overlay. The drain is dt-scaled so 1 second of hold = 0.5
+      // energy, 2 seconds = 1.0, etc.
+      phaseLensActive = true;
+      const drain = phaseLensDrain(deltaTime);
+      if (drain > 0) {
+        phaseManager.consumeEnergy(drain);
+      }
+      // Re-scan each frame so the wireframes track the player as
+      // they move (and so the player sees cells appear/disappear as
+      // the lens sweeps over them).
+      const results = scanResults(pos.x, pos.y, pos.z, lensRadius(), phaseManager.getCurrentPhase(), world);
+      if (scanOverlay) {
+        scanOverlay.showScanHighlights(results, phaseManager.getCurrentPhase());
+        scanOverlay.showScanBeam(camera, phaseManager.getCurrentPhase());
+      }
+    }
+  } else {
+    // Released E -> clear the lens within one frame.
+    if (scanActive) {
+      scanActive = false;
+    }
+    if (phaseLensActive) {
+      phaseLensActive = false;
+      // Reset the one-shot notification gate so the next press can
+      // re-trigger the "Insufficient energy" message if needed.
+      lens_insufficientNotifiedThisPress = false;
+    }
+    if (scanOverlay) {
+      scanOverlay.clearScanHighlights();
+      scanOverlay.hideScanBeam();
+    }
   }
 
-  // Handle Phase Lens (hold E)
-  if (ctrlState.scanning && !phaseLensActive) {
-    phaseLensActive = true;
-  }
-  if (!ctrlState.scanning) {
-    phaseLensActive = false;
-  }
-  // Phase Lens: make blocks invisible in non-current phases fade out
+  // Phase Lens (legacy fade non-current phases): keep the existing
+  // updatePhaseLensVisibility() so the per-phase chunk opacity works
+  // alongside the new wireframe overlay. The two are complementary —
+  // the overlay shows the per-cell shape, the legacy fade shows the
+  // whole-phase block visibility.
   updatePhaseLensVisibility();
 
   // Handle Resonance Scan (Q)
@@ -641,51 +714,33 @@ function updatePhaseLensVisibility() {
   });
 }
 
+// Phase 2.5: performScan — one-shot press of E (the rising edge). The
+// brief's acceptance #1 is "World.scanNearby(playerX, playerY, playerZ,
+// 4) returns the phase-different blocks in a 4-block radius. A
+// notification shows the count." We delegate to src/scan/lens.js +
+// world.findPhaseDifferences rather than reading chunk.alphaData
+// directly (the Phase 1.5 anti-pattern). The pure helper is the
+// single source of truth.
 function performScan(pos) {
-  // Scan nearby blocks for phase information
-  const scanRadius = 8;
-  let scannedBlocks = 0;
-  const chunks = world.getChunks();
-  
-  chunks.forEach((chunk) => {
-    const cx = chunk.cx * CHUNK_SIZE;
-    const cz = chunk.cz * CHUNK_SIZE;
-    const dx = pos.x - cx;
-    const dz = pos.z - cz;
-    
-    if (Math.abs(dx) > CHUNK_SIZE || Math.abs(dz) > CHUNK_SIZE) return;
-    if (Math.sqrt(dx*dx + dz*dz) > scanRadius) return;
-    if (!chunk.loaded || !chunk.alphaData) return;
-    
-    // Scan through the chunk data for non-air blocks
-    for (let x = 0; x < CHUNK_SIZE; x++) {
-      for (let z = 0; z < CHUNK_SIZE; z++) {
-        const wx = cx + x;
-        const wz = cz + z;
-        const dist = Math.sqrt((pos.x - wx)**2 + (pos.z - wz)**2);
-        if (dist > scanRadius) continue;
-        
-        for (let y = 0; y < CHUNK_HEIGHT; y++) {
-          const block = chunk.alphaData[world.index(x, y, z)];
-          if (block !== BLOCK_AIR) {
-            scannedBlocks++;
-          }
-        }
-      }
-    }
-  });
-  
-  // Consume energy for scan
+  const currentPhase = phaseManager.getCurrentPhase();
+  const radius = lensRadius();
+  const results = scanResults(pos.x, pos.y, pos.z, radius, currentPhase, world);
+  const count = hasDifferences(results) ? results.length : 0;
+
+  // Consume energy for the one-shot scan (separate from the per-tick
+  // hold drain).
   phaseManager.consumeEnergy(3); // SCAN_COST from constants
-  
-  if (scannedBlocks > 0) {
-    hud.showNotification(`SCANNED: ${scannedBlocks} blocks`, '#5aa85a');
+
+  if (count > 0) {
+    hud.showNotification(`SCANNED: ${count} phase-differences`, '#5aa85a');
   }
-  
-  // Visual feedback: flash the crosshair
+
+  // Visual feedback: flash the crosshair.
   const crosshair = document.getElementById('crosshair');
-  crosshair.style.background = '#5aa85a';
-  setTimeout(() => { crosshair.style.background = '#fff'; }, 200);
+  if (crosshair) {
+    crosshair.style.background = '#5aa85a';
+    setTimeout(() => { crosshair.style.background = '#fff'; }, 200);
+  }
 }
 
 function performResonance(pos) {
@@ -1078,6 +1133,49 @@ if (typeof window !== 'undefined') {
         phaseManager.cyclePhase();
         phaseManager.completeShift();
       }
+    },
+    // Phase 2.5: forceScan() — runs the one-shot scan at the player's
+    // current position and returns the result array. The brief's
+    // acceptance #1 is "World.scanNearby returns the phase-different
+    // blocks in a 4-block radius. A notification shows the count."
+    // We delegate to scanResults() in src/scan/lens.js, which calls
+    // world.findPhaseDifferences() — no direct chunk-data reads.
+    forceScan() {
+      if (!world || !phaseManager) return null;
+      const p = physicsManager ? physicsManager.getPos() : { x: 0, y: 0, z: 0 };
+      const results = scanResults(
+        p.x, p.y, p.z,
+        lensRadius(),
+        phaseManager.getCurrentPhase(),
+        world,
+      );
+      return { results, count: results.length, radius: lensRadius(), phase: phaseManager.getCurrentPhase() };
+    },
+    // Phase 2.5: start/stop the Phase Lens hold state (programmatic
+    // counterpart to the E-key). The Playwright test calls these to
+    // exercise the overlay wiring without needing pointer lock.
+    startPhaseLens() {
+      lens_insufficientNotifiedThisPress = false;
+      scanActive = true;
+      phaseLensActive = true;
+    },
+    stopPhaseLens() {
+      scanActive = false;
+      phaseLensActive = false;
+      lens_insufficientNotifiedThisPress = false;
+      if (scanOverlay) {
+        scanOverlay.clearScanHighlights();
+        scanOverlay.hideScanBeam();
+      }
+    },
+    // Phase 2.5: scanOverlay inspection — the Playwright test uses
+    // this to confirm the overlay produced child meshes after a
+    // hold. Returns the child count (excluding the beam subgroup).
+    getScanOverlayHighlightCount() {
+      return scanOverlay ? scanOverlay.getHighlightCount() : 0;
+    },
+    getScanOverlayBeamVisible() {
+      return scanOverlay ? scanOverlay.isVisible() : false;
     },
     // Phase 2.3: placeBlock(x, y, z, blockType) test hook. Calls the
     // same placeBlock helper that the RMB contextmenu handler uses, so

@@ -178,6 +178,8 @@ const CHROMIUM_ARGS = [
   // Phase 1.4: indexing is centralized on World and consumers use helpers.
   const rendererSrc = path.resolve(__dirname, '..', '..', 'src', 'render', 'renderer.js');
   const rendererText = fs2.existsSync(rendererSrc) ? fs2.readFileSync(rendererSrc, 'utf8') : '';
+  const constantsSrc = path.resolve(__dirname, '..', '..', 'src', 'core', 'constants.js');
+  const constantsText = fs2.existsSync(constantsSrc) ? fs2.readFileSync(constantsSrc, 'utf8') : '';
   const getSetText = worldText.slice(worldText.indexOf('getBlock('), worldText.indexOf('// Build/update chunk meshes'));
   const phase14 = {
     world_index_defined: /\bindex\s*\(\s*x\s*,\s*y\s*,\s*z\s*\)/.test(worldText),
@@ -309,6 +311,61 @@ const CHROMIUM_ARGS = [
   };
   console.log('\n=== Phase 2.4 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase24, null, 2));
+
+  // Phase 2.5: Phase Lens (hold E to highlight phase-different blocks +
+  // beam + energy drain). The new pure module src/scan/lens.js exports
+  // the helpers; main.js refactors performScan to delegate to
+  // world.findPhaseDifferences (no direct chunk.alphaData reads in
+  // the scan loop); the ScanOverlay class lives in src/render/renderer.js
+  // and exposes showScanHighlights / clearScanHighlights / showScanBeam
+  // / hideScanBeam. New constants PHASE_LENS_DRAIN_RATE = 0.5 and
+  // SCAN_RADIUS = 4 are in src/core/constants.js.
+  const lensSrc = path.resolve(__dirname, '..', '..', 'src', 'scan', 'lens.js');
+  const lensText = fs2.existsSync(lensSrc) ? fs2.readFileSync(lensSrc, 'utf8') : '';
+  const phase25 = {
+    // Constants
+    phase_lens_drain_rate_defined: /export\s+const\s+PHASE_LENS_DRAIN_RATE\s*=\s*0\.5\b/.test(constantsText),
+    scan_radius_defined: /export\s+const\s+SCAN_RADIUS\s*=\s*4\b/.test(constantsText),
+    // src/scan/lens.js module exports
+    lens_module_exports_scan_results: /export\s+function\s+scanResults\s*\(/.test(lensText),
+    lens_module_exports_phase_lens_drain: /export\s+function\s+phaseLensDrain\s*\(/.test(lensText),
+    lens_module_exports_lens_radius: /export\s+function\s+lensRadius\s*\(/.test(lensText),
+    lens_module_exports_below_drain_threshold: /export\s+function\s+belowDrainThreshold\s*\(/.test(lensText),
+    lens_module_exports_wireframe_colors: /export\s+const\s+LENS_WIREFRAME_COLORS\s*=\s*\[/.test(lensText),
+    // World.findPhaseDifferences
+    world_find_phase_differences_defined: /findPhaseDifferences\s*\(\s*playerX\s*,\s*playerY\s*,\s*playerZ\s*,\s*radius\s*,\s*currentPhase\s*\)/.test(worldText),
+    world_find_phase_differences_returns_current_phase_block: /findPhaseDifferences[\s\S]{0,1500}?currentPhaseBlock[\s,]+/.test(worldText),
+    world_find_phase_differences_returns_other_phases: /findPhaseDifferences[\s\S]{0,1500}?otherPhases[\s,:]+/.test(worldText),
+    world_find_phase_differences_excludes_current_phase: /findPhaseDifferences[\s\S]{0,1500}?p\s*!==\s*currentPhase/.test(worldText),
+    // main.js wiring
+    main_imports_scan_results: /import\s*\{[^}]*scanResults[^}]*\}\s*from\s*['"]\.\/src\/scan\/lens\.js['"]/.test(srcText),
+    main_imports_scan_overlay: /import\s*\{[^}]*ScanOverlay[^}]*\}\s*from\s*['"]\.\/src\/render\/renderer\.js['"]/.test(srcText),
+    main_imports_phase_lens_drain_rate: /import\s*\{[^}]*PHASE_LENS_DRAIN_RATE[^}]*\}\s*from\s*['"]\.\/src\/core\/constants\.js['"]/.test(srcText),
+    // The new performScan delegates to scanResults and does NOT read
+    // chunk.alphaData directly (the Phase 1.5 anti-pattern is gone).
+    main_perform_scan_no_chunk_alpha_data: (() => {
+      const m = srcText.match(/function\s+performScan\s*\([^)]*\)\s*\{[\s\S]*?scanResults\s*\(/);
+      return m && !/chunk\.alphaData/.test(m[0]);
+    })(),
+    // Per-frame lens loop drains energy per dt.
+    main_drains_energy_per_dt: /phaseLensDrain\s*\(\s*deltaTime\s*\)[\s\S]{0,200}?consumeEnergy\s*\(\s*drain\s*\)/.test(srcText),
+    // Insufficient-energy branch
+    main_insufficient_energy_notify: /Insufficient energy/.test(srcText),
+    // Debug hooks
+    debug_force_scan_hook: /__phaseShifter__[\s\S]*?forceScan\s*\(\s*\)\s*\{[\s\S]*?scanResults\s*\(/.test(srcText),
+    debug_start_phase_lens_hook: /__phaseShifter__[\s\S]*?startPhaseLens\s*\(\s*\)/.test(srcText),
+    debug_stop_phase_lens_hook: /__phaseShifter__[\s\S]*?stopPhaseLens\s*\(\s*\)/.test(srcText),
+    // ScanOverlay API
+    scan_overlay_show_scan_highlights: /class\s+ScanOverlay[\s\S]*?showScanHighlights\s*\(\s*results\s*,\s*currentPhase\s*\)/.test(rendererText),
+    scan_overlay_clear_scan_highlights: /class\s+ScanOverlay[\s\S]*?clearScanHighlights\s*\(\s*\)/.test(rendererText),
+    scan_overlay_show_scan_beam: /class\s+ScanOverlay[\s\S]*?showScanBeam\s*\(\s*camera\s*,\s*currentPhase\s*\)/.test(rendererText),
+    scan_overlay_hide_scan_beam: /class\s+ScanOverlay[\s\S]*?hideScanBeam\s*\(\s*\)/.test(rendererText),
+    scan_overlay_beam_parented_to_camera: /beam\.parent\s*=\s*camera/.test(rendererText),
+    scan_overlay_disposes_geometry: /clearWireframes[\s\S]{0,600}?\.geometry\s*\.dispose\s*\(/.test(rendererText),
+  };
+  console.log('\n=== Phase 2.5 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase25, null, 2));
+
   const physicsSrc = path.resolve(__dirname, '..', '..', 'src', 'core', 'physics.js');
   const physicsText2 = fs2.existsSync(physicsSrc) ? fs2.readFileSync(physicsSrc, 'utf8') : '';
   const phase22 = {
@@ -439,8 +496,32 @@ const CHROMIUM_ARGS = [
     phase24_coerce_world_state_still_rejects_fractional: phase24.coerce_world_state_still_rejects_fractional,
     phase24_coerce_world_state_still_rejects_negative: phase24.coerce_world_state_still_rejects_negative,
     phase24_load_chunk_still_applies_global_state: phase24.load_chunk_still_applies_global_state,
+    phase25_phase_lens_drain_rate_defined: phase25.phase_lens_drain_rate_defined,
+    phase25_scan_radius_defined: phase25.scan_radius_defined,
+    phase25_lens_module_exports_scan_results: phase25.lens_module_exports_scan_results,
+    phase25_lens_module_exports_phase_lens_drain: phase25.lens_module_exports_phase_lens_drain,
+    phase25_lens_module_exports_lens_radius: phase25.lens_module_exports_lens_radius,
+    phase25_lens_module_exports_wireframe_colors: phase25.lens_module_exports_wireframe_colors,
+    phase25_world_find_phase_differences_defined: phase25.world_find_phase_differences_defined,
+    phase25_world_find_phase_differences_returns_current_phase_block: phase25.world_find_phase_differences_returns_current_phase_block,
+    phase25_world_find_phase_differences_returns_other_phases: phase25.world_find_phase_differences_returns_other_phases,
+    phase25_world_find_phase_differences_excludes_current_phase: phase25.world_find_phase_differences_excludes_current_phase,
+    phase25_main_imports_scan_results: phase25.main_imports_scan_results,
+    phase25_main_imports_scan_overlay: phase25.main_imports_scan_overlay,
+    phase25_main_perform_scan_no_chunk_alpha_data: phase25.main_perform_scan_no_chunk_alpha_data,
+    phase25_main_drains_energy_per_dt: phase25.main_drains_energy_per_dt,
+    phase25_main_insufficient_energy_notify: phase25.main_insufficient_energy_notify,
+    phase25_debug_force_scan_hook: phase25.debug_force_scan_hook,
+    phase25_debug_start_phase_lens_hook: phase25.debug_start_phase_lens_hook,
+    phase25_debug_stop_phase_lens_hook: phase25.debug_stop_phase_lens_hook,
+    phase25_scan_overlay_show_scan_highlights: phase25.scan_overlay_show_scan_highlights,
+    phase25_scan_overlay_clear_scan_highlights: phase25.scan_overlay_clear_scan_highlights,
+    phase25_scan_overlay_show_scan_beam: phase25.scan_overlay_show_scan_beam,
+    phase25_scan_overlay_hide_scan_beam: phase25.scan_overlay_hide_scan_beam,
+    phase25_scan_overlay_beam_parented_to_camera: phase25.scan_overlay_beam_parented_to_camera,
+    phase25_scan_overlay_disposes_geometry: phase25.scan_overlay_disposes_geometry,
   };
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -463,6 +544,7 @@ const CHROMIUM_ARGS = [
   const phase22Ok = Object.values(phase22).every(Boolean);
   const phase23Ok = Object.values(phase23).every(Boolean);
   const phase24Ok = Object.values(phase24).every(Boolean);
+  const phase25Ok = Object.values(phase25).every(Boolean);
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -476,7 +558,8 @@ const CHROMIUM_ARGS = [
     phase21Ok &&
     phase22Ok &&
     phase23Ok &&
-    phase24Ok ? 0 : 1
+    phase24Ok &&
+    phase25Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

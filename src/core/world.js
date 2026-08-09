@@ -435,6 +435,65 @@ export class World {
   }
 
   /**
+   * Phase 2.5: scan for blocks that DIFFER from the player's current phase.
+   * Returns an array of { x, y, z, currentPhaseBlock, otherPhases, mask }
+   * for every cell within the cubic radius that is non-air in at least one
+   * OTHER phase (regardless of whether the cell is also non-air in the
+   * current phase). This is the radius the Phase Lens overlay needs: a
+   * Crystal block that's only visible in Beta should still be highlighted
+   * when the player is standing in Alpha, even though the cell is air
+   * in Alpha. The returned `currentPhaseBlock` is the block id in the
+   * caller's current phase (BLOCK_AIR if the cell is air there).
+   *
+   * This is distinct from `scanNearby` (which only returns multi-phase
+   * blocks for the §3.0 minimap use case). `findPhaseDifferences` is
+   * the strictly broader version — it includes single-phase non-current
+   * blocks too. Don't break `scanNearby`; the minimap still uses it.
+   */
+  findPhaseDifferences(playerX, playerY, playerZ, radius, currentPhase) {
+    const results = [];
+    if (currentPhase < PHASE_ALPHA || currentPhase >= PHASE_COUNT) return results;
+    const minX = Math.floor(playerX) - radius;
+    const maxX = Math.floor(playerX) + radius;
+    const minY = Math.floor(playerY) - radius;
+    const maxY = Math.floor(playerY) + radius;
+    const minZ = Math.floor(playerZ) - radius;
+    const maxZ = Math.floor(playerZ) + radius;
+
+    const otherPhaseMask = ((1 << PHASE_COUNT) - 1) & ~(1 << currentPhase);
+
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = minY; y <= maxY; y++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          const mask = this.getBlockMask(x, y, z);
+          if (mask === 0) continue;
+
+          // The cell must differ from the current phase — i.e. at least
+          // one OTHER phase has a non-air block here. Single-phase
+          // non-current blocks (Crystal in Beta, player in Alpha) are
+          // included; multi-phase blocks are included too.
+          const crossPhaseMask = mask & otherPhaseMask;
+          if (crossPhaseMask === 0) continue;
+
+          const currentPhaseBlock = this.getBlock(x, y, z, currentPhase);
+          const otherPhases = [];
+          for (let p = 0; p < PHASE_COUNT; p++) {
+            if (p !== currentPhase && (mask & (1 << p))) otherPhases.push(p);
+          }
+
+          results.push({
+            x, y, z,
+            currentPhaseBlock,
+            otherPhases,
+            mask,
+          });
+        }
+      }
+    }
+    return results;
+  }
+
+  /**
    * Resonance pulse: swaps block states within a radius.
    * For each block in the area, invert its phase presence:
    *   - If a block exists in phase X but not Y, it swaps:

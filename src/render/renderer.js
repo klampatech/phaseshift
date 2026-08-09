@@ -5,7 +5,8 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_GRASS, BLOCK_DIRT,
   BLOCK_WOOD, BLOCK_CRYSTAL, BLOCK_OBSIDIAN, BLOCK_VOID, BLOCK_RUNE, BLOCK_SAND,
-  BLOCK_GLASS, BLOCK_IRON, BLOCK_GOLD_ORE, BLOCK_WATER, BLOCK_PHASE_COLORS } from '../core/constants.js';
+  BLOCK_GLASS, BLOCK_IRON, BLOCK_GOLD_ORE, BLOCK_WATER, BLOCK_PHASE_COLORS,
+  PHASE_COLORS } from '../core/constants.js';
 
 // Block texture colors (low-poly style)
 const BLOCK_COLORS = {
@@ -374,6 +375,222 @@ export function createSkybox(scene) {
   return sky;
 }
 
+// ── Phase Lens Scan Overlay (Phase 2.5) ───────────────────────────────
+
+/**
+ * Owns the Phase Lens visuals: a wireframe outline per phase-different
+ * cell, plus a beam from the camera in the crosshair direction. The
+ * overlay lives in its own THREE.Group so it can be cleared in one
+ * call without touching the chunk-mesh group (the chunk visualizer
+ * owns the `meshes` field; the overlay must not share it).
+ *
+ * The brief is explicit:
+ *   - Wireframe color per OTHER phase (Alpha=green, Beta=blue, Gamma=gold).
+ *     A multi-phase block gets one outline per other phase.
+ *   - `showScanHighlights` disposes old wireframes when called repeatedly
+ *     (the player can hold E, walk into a new chunk, and call again —
+ *     the old meshes must be removed and their geometries/materials
+ *     disposed).
+ *   - The beam is tinted with the player's current phase color (the
+ *     beam is the player's "look" indicator, not the target's).
+ *   - The beam position must update every frame while scanning — the
+ *     camera moves and rotates; a beam anchored to world coordinates
+ *     would lag behind.
+ *
+ * The class does NOT call into `World` or `PhaseManager` itself. It
+ * takes the scan results array (the shape is
+ * `Array<{ x, y, z, currentPhaseBlock, otherPhases, mask }>`) and the
+ * caller's current phase. The game loop is the dispatcher.
+ */
+export class ScanOverlay {
+  constructor(scene) {
+    this.scene = scene;
+    this.group = new THREE.Group();
+    this.group.name = 'scanOverlay';
+    this.scene.add(this.group);
+
+    // Beam mesh lives in this group too. It's rebuilt per-frame while
+    // scanning (the camera moves + rotates) so we don't bother trying
+    // to share materials across frames.
+    this._beamGroup = new THREE.Group();
+    this._beamGroup.name = 'scanBeam';
+    this.group.add(this._beamGroup);
+
+    this._beamMesh = null;
+    this._beamMaterial = null;
+    this._visible = false;
+  }
+
+  /**
+   * Show scan highlights for the given results. Replaces any existing
+   * wireframes (the player can hold E, walk into a new chunk, and call
+   * again). `currentPhase` is the integer phase index — used to skip
+   * outlining the current phase (the renderer should outline each
+   * phase where the cell IS non-air but the player is NOT).
+   */
+  showScanHighlights(results, currentPhase) {
+    // Clear old wireframes (dispose geometries + materials).
+    this.clearWireframes();
+
+    if (!Array.isArray(results) || results.length === 0) return;
+
+    for (const r of results) {
+      const bx = r.x, by = r.y, bz = r.z;
+      const otherPhases = Array.isArray(r.otherPhases) ? r.otherPhases : [];
+      for (const p of otherPhases) {
+        if (p === currentPhase) continue;
+        // Skip out-of-range phase data (defensive — findPhaseDifferences
+        // does the same filter, but the renderer is a public surface).
+        if (p < 0 || p > 2) continue;
+
+        // Use PHASE_COLORS so the wireframe matches the HUD indicator.
+        const color = PHASE_COLORS[p] || '#ffffff';
+        const boxGeom = new THREE.BoxGeometry(1.02, 1.02, 1.02);
+        const edges = new THREE.EdgesGeometry(boxGeom);
+        const lineMat = new THREE.LineBasicMaterial({
+          color: new THREE.Color(color),
+          transparent: true,
+          opacity: 0.85,
+        });
+        const wireframe = new THREE.LineSegments(edges, lineMat);
+        wireframe.position.set(bx + 0.5, by + 0.5, bz + 0.5);
+        this.group.add(wireframe);
+        // The wireframe is now owned by the group. Dispose its geometry
+        // in clearWireframes() — the material is per-wireframe so we
+        // dispose it here too if the round-trip ever needs the cleanup.
+        // (Tracked conventionally via .userData.dispose = true.)
+        wireframe.userData.disposable = true;
+      }
+    }
+  }
+
+  /**
+   * Clear all wireframe meshes. Disposes geometries and materials so
+   * the renderer doesn't leak when the player walks around with the
+   * lens held.
+   */
+  clearWireframes() {
+    for (const child of [...this.group.children]) {
+      if (child === this._beamGroup) continue; // beam is owned separately
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) {
+        if (Array.isArray(child.material)) {
+          for (const m of child.material) m.dispose();
+        } else {
+          child.material.dispose();
+        }
+      }
+      this.group.remove(child);
+    }
+  }
+
+  /**
+   * Clear all wireframes AND the beam. Use when the player releases E.
+   */
+  clearScanHighlights() {
+    this.clearWireframes();
+    this.hideScanBeam();
+  }
+
+  /**
+   * Show a beam from the camera in the crosshair direction. Built as
+   * a thin cylinder oriented along the camera's forward vector. The
+   * beam is tinted with the player's current phase color (so the
+   * player sees their own "look" highlighted, not the target's).
+   *
+   * `currentPhase` is the integer phase index (used for the tint).
+   * The beam is ~6 blocks long, matching the player's raycast reach.
+   */
+  showScanBeam(camera, currentPhase) {
+    if (!camera) return;
+    const beamLength = 6;
+    const beamRadius = 0.02;
+
+    // Dispose the prior beam before drawing a new one — the camera
+    // moves every frame, so position/orientation are stale anyway.
+    this.hideScanBeam();
+
+    const color = PHASE_COLORS[currentPhase] || '#ffffff';
+    const beamGeom = new THREE.CylinderGeometry(beamRadius, beamRadius, beamLength, 8, 1, true);
+    // Translate so the cylinder is anchored at the camera and extends
+    // forward (Three.js cylinders are centered on their origin; move
+    // it down so the top is at the origin).
+    beamGeom.translate(0, -beamLength / 2, 0);
+    const beamMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(color),
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const beam = new THREE.Mesh(beamGeom, beamMat);
+    this._beamMesh = beam;
+    this._beamMaterial = beamMat;
+    this._beamGroup.add(beam);
+
+    // The beam is parented to the camera so it follows every frame
+    // (camera.position + camera.quaternion). No per-frame update
+    // needed; THREE handles the transform.
+    this.scene.add(camera); // no-op if already parented
+    beam.parent = camera;
+    // Reset transform so the beam is in camera-local space pointing
+    // down -Y (the cylinder's "forward" after the geometry translate).
+    beam.position.set(0, 0, 0);
+    beam.rotation.set(0, 0, 0);
+    // The camera's forward is -Z, but the cylinder is along -Y. Rotate
+    // the beam so its long axis lines up with the camera's forward.
+    beam.rotation.x = -Math.PI / 2;
+
+    this._visible = true;
+  }
+
+  /**
+   * Hide the beam. Disposes its geometry + material so the renderer
+   * doesn't leak while the player releases E.
+   */
+  hideScanBeam() {
+    if (this._beamMesh) {
+      if (this._beamMesh.parent) this._beamMesh.parent.remove(this._beamMesh);
+      if (this._beamMesh.geometry) this._beamMesh.geometry.dispose();
+      this._beamMesh = null;
+    }
+    if (this._beamMaterial) {
+      this._beamMaterial.dispose();
+      this._beamMaterial = null;
+    }
+    this._visible = false;
+  }
+
+  /**
+   * Whether the overlay is currently active (highlight or beam). Used
+   * by the game loop to know whether the next frame should redraw.
+   */
+  isVisible() {
+    return this._visible;
+  }
+
+  /**
+   * Number of highlight meshes currently in the overlay group. Used
+   * by the Playwright test to assert the scan produced output.
+   */
+  getHighlightCount() {
+    let count = 0;
+    for (const child of this.group.children) {
+      if (child === this._beamGroup) continue;
+      count++;
+    }
+    return count;
+  }
+
+  /**
+   * Remove the overlay from the scene. Used in dispose() / hot-reload.
+   */
+  dispose() {
+    this.clearScanHighlights();
+    if (this.group.parent) this.group.parent.remove(this.group);
+  }
+}
+
 // Main renderer class — manages scenes, chunks, player, and rendering
 export class Renderer {
   constructor(world, scene, camera, phaseManager, webglRenderer) {
@@ -383,9 +600,9 @@ export class Renderer {
     this.phaseManager = phaseManager;
     this.webglRenderer = webglRenderer;
     this.visuals = new Map(); // chunkKey -> ChunkVisual
-    this.highlightGroup = new THREE.Group();
-    this.highlightGroup.name = 'scanHighlights';
-    this.scene.add(this.highlightGroup);
+    // Phase 2.5: scan highlights live in this.scanOverlay, not in a
+    // group owned by the Renderer. The overlay's group is named
+    // 'scanOverlay' and is added to the scene by the ScanOverlay ctor.
 
     // Echo object rendering
     this._echoGroup = new THREE.Group();
@@ -404,6 +621,40 @@ export class Renderer {
     this.composer = pp.composer;
     this.bloomPass = pp.bloomPass;
     this.phasePass = pp.phasePass;
+
+    // Phase 2.5: Phase Lens scan overlay (wireframes + beam). The
+    // overlay manages its own THREE.Group so the chunk-mesh group is
+    // untouched. main.js calls showScanHighlights / clearScanHighlights
+    // / showScanBeam / hideScanBeam on the renderer; the renderer
+    // forwards to the overlay.
+    this.scanOverlay = new ScanOverlay(scene);
+  }
+
+  // Phase 2.5: thin wrappers over the ScanOverlay so main.js has a
+  // single dispatcher API. The brief is explicit: the renderer is the
+  // owner of the visual, main.js is the dispatcher. These wrappers are
+  // also the surface the static-analysis checks poke.
+  showScanHighlights(results, currentPhase) {
+    if (this.scanOverlay) this.scanOverlay.showScanHighlights(results, currentPhase);
+  }
+
+  clearScanHighlights() {
+    if (this.scanOverlay) this.scanOverlay.clearScanHighlights();
+  }
+
+  showScanBeam(camera, currentPhase) {
+    if (this.scanOverlay) this.scanOverlay.showScanBeam(camera, currentPhase);
+  }
+
+  hideScanBeam() {
+    if (this.scanOverlay) this.scanOverlay.hideScanBeam();
+  }
+
+  // Phase 2.5: back-compat shim — the orphan/legacy Renderer signature
+  // was `showScanResults(results)`. Keep the old name working so the
+  // existing renderer-API smoke tests don't break.
+  showScanResults(results) {
+    if (this.scanOverlay) this.scanOverlay.showScanHighlights(results, this.phaseManager ? this.phaseManager.getCurrentPhase() : 0);
   }
 
   // Update or create a chunk's visual representation
@@ -427,65 +678,11 @@ export class Renderer {
     }
   }
 
-  // Show scan results as colored wireframe outlines
-  showScanResults(results) {
-    // Clear previous highlights
-    while (this.highlightGroup.children.length > 0) {
-      const child = this.highlightGroup.children[0];
-      this.highlightGroup.remove(child);
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) {
-        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
-        else child.material.dispose();
-      }
-    }
-
-    if (!results || results.length === 0) return;
-
-    const phases = ['alpha', 'beta', 'gamma'];
-
-    for (const r of results) {
-      const bx = r.x, by = r.y, bz = r.z;
-
-      // Find the block in any phase that has data
-      for (let p = 0; p < 3; p++) {
-        const block = this.world.getBlock(bx, by, bz, p);
-        if (block === BLOCK_AIR) continue;
-
-        // Get phase mask — highlight phases where this block is present
-        const mask = this.world.getBlockMask(bx, by, bz);
-        if ((mask & (1 << p)) === 0) continue;
-
-        // Create a wireframe box for highlighted phases
-        const colors = BLOCK_PHASE_COLORS[p];
-        const color = new THREE.Color(colors);
-        const boxGeom = new THREE.BoxGeometry(1.02, 1.02, 1.02);
-        const edges = new THREE.EdgesGeometry(boxGeom);
-        const lineMat = new THREE.LineBasicMaterial({
-          color: color,
-          linewidth: 2,
-          transparent: true,
-          opacity: 0.8,
-        });
-        const wireframe = new THREE.LineSegments(edges, lineMat);
-        wireframe.position.set(bx + 0.5, by + 0.5, bz + 0.5);
-        this.highlightGroup.add(wireframe);
-      }
-    }
-  }
-
-  // Clear all scan highlights
-  clearScanHighlights() {
-    while (this.highlightGroup.children.length > 0) {
-      const child = this.highlightGroup.children[0];
-      this.highlightGroup.remove(child);
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) {
-        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
-        else child.material.dispose();
-      }
-    }
-  }
+  // Phase 2.5: the actual rendering of scan highlights / beam lives
+  // in this.scanOverlay (a `ScanOverlay` instance). The shim methods
+  // (showScanHighlights, clearScanHighlights, showScanBeam, hideScanBeam)
+  // above forward to it. The Renderer class no longer maintains its
+  // own highlightGroup — the overlay is the single source of truth.
 
   // Render the scene for the current phase
   render(playerPhase) {

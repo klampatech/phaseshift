@@ -49,7 +49,17 @@ function check(label, ok, extra = '') {
   check('getBlock/setBlock raw formulas removed', !/\b(?:lx|x)\s*\+\s*(?:wy|y)\s*\*\s*CHUNK_SIZE\s*\+\s*(?:lz|z)\s*\*\s*CHUNK_SIZE\s*\*\s*CHUNK_HEIGHT/.test(getSet));
   check('renderer uses unpackIndex', /world\.unpackIndex\s*\(\s*i\s*\)/.test(rendererText));
   check('renderer neighbor lookup uses localIndex', /world\.localIndex\s*\(\s*nx\s*,\s*ny\s*,\s*nz\s*\)/.test(rendererText));
-  check('scan/resonance use World.index', (mainText.match(/world\.index\s*\(\s*x\s*,\s*y\s*,\s*z\s*\)/g) || []).length >= 2);
+  // Phase 1.4 + 2.5: performScan delegates to world.findPhaseDifferences
+  // (no direct world.index call in the scan path). performResonance
+  // still uses world.index — it will be refactored in Phase 2.6.
+  // The Phase 1.4 assertion was "scan/resonance use World.index" —
+  // both used it. The new contract: at least one direct use exists
+  // (performResonance) AND performScan does NOT use it directly.
+  const performScanBody = mainText.match(
+    /function\s+performScan\s*\([^)]*\)\s*\{[^}]*\}/
+  );
+  check('scan/resonance use World.index', (mainText.match(/world\.index\s*\(\s*x\s*,\s*y\s*,\s*z\s*\)/g) || []).length >= 1);
+  check('main.js#performScan no longer uses world.index directly (Phase 2.5)', performScanBody && !/world\.index\s*\(/.test(performScanBody[0]));
 
   console.log('\n=== Phase 1.4 get/set behavior ===');
   world.updateChunks(0, 0, 2);
