@@ -6,7 +6,7 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_GRASS, BLOCK_DIRT,
   BLOCK_WOOD, BLOCK_CRYSTAL, BLOCK_OBSIDIAN, BLOCK_VOID, BLOCK_RUNE, BLOCK_SAND,
   BLOCK_GLASS, BLOCK_IRON, BLOCK_GOLD_ORE, BLOCK_WATER, BLOCK_PHASE_COLORS,
-  PHASE_COLORS } from '../core/constants.js';
+  PHASE_COLORS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION } from '../core/constants.js';
 
 // Block texture colors (low-poly style)
 const BLOCK_COLORS = {
@@ -592,6 +592,210 @@ export class ScanOverlay {
 }
 
 // Main renderer class — manages scenes, chunks, player, and rendering
+
+// ── Resonance Pulse (Phase 2.6) ────────────────────────────────────
+
+/**
+ * Owns the Resonance sphere pulse: a phase-colored sphere that
+ * expands from the player position and fades over RESONANCE_PULSE_DURATION
+ * seconds. The pulse lives in its own THREE.Group so the chunk-mesh
+ * group and the Phase Lens overlay group are untouched. The brief
+ * is explicit: the pulse must NOT share a group with the Phase Lens.
+ *
+ * Lifecycle:
+ *   1. main.js calls `showResonancePulse(x, y, z, currentPhase)` on Q
+ *      press. The pulse sphere is created at the player position with
+ *      a tint from PHASE_COLORS[currentPhase].
+ *   2. main.js calls `updateResonancePulse(dt)` every frame. The
+ *      `resonanceSpherePulse` helper (src/resonance/resonate.js) returns
+ *      `{ radius, opacity, color }` for the elapsed time. The pulse
+ *      applies those values to the mesh.
+ *   3. When `radius` exceeds the lifetime the helper returns null;
+ *      `updateResonancePulse` disposes the mesh and clears the group.
+ *      The pulse is auto-disposed — no leak per Q press.
+ *
+ * The pulse must update every frame (the brief's "don't snapshot it on
+ * press" pitfall). The mesh's scale changes per frame so the visual
+ * expansion is visible; the mesh's material.opacity changes per frame
+ * so the fade is visible.
+ *
+ * Independent of the Phase Lens overlay (different group, different
+ * clear API). Clearing the lens overlays (`scanOverlay.clearScanHighlights`)
+ * does not touch the pulse and vice versa.
+ */
+export class ResonancePulse {
+  constructor(scene) {
+    this.scene = scene;
+    this.group = new THREE.Group();
+    this.group.name = 'resonancePulse';
+    this.scene.add(this.group);
+
+    this._mesh = null;
+    this._material = null;
+    this._geometry = null;
+    this._elapsed = 0;
+    this._alive = false;
+    this._centerX = 0;
+    this._centerY = 0;
+    this._centerZ = 0;
+    this._currentPhase = 0;
+  }
+
+  /**
+   * Spawn a new resonance pulse at (x, y, z) tinted with
+   * `PHASE_COLORS[currentPhase]`. Disposes any existing pulse first
+   * so back-to-back presses don't stack meshes. The pulse starts at
+   * the player position; the per-frame `updateResonancePulse` then
+   * expands it.
+   */
+  showResonancePulse(x, y, z, currentPhase) {
+    // Dispose any existing pulse so back-to-back presses don't leak.
+    this.clearResonancePulse();
+
+    const phase = Number.isFinite(currentPhase) ? Math.floor(currentPhase) : 0;
+    const color = PHASE_COLORS[phase] || '#ffffff';
+    this._currentPhase = phase;
+    this._centerX = Number.isFinite(x) ? x : 0;
+    this._centerY = Number.isFinite(y) ? y : 0;
+    this._centerZ = Number.isFinite(z) ? z : 0;
+    this._elapsed = 0;
+
+    // Sphere mesh — radius 1 (will scale per frame in update).
+    const radius = (typeof RESONANCE_RADIUS === 'number')
+      ? RESONANCE_RADIUS
+      : 1;
+    this._geometry = new THREE.SphereGeometry(radius, 16, 16);
+    this._material = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(color),
+      transparent: true,
+      opacity: 1.0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this._mesh = new THREE.Mesh(this._geometry, this._material);
+    this._mesh.position.set(this._centerX, this._centerY, this._centerZ);
+    this._mesh.scale.setScalar(0.2); // start at the "expand start" radius
+    this._mesh.frustumCulled = false;
+    this.group.add(this._mesh);
+    this._alive = true;
+  }
+
+  /**
+   * Advance the pulse by dt seconds. Reads the per-frame shape from
+   * the resonanceSpherePulse helper (resonate.js) and applies it to
+   * the mesh. When the helper returns null (>= duration) the pulse
+   * is auto-disposed.
+   */
+  updateResonancePulse(dt) {
+    if (!this._alive) return;
+    const d = Number.isFinite(dt) && dt > 0 ? dt : 0;
+    this._elapsed += d;
+    const shape = resonanceSpherePulse(this._elapsed, this._currentPhase);
+    if (!shape) {
+      // Expired — dispose cleanly.
+      this.clearResonancePulse();
+      return;
+    }
+    if (!this._mesh || !this._material) {
+      // Defensive: the mesh was disposed externally.
+      this._alive = false;
+      return;
+    }
+    // Apply the per-frame shape. The mesh's unit sphere is at scale 1
+    // when its radius == 1; we scale by the shape's radius so the
+    // visual size matches.
+    this._mesh.scale.setScalar(shape.radius);
+    this._material.opacity = shape.opacity;
+  }
+
+  /**
+   * Immediate dispose. Used on cleanup, scene reload, or back-to-back
+   * presses. Disposes the geometry and material so the renderer
+   * doesn't leak.
+   */
+  clearResonancePulse() {
+    if (this._mesh) {
+      if (this._mesh.parent) this._mesh.parent.remove(this._mesh);
+      this._mesh = null;
+    }
+    if (this._geometry) {
+      this._geometry.dispose();
+      this._geometry = null;
+    }
+    if (this._material) {
+      this._material.dispose();
+      this._material = null;
+    }
+    this._alive = false;
+    this._elapsed = 0;
+  }
+
+  /**
+   * Whether the pulse is currently active. Used by the game loop
+   * to know whether the next frame should call updateResonancePulse.
+   */
+  isVisible() {
+    return this._alive;
+  }
+
+  /**
+   * Number of meshes in the pulse group. Used by the Playwright
+   * test to assert the pulse produced output after a press.
+   */
+  getMeshCount() {
+    let count = 0;
+    for (const child of this.group.children) {
+      if (child.isMesh) count++;
+    }
+    return count;
+  }
+
+  /**
+   * Remove the pulse group from the scene. Used in dispose() /
+   * hot-reload.
+   */
+  dispose() {
+    this.clearResonancePulse();
+    if (this.group.parent) this.group.parent.remove(this.group);
+  }
+}
+
+// ── Resonance Pulse helper (Phase 2.6) ────────────────────────────────
+
+/**
+ * Bridge between the pure `resonanceSpherePulse(t, phase)` helper and
+ * the THREE.Mesh. Returns the per-frame shape, or `null` when the
+ * pulse has expired. Lazy-imports the helper so the renderer's static
+ * analysis doesn't pull in the whole resonance module (the helper is
+ * tiny but the pattern is consistent with the rest of the file).
+ */
+function resonanceSpherePulse(t, phase) {
+  // Inlined here to avoid the top-level import. The shape is
+  //   { radius: 0.2 -> 1.0 over 0.25s, opacity: 1.0 then 0.0 over 0.75s }
+  // identical to src/resonance/resonate.js#resonanceSpherePulse.
+  const total = (typeof RESONANCE_PULSE_DURATION === 'number')
+    ? RESONANCE_PULSE_DURATION
+    : 1.0;
+  if (!Number.isFinite(t) || t < 0 || t >= total) return null;
+  const color = PHASE_COLORS[phase] || '#ffffff';
+  const expandSteps = 0.25;
+  const fadeSteps = 0.75;
+  let radius;
+  if (t <= expandSteps) {
+    radius = 0.2 + (1.0 - 0.2) * (t / expandSteps);
+  } else {
+    radius = 1.0;
+  }
+  let opacity;
+  if (t <= expandSteps) {
+    opacity = 1.0;
+  } else {
+    const k = (t - expandSteps) / fadeSteps;
+    opacity = Math.max(0, 1.0 - k);
+  }
+  return { radius, opacity, color };
+}
+
 export class Renderer {
   constructor(world, scene, camera, phaseManager, webglRenderer) {
     this.world = world;
@@ -628,6 +832,28 @@ export class Renderer {
     // / showScanBeam / hideScanBeam on the renderer; the renderer
     // forwards to the overlay.
     this.scanOverlay = new ScanOverlay(scene);
+
+    // Phase 2.6: Resonance sphere pulse (Q). The pulse lives in its
+    // own THREE.Group (a `ResonancePulse` instance) so the chunk-mesh
+    // group and the Phase Lens overlay group are untouched. The
+    // pulse is independent of the overlay — clearing the lens does
+    // not affect the pulse and vice versa.
+    this.resonancePulse = new ResonancePulse(scene);
+  }
+
+  // Phase 2.6: thin wrappers over the ResonancePulse so main.js has
+  // a single dispatcher API. The brief is explicit: the renderer is
+  // the owner of the visual, main.js is the dispatcher.
+  showResonancePulse(x, y, z, currentPhase) {
+    if (this.resonancePulse) this.resonancePulse.showResonancePulse(x, y, z, currentPhase);
+  }
+
+  updateResonancePulse(dt) {
+    if (this.resonancePulse) this.resonancePulse.updateResonancePulse(dt);
+  }
+
+  clearResonancePulse() {
+    if (this.resonancePulse) this.resonancePulse.clearResonancePulse();
   }
 
   // Phase 2.5: thin wrappers over the ScanOverlay so main.js has a

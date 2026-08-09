@@ -121,17 +121,27 @@ export class AudioEngine {
     source.stop(now + 0.05);
   }
 
-  // Resonance pulse sound
-  playResonance() {
+  // Phase 2.6: Resonance pulse sound. The chord is a phase-dependent
+  // sweep + a chord that lands on the phase's triad center. The pitch
+  // is per-phase so the player hears the resonance as a "phase signature"
+  // (Alpha low, Beta mid, Gamma high). The signature falls back to a
+  // default sweep when the AudioContext hasn't been initialized yet
+  // (e.g. headless tests) — the headless tests assert that the method
+  // is callable, not that it actually played sound.
+  playResonance(phase = 0) {
     if (!this.initialized) return;
     const ctx = this.ctx;
     const now = ctx.currentTime;
 
-    // Deep bass
+    // Phase 2.6: chord centers per phase (Alpha / Beta / Gamma).
+    const chordCenters = [60, 90, 120];
+    const baseFreq = chordCenters[phase] || 60;
+
+    // Deep bass sweep from baseFreq → 2× baseFreq over 0.5s.
     const osc = ctx.createOscillator();
     osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(60, now);
-    osc.frequency.exponentialRampToValueAtTime(120, now + 0.5);
+    osc.frequency.setValueAtTime(baseFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * 2, now + 0.5);
 
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0.2, now);
@@ -144,6 +154,23 @@ export class AudioEngine {
     osc.connect(filter).connect(gain).connect(this.sfxGain);
     osc.start(now);
     osc.stop(now + 1.5);
+
+    // Phase 2.6: a chord that lands on the phase's triad center
+    // (port from ParticleManager.emitResonancePulse) — three notes
+    // stacked at the 1×, 5/4, and 3/2 frequencies of the base.
+    const chordFreqs = [baseFreq, baseFreq * 1.25, baseFreq * 1.5];
+    for (const freq of chordFreqs) {
+      const chord = ctx.createOscillator();
+      chord.type = 'triangle';
+      chord.frequency.value = freq;
+      const cg = ctx.createGain();
+      cg.gain.setValueAtTime(0.0, now);
+      cg.gain.linearRampToValueAtTime(0.08, now + 0.05);
+      cg.gain.exponentialRampToValueAtTime(0.001, now + 1.0);
+      chord.connect(cg).connect(this.sfxGain);
+      chord.start(now);
+      chord.stop(now + 1.0);
+    }
   }
 
   // Collapse / respawn sound

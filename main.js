@@ -1,15 +1,16 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS } from './src/core/constants.js';
+import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST } from './src/core/constants.js';
 import { World } from './src/core/world.js';
 import { PhaseManager } from './src/core/phase.js';
 import { PhysicsManager } from './src/core/physics.js';
-import { setupLighting, createPlayerMesh, createSkybox, ChunkVisual, setupPostProcessing, ScanOverlay } from './src/render/renderer.js';
+import { setupLighting, createPlayerMesh, createSkybox, ChunkVisual, setupPostProcessing, ScanOverlay, ResonancePulse } from './src/render/renderer.js';
 import { Controls } from './src/input/controls.js';
 import { placeBlock as placeBlockAtTarget } from './src/input/placeBlock.js';
 import { HUD } from './src/ui/hud.js';
 import { AudioManager } from './src/audio/manager.js';
 import { SaveSystem, Settings } from './src/save/system.js';
 import { scanResults, phaseLensDrain, lensRadius, belowDrainThreshold, hasDifferences } from './src/scan/lens.js';
+import { resonateResults, resonateRadius, resonateCost, totalSwappedCount } from './src/resonance/resonate.js';
 
 // Eye height: distance from feet to eyes. Player physics height is 1.7 (see
 // src/core/physics.js PLAYER_HEIGHT); 1.6 is a comfortable eye offset for a
@@ -55,6 +56,15 @@ let lastInteractedPos = null;
 let shiftKeyHeld = false;
 let eKeyHeld = false;
 let qKeyHeld = false;
+// Phase 2.6: Resonance pulse state. The pulse group is owned by the
+// `ResonancePulse` instance (created in init()). `resonancePulseActive`
+// is the per-frame gate — the game loop ticks updateResonancePulse
+// while it's true and stops when the pulse expires.
+let resonancePulse = null;
+let resonancePulseActive = false;
+// Phase 2.6: one-shot gate for the "Insufficient energy" notification.
+// Reset on Q release so the next press can re-trigger.
+let resonance_insufficientNotifiedThisPress = false;
 let currentBlockPlaced = null; // block type for shift+click placement
 let blockBreaking = false;
 let blockBreakProgress = 0;
@@ -83,6 +93,11 @@ function init() {
   // and the overlay are independent — clearing the overlay never
   // touches the chunk meshes.
   scanOverlay = new ScanOverlay(scene);
+
+  // Phase 2.6: Resonance pulse group (a phase-colored sphere that
+  // expands + fades per frame). The pulse lives in its own THREE.Group
+  // so the Phase Lens overlay and the chunk-mesh group are independent.
+  resonancePulse = new ResonancePulse(scene);
 
   // Setup post-processing (bloom + phase color grading)
   postProcessing = setupPostProcessing(renderer, scene, camera);
@@ -642,13 +657,30 @@ function gameLoop(time) {
   // whole-phase block visibility.
   updatePhaseLensVisibility();
 
-  // Handle Resonance Scan (Q)
+  // Handle Resonance Scan (Q). Phase 2.6: the press is one-shot per
+  // rising edge (the Phase 1.1 input binding already resets
+  // `ctrlState.resonating` on key-up, so the spam guard is automatic).
   if (ctrlState.resonating && !qKeyHeld) {
     qKeyHeld = true;
     performResonance(pos);
   }
   if (!ctrlState.resonating) {
     qKeyHeld = false;
+    // Reset the one-shot insufficient-energy notification gate so the
+    // next press can re-trigger the message.
+    resonance_insufficientNotifiedThisPress = false;
+  }
+
+  // Phase 2.6: advance the resonance sphere pulse every frame. The
+  // pulse has its own lifetime (1.0s, expand + fade) and is auto-
+  // disposed by ResonancePulse when the lifetime expires. The
+  // per-frame gate is `resonancePulseActive` — the renderer only
+  // spends cycles on the pulse mesh while it's alive.
+  if (resonancePulseActive && renderer && typeof renderer.updateResonancePulse === 'function') {
+    renderer.updateResonancePulse(deltaTime);
+    if (renderer.resonancePulse && !renderer.resonancePulse.isVisible()) {
+      resonancePulseActive = false;
+    }
   }
 
   // Handle Block Interaction (Mouse)
@@ -743,71 +775,66 @@ function performScan(pos) {
   }
 }
 
+// Phase 2.6: Resonance (Q). The one-shot press delegates to
+// `world.resonateWithReport(...)` via `resonateResults` (no more
+// direct `chunk.alphaData` reads — the Phase 1.5 anti-pattern
+// Phase 2.5 refactored out of `performScan`). The brief's §2.6
+// acceptance is:
+//   1. Press Q in a chunk with mixed phase blocks visibly swaps them.
+//   2. Energy drops by 15. Refuse if < 15 with "Insufficient energy".
+//   3. Sphere pulse on the player (radius 0.2 → 1.0 block over 0.25s,
+//      then opacity 1.0 → 0 over 0.75s, color = PHASE_COLORS[phase]).
+//   4. Audio plays the resonance chord (audioManager.playResonance).
+//   5. The pulse still fires when no phase-different blocks are in
+//      radius (15 energy cost, no swap, no crash).
 function performResonance(pos) {
-  // Resonance scan: find phase-specific blocks
-  const resonanceRadius = 16;
-  let resonanceBlocks = [];
-  const chunks = world.getChunks();
-  
-  chunks.forEach((chunk) => {
-    const cx = chunk.cx * CHUNK_SIZE;
-    const cz = chunk.cz * CHUNK_SIZE;
-    const dx = pos.x - cx;
-    const dz = pos.z - cz;
-    
-    if (Math.abs(dx) > CHUNK_SIZE || Math.abs(dz) > CHUNK_SIZE) return;
-    if (Math.sqrt(dx*dx + dz*dz) > resonanceRadius) return;
-    if (!chunk.loaded || !chunk.alphaData) return;
-    
-    for (let x = 0; x < CHUNK_SIZE; x++) {
-      for (let z = 0; z < CHUNK_SIZE; z++) {
-        const wx = cx + x;
-        const wz = cz + z;
-        const dist = Math.sqrt((pos.x - wx)**2 + (pos.z - wz)**2);
-        if (dist > resonanceRadius) continue;
-        
-        for (let y = 0; y < CHUNK_HEIGHT; y++) {
-          const block = chunk.alphaData[world.index(x, y, z)];
-          if (block !== BLOCK_AIR) {
-            const props = BLOCK_PROPERTIES[block];
-            if (props && props.phase) {
-              resonanceBlocks.push({ x: wx, y, z, block, phases: [...props.phase] });
-            }
-          }
-        }
-      }
+  const currentPhase = phaseManager.getCurrentPhase();
+
+  // Refuse if insufficient energy. Notification is one-shot per press
+  // (mirroring the Phase Lens pattern).
+  if (phaseManager.getEnergy() < resonateCost()) {
+    if (!resonance_insufficientNotifiedThisPress) {
+      hud.showNotification('Insufficient energy', '#ff8844');
+      resonance_insufficientNotifiedThisPress = true;
     }
-  });
-  
-  // Consume energy for resonance
-  phaseManager.consumeEnergy(15); // RESONATE_COST from constants
-  
-  if (resonanceBlocks.length > 0) {
-    hud.showNotification(`RESONANCE: ${resonanceBlocks.length} phase-blocks`, '#d9b34c');
-    
-    // Show phase-specific blocks with special glow
-    resonanceBlocks.forEach(rb => {
-      const blockProps = BLOCK_PROPERTIES[rb.block];
-      const chunk = world.getChunk(rb.x, rb.z);
-      if (!chunk) return;
-      const cKey = `${chunk.cx},${chunk.cz}`;
-      const visual = chunkVisuals.get(cKey);
-      if (visual && blockProps && blockProps.phase) {
-        const phases = ['alpha', 'beta', 'gamma'];
-        const matchingPhase = phases[blockProps.phase[0]];
-        const mesh = visual.meshes[matchingPhase];
-        if (mesh) {
-          mesh.material.emissive.set('#ff6644');
-          mesh.material.emissiveIntensity = 0.5;
-          setTimeout(() => {
-            mesh.material.emissive.set('#000000');
-            mesh.material.emissiveIntensity = 0;
-          }, 2000);
-        }
-      }
-    });
+    return;
+  }
+  // Reset the one-shot gate so the next press can re-trigger.
+  resonance_insufficientNotifiedThisPress = false;
+
+  // Delegate to the world — single source of truth for the swap.
+  const results = resonateResults(
+    pos.x, pos.y, pos.z,
+    resonateRadius(),
+    currentPhase,
+    world,
+  );
+  const swappedCount = totalSwappedCount(results);
+
+  // Energy debit on success (one-shot per press — not per-frame).
+  phaseManager.consumeEnergy(resonateCost());
+
+  // Visual: phase-colored sphere pulse anchored to the player.
+  if (renderer && typeof renderer.showResonancePulse === 'function') {
+    renderer.showResonancePulse(pos.x, pos.y, pos.z, currentPhase);
+  }
+  resonancePulseActive = true;
+
+  // Audio: chord + sweep. The audio method is a no-op without an
+  // AudioContext, so the headless tests can still assert the call.
+  if (audioManager && typeof audioManager.playResonance === 'function') {
+    audioManager.playResonance(currentPhase);
+  }
+
+  // Notification: show the swap count (0 is fine — the pulse still
+  // fired, the audio still played, the energy is still debited).
+  if (swappedCount > 0) {
+    hud.showNotification(`RESONANCE: ${swappedCount} phase-cells`, '#d9b34c');
+  } else {
+    hud.showNotification('RESONANCE: no phase-cells', '#d9b34c');
   }
 }
+
 
 // Phase 2.3: placeAnchor is a no-op stub. The full lockManager integration
 // lives in Phase 2.7 (per PROJECT_REMEDIATION_PLAN §2.7). Without this stub,
@@ -1176,6 +1203,63 @@ if (typeof window !== 'undefined') {
     },
     getScanOverlayBeamVisible() {
       return scanOverlay ? scanOverlay.isVisible() : false;
+    },
+    // Phase 2.6: forceResonate() — runs the one-shot resonance at
+    // the player's current position and returns the result. Mirrors
+    // the §2.5 forceScan() pattern: the brief's acceptance #1..
+    // acceptance #6 are the data path (radii, swap counts, energy
+    // debits) — the Playwright test exercises the hook end-to-end
+    // without needing keyboard input. The visual sphere pulse and
+    // audio are still wired (the renderer.updateResonancePulse loop
+    // advances the pulse each frame).
+    forceResonate() {
+      if (!world || !phaseManager) return null;
+      const p = physicsManager ? physicsManager.getPos() : { x: 0, y: 0, z: 0 };
+      const currentPhase = phaseManager.getCurrentPhase();
+      const energyBefore = phaseManager.getEnergy();
+      const radius = resonateRadius();
+      const results = resonateResults(p.x, p.y, p.z, radius, currentPhase, world);
+      const swappedCount = totalSwappedCount(results);
+      // Debit the energy so the test can verify the 15-energy math.
+      const debited = phaseManager.consumeEnergy(resonateCost());
+      // Spawn the sphere pulse (no-op if the renderer isn't ready).
+      if (renderer && typeof renderer.showResonancePulse === 'function') {
+        renderer.showResonancePulse(p.x, p.y, p.z, currentPhase);
+      }
+      resonancePulseActive = true;
+      // Audio (no-op without an AudioContext; the headless tests
+      // just assert the method is callable).
+      if (audioManager && typeof audioManager.playResonance === 'function') {
+        audioManager.playResonance(currentPhase);
+      }
+      const energyAfter = phaseManager.getEnergy();
+      return {
+        radius,
+        phase: currentPhase,
+        count: swappedCount,
+        results,
+        energyBefore,
+        energyAfter,
+        energyDebited: debited,
+      };
+    },
+    // Phase 2.6: resonance pulse inspection — the Playwright test
+    // uses this to confirm the pulse produced a mesh after a press.
+    getResonancePulseMeshCount() {
+      return renderer && renderer.resonancePulse
+        ? renderer.resonancePulse.getMeshCount()
+        : 0;
+    },
+    getResonancePulseVisible() {
+      return renderer && renderer.resonancePulse
+        ? renderer.resonancePulse.isVisible()
+        : false;
+    },
+    clearResonancePulse() {
+      if (renderer && typeof renderer.clearResonancePulse === 'function') {
+        renderer.clearResonancePulse();
+      }
+      resonancePulseActive = false;
     },
     // Phase 2.3: placeBlock(x, y, z, blockType) test hook. Calls the
     // same placeBlock helper that the RMB contextmenu handler uses, so

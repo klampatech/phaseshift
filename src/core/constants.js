@@ -171,6 +171,13 @@ export const PHASE_LENS_DRAIN_RATE = 0.5;
 // calls for a 4-block radius. Used by both the one-shot press (E) and
 // the Phase Lens hold (E).
 export const SCAN_RADIUS = 4;
+// Phase 2.6: Resonance (Q) — the one-shot press that swaps phase
+// presence on the blocks around the player. The radius is in block
+// units (cubic) — radius=1 gives a 3×3×3 area around the player. The
+// pulse duration is the total sphere-pulse lifetime (0.25s expand +
+// 0.75s fade) so the renderer can decide when to dispose the mesh.
+export const RESONANCE_RADIUS = 1;
+export const RESONANCE_PULSE_DURATION = 1.0;
 export const ENERGY_REGEN_RATE = 0.005;
 export const PHASE_DRAIN_RATE = 0.02;
 export const WATER_DRAIN = 0.15;

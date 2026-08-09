@@ -550,6 +550,84 @@ export class World {
     }
   }
 
+  /**
+   * Phase 2.6: Resonance pulse with swap report. Same inversion logic
+   * as `resonate(cx, cy, cz, radius)`, but returns a per-cell report
+   * so the renderer + notification can show the swap count without
+   * reading chunk data directly. The legacy `resonate(...)` stays
+   * for back-compat (and as the write engine behind this method).
+   *
+   * Returns
+   *   `{ results: Array<{ x, y, z, swappedPhases: number[] }>, count: number }`
+   * where `swappedPhases` is the list of phase indexes whose block
+   * identity at that cell changed during the resonance. The total
+   * `count` is the sum of every swappedPhases array length.
+   *
+   * `currentPhase` is the player's current phase (the pass-through
+   * helpers in src/resonance/resonate.js use it to scope the
+   * report). When the cell is multi-phase, every non-air phase but
+   * the current one is recorded as a swap.
+   */
+  resonateWithReport(cx, cy, cz, radius, currentPhase) {
+    const r = Math.max(0, Math.floor(Number.isFinite(radius) ? radius : 0));
+    const phase = Number.isFinite(currentPhase) ? Math.floor(currentPhase) : PHASE_ALPHA;
+    const otherPhaseMask = ((1 << PHASE_COUNT) - 1) & ~(1 << phase);
+
+    const minX = cx - r;
+    const maxX = cx + r;
+    const minY = cy - r;
+    const maxY = cy + r;
+    const minZ = cz - r;
+    const maxZ = cz + r;
+
+    // Collect cells that have at least one non-air phase other than
+    // the current phase (the "eligible to swap" cells). The current
+    // phase's block is NOT touched — the legacy `resonate` only
+    // touches the player's current phase and the inverse phase.
+    const eligible = [];
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = minY; y <= maxY; y++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          const mask = this.getBlockMask(x, y, z);
+          if (mask === 0) continue;
+          const crossPhase = mask & otherPhaseMask;
+          if (crossPhase === 0) continue; // nothing to swap
+          const swapped = [];
+          for (let p = 0; p < PHASE_COUNT; p++) {
+            if (p !== phase && (mask & (1 << p))) swapped.push(p);
+          }
+          if (swapped.length > 0) {
+            eligible.push({ x, y, z, swappedPhases: swapped });
+          }
+        }
+      }
+    }
+
+    // Now apply the actual swap (the same write path as `resonate`).
+    // We do this AFTER the report so the report reflects the pre-
+    // swap state (the swapped phases are the ones that were non-air
+    // before the press).
+    const cell = { x: 0, y: 0, z: 0 };
+    for (const r of eligible) {
+      cell.x = r.x; cell.y = r.y; cell.z = r.z;
+      for (let p = PHASE_ALPHA; p < PHASE_COUNT; p++) {
+        const block = this.getBlock(cell.x, cell.y, cell.z, p);
+        if (block === BLOCK_AIR) continue;
+        const inversePhase = (p + 1) % PHASE_COUNT;
+        const oppositeBlock = this.getBlock(cell.x, cell.y, cell.z, inversePhase);
+        if (oppositeBlock !== BLOCK_AIR) {
+          this.setBlock(cell.x, cell.y, cell.z, p, BLOCK_AIR);
+          this.setBlock(cell.x, cell.y, cell.z, inversePhase, block);
+        } else {
+          this.setBlock(cell.x, cell.y, cell.z, p, BLOCK_AIR);
+        }
+      }
+    }
+
+    const count = eligible.reduce((sum, r) => sum + r.swappedPhases.length, 0);
+    return { results: eligible, count };
+  }
+
   /** Get all changed (non-default) blocks for saving */
   getChangedBlocks() {
     const changed = {};

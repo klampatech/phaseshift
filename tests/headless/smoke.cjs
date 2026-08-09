@@ -187,7 +187,12 @@ const CHROMIUM_ARGS = [
     world_unpack_index_defined: /\bunpackIndex\s*\(\s*i\s*\)/.test(worldText),
     get_set_raw_formulas_gone: !/\b(?:lx|x)\s*\+\s*(?:wy|y)\s*\*\s*CHUNK_SIZE\s*\+\s*(?:lz|z)\s*\*\s*CHUNK_SIZE\s*\*\s*CHUNK_HEIGHT/.test(getSetText),
     renderer_uses_index_helpers: /world\.unpackIndex\s*\(\s*i\s*\)/.test(rendererText) && /world\.localIndex\s*\(\s*nx\s*,\s*ny\s*,\s*nz\s*\)/.test(rendererText),
-    scans_use_world_index: (srcText.match(/world\.index\s*\(\s*x\s*,\s*y\s*,\s*z\s*\)/g) || []).length >= 2,
+    // Phase 1.4 + 2.5 + 2.6: performScan (via scanResults) and
+    // performResonance (via resonateResults) BOTH delegate to world
+    // APIs. No direct world.index calls in main.js — the legacy
+    // assertion was "at least 2 uses" (performScan + performResonance
+    // hand-rolled chunks). The new contract: 0 uses.
+    scans_use_world_index: (srcText.match(/world\.index\s*\(\s*x\s*,\s*y\s*,\s*z\s*\)/g) || []).length === 0,
   };
   console.log('\n=== Phase 1.4 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase14, null, 2));
@@ -366,6 +371,89 @@ const CHROMIUM_ARGS = [
   console.log('\n=== Phase 2.5 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase25, null, 2));
 
+  // Phase 2.6: audio source (needed for the AudioManager.playResonance
+  // check). Declared ahead of the Phase 2.6 block so it's in scope.
+  const audioSrc = path.resolve(__dirname, '..', '..', 'src', 'audio', 'manager.js');
+  const audioText2 = fs2.existsSync(audioSrc) ? fs2.readFileSync(audioSrc, 'utf8') : '';
+
+  // Phase 2.6: Resonance (Q) — the one-shot press that swaps phase
+  // presence on the blocks around the player. The new pure module
+  // src/resonance/resonate.js exports the helpers; main.js
+  // refactors performResonance to delegate to world.resonateWithReport
+  // (no direct chunk.alphaData reads in the resonance loop). The
+  // ResonancePulse class lives in src/render/renderer.js and exposes
+  // showResonancePulse / updateResonancePulse / clearResonancePulse.
+  // New constants RESONANCE_RADIUS = 1 and RESONANCE_PULSE_DURATION
+  // = 1.0 are in src/core/constants.js.
+  const resonateSrc = path.resolve(__dirname, '..', '..', 'src', 'resonance', 'resonate.js');
+  const resonateText = fs2.existsSync(resonateSrc) ? fs2.readFileSync(resonateSrc, 'utf8') : '';
+  const phase26 = {
+    // Constants
+    resonance_radius_defined: /export\s+const\s+RESONANCE_RADIUS\s*=\s*1\b/.test(constantsText),
+    resonance_pulse_duration_defined: /export\s+const\s+RESONANCE_PULSE_DURATION\s*=\s*1\.0\b/.test(constantsText),
+    // src/resonance/resonate.js module exports
+    resonate_module_exports_resonate_results: /export\s+function\s+resonateResults\s*\(/.test(resonateText),
+    resonate_module_exports_resonate_radius: /export\s+function\s+resonateRadius\s*\(/.test(resonateText),
+    resonate_module_exports_resonate_cost: /export\s+function\s+resonateCost\s*\(/.test(resonateText),
+    resonate_module_exports_total_swapped_count: /export\s+function\s+totalSwappedCount\s*\(/.test(resonateText),
+    resonate_module_exports_resonance_sphere_pulse: /export\s+function\s+resonanceSpherePulse\s*\(/.test(resonateText),
+    // World.resonateWithReport
+    world_resonate_with_report_defined: /resonateWithReport\s*\(\s*cx\s*,\s*cy\s*,\s*cz\s*,\s*radius\s*,\s*currentPhase\s*\)/.test(worldText),
+    world_resonate_with_report_returns_results: /resonateWithReport[\s\S]{0,3000}?return\s*\{[^}]*results:/.test(worldText),
+    world_resonate_with_report_returns_count: /resonateWithReport[\s\S]{0,3000}?return\s*\{[^}]*,\s*count\s*\}/.test(worldText),
+    world_resonate_with_report_per_cell_has_swapped_phases: /resonateWithReport[\s\S]{0,2000}?swappedPhases/.test(worldText),
+    // main.js wiring
+    main_imports_resonate_results: /import\s*\{[^}]*resonateResults[^}]*\}\s*from\s*['"]\.\/src\/resonance\/resonate\.js['"]/.test(srcText),
+    main_imports_resonance_pulse: /import\s*\{[^}]*ResonancePulse[^}]*\}\s*from\s*['"]\.\/src\/render\/renderer\.js['"]/.test(srcText),
+    main_imports_resonance_radius: /import\s*\{[^}]*RESONANCE_RADIUS[^}]*\}\s*from\s*['"]\.\/src\/core\/constants\.js['"]/.test(srcText),
+    // The new performResonance delegates to resonateResults and does
+    // NOT read chunk.alphaData directly (the Phase 1.5 anti-pattern
+    // is gone — same fix Phase 2.5 made for performScan).
+    main_perform_resonance_no_chunk_alpha_data: (() => {
+      // Locate the function body by scanning from the function header.
+      // The body may contain nested braces, so we count braces by
+      // looking for the closing brace of the function declaration.
+      const headerIdx = srcText.indexOf('function performResonance(');
+      if (headerIdx === -1) return false;
+      // Find the closing brace by tracking brace depth.
+      let depth = 0;
+      let sawOpen = false;
+      let end = headerIdx;
+      for (let i = headerIdx; i < srcText.length; i++) {
+        const c = srcText[i];
+        if (c === '{') { depth++; sawOpen = true; }
+        else if (c === '}') { depth--; if (sawOpen && depth === 0) { end = i + 1; break; } }
+      }
+      const body = srcText.slice(headerIdx, end);
+      return body.includes('resonateResults') && !/chunk\.alphaData/.test(body);
+    })(),
+    main_perform_resonance_uses_resonate_results: /function\s+performResonance[\s\S]*?resonateResults\s*\(/.test(srcText),
+    main_perform_resonance_uses_resonate_cost: /function\s+performResonance[\s\S]*?resonateCost\s*\(\s*\)/.test(srcText),
+    main_perform_resonance_uses_resonate_radius: /function\s+performResonance[\s\S]*?resonateRadius\s*\(\s*\)/.test(srcText),
+    main_perform_resonance_consumes_energy: /function\s+performResonance[\s\S]*?phaseManager\.consumeEnergy\s*\(\s*resonateCost\s*\(\s*\)\s*\)/.test(srcText),
+    // Insufficient-energy branch
+    main_insufficient_energy_notify: /resonance_insufficientNotifiedThisPress/.test(srcText) && /Insufficient energy/.test(srcText),
+    // Per-frame pulse update
+    main_advances_resonance_pulse_per_frame: /renderer\.updateResonancePulse\s*\(\s*deltaTime\s*\)/.test(srcText),
+    // Debug hooks
+    debug_force_resonate_hook: /__phaseShifter__[\s\S]*?forceResonate\s*\(\s*\)\s*\{[\s\S]*?resonateResults\s*\(/.test(srcText),
+    debug_get_resonance_pulse_mesh_count: /__phaseShifter__[\s\S]*?getResonancePulseMeshCount\s*\(\s*\)/.test(srcText),
+    debug_get_resonance_pulse_visible: /__phaseShifter__[\s\S]*?getResonancePulseVisible\s*\(\s*\)/.test(srcText),
+    debug_clear_resonance_pulse: /__phaseShifter__[\s\S]*?clearResonancePulse\s*\(\s*\)/.test(srcText),
+    // ResonancePulse class API
+    resonance_pulse_show: /class\s+ResonancePulse[\s\S]*?showResonancePulse\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*currentPhase\s*\)/.test(rendererText),
+    resonance_pulse_update: /class\s+ResonancePulse[\s\S]*?updateResonancePulse\s*\(\s*dt\s*\)/.test(rendererText),
+    resonance_pulse_clear: /class\s+ResonancePulse[\s\S]*?clearResonancePulse\s*\(\s*\)/.test(rendererText),
+    resonance_pulse_own_group: /class\s+ResonancePulse[\s\S]*?this\.group\.name\s*=\s*['"]resonancePulse['"]/.test(rendererText),
+    resonance_pulse_auto_disposes: /class\s+ResonancePulse[\s\S]*?updateResonancePulse[\s\S]*?clearResonancePulse\s*\(\s*\)/.test(rendererText),
+    // Renderer forwarding
+    renderer_show_resonance_pulse_forwards: /showResonancePulse\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*currentPhase\s*\)\s*\{[\s\S]*?this\.resonancePulse\.showResonancePulse/.test(rendererText),
+    renderer_update_resonance_pulse_forwards: /updateResonancePulse\s*\(\s*dt\s*\)\s*\{[\s\S]*?this\.resonancePulse\.updateResonancePulse/.test(rendererText),
+    renderer_clear_resonance_pulse_forwards: /clearResonancePulse\s*\(\s*\)\s*\{[\s\S]*?this\.resonancePulse\.clearResonancePulse/.test(rendererText),
+    // AudioManager.playResonance(phase)
+    audio_play_resonance_with_phase: /playResonance\s*\(\s*phase\s*\)/.test(audioText2) || /playResonance\s*\(\s*phase\s*=\s*0\s*\)/.test(audioText2),
+  };
+
   const physicsSrc = path.resolve(__dirname, '..', '..', 'src', 'core', 'physics.js');
   const physicsText2 = fs2.existsSync(physicsSrc) ? fs2.readFileSync(physicsSrc, 'utf8') : '';
   const phase22 = {
@@ -384,11 +472,10 @@ const CHROMIUM_ARGS = [
   console.log('\n=== Phase 2.2 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase22, null, 2));
 
-  // Phase 2.1: phase shift is fully wired end-to-end.
-  const audioSrc = path.resolve(__dirname, '..', '..', 'src', 'audio', 'manager.js');
+  // Phase 2.1: hud / html sources. (audioText2 is declared above the
+  // Phase 2.6 block so it's in scope for both phases.)
   const hudSrc = path.resolve(__dirname, '..', '..', 'src', 'ui', 'hud.js');
   const htmlSrc = path.resolve(__dirname, '..', '..', 'index.html');
-  const audioText2 = fs2.existsSync(audioSrc) ? fs2.readFileSync(audioSrc, 'utf8') : '';
   const hudText2 = fs2.existsSync(hudSrc) ? fs2.readFileSync(hudSrc, 'utf8') : '';
   const htmlText2 = fs2.existsSync(htmlSrc) ? fs2.readFileSync(htmlSrc, 'utf8') : '';
   const phase21 = {
@@ -520,8 +607,42 @@ const CHROMIUM_ARGS = [
     phase25_scan_overlay_hide_scan_beam: phase25.scan_overlay_hide_scan_beam,
     phase25_scan_overlay_beam_parented_to_camera: phase25.scan_overlay_beam_parented_to_camera,
     phase25_scan_overlay_disposes_geometry: phase25.scan_overlay_disposes_geometry,
+    phase26_resonance_radius_defined: phase26.resonance_radius_defined,
+    phase26_resonance_pulse_duration_defined: phase26.resonance_pulse_duration_defined,
+    phase26_resonate_module_exports_resonate_results: phase26.resonate_module_exports_resonate_results,
+    phase26_resonate_module_exports_resonate_radius: phase26.resonate_module_exports_resonate_radius,
+    phase26_resonate_module_exports_resonate_cost: phase26.resonate_module_exports_resonate_cost,
+    phase26_resonate_module_exports_total_swapped_count: phase26.resonate_module_exports_total_swapped_count,
+    phase26_resonate_module_exports_resonance_sphere_pulse: phase26.resonate_module_exports_resonance_sphere_pulse,
+    phase26_world_resonate_with_report_defined: phase26.world_resonate_with_report_defined,
+    phase26_world_resonate_with_report_returns_results: phase26.world_resonate_with_report_returns_results,
+    phase26_world_resonate_with_report_returns_count: phase26.world_resonate_with_report_returns_count,
+    phase26_world_resonate_with_report_per_cell_has_swapped_phases: phase26.world_resonate_with_report_per_cell_has_swapped_phases,
+    phase26_main_imports_resonate_results: phase26.main_imports_resonate_results,
+    phase26_main_imports_resonance_pulse: phase26.main_imports_resonance_pulse,
+    phase26_main_imports_resonance_radius: phase26.main_imports_resonance_radius,
+    phase26_main_perform_resonance_no_chunk_alpha_data: phase26.main_perform_resonance_no_chunk_alpha_data,
+    phase26_main_perform_resonance_uses_resonate_results: phase26.main_perform_resonance_uses_resonate_results,
+    phase26_main_perform_resonance_uses_resonate_cost: phase26.main_perform_resonance_uses_resonate_cost,
+    phase26_main_perform_resonance_uses_resonate_radius: phase26.main_perform_resonance_uses_resonate_radius,
+    phase26_main_perform_resonance_consumes_energy: phase26.main_perform_resonance_consumes_energy,
+    phase26_main_insufficient_energy_notify: phase26.main_insufficient_energy_notify,
+    phase26_main_advances_resonance_pulse_per_frame: phase26.main_advances_resonance_pulse_per_frame,
+    phase26_debug_force_resonate_hook: phase26.debug_force_resonate_hook,
+    phase26_debug_get_resonance_pulse_mesh_count: phase26.debug_get_resonance_pulse_mesh_count,
+    phase26_debug_get_resonance_pulse_visible: phase26.debug_get_resonance_pulse_visible,
+    phase26_debug_clear_resonance_pulse: phase26.debug_clear_resonance_pulse,
+    phase26_resonance_pulse_show: phase26.resonance_pulse_show,
+    phase26_resonance_pulse_update: phase26.resonance_pulse_update,
+    phase26_resonance_pulse_clear: phase26.resonance_pulse_clear,
+    phase26_resonance_pulse_own_group: phase26.resonance_pulse_own_group,
+    phase26_resonance_pulse_auto_disposes: phase26.resonance_pulse_auto_disposes,
+    phase26_renderer_show_resonance_pulse_forwards: phase26.renderer_show_resonance_pulse_forwards,
+    phase26_renderer_update_resonance_pulse_forwards: phase26.renderer_update_resonance_pulse_forwards,
+    phase26_renderer_clear_resonance_pulse_forwards: phase26.renderer_clear_resonance_pulse_forwards,
+    phase26_audio_play_resonance_with_phase: phase26.audio_play_resonance_with_phase,
   };
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -545,6 +666,7 @@ const CHROMIUM_ARGS = [
   const phase23Ok = Object.values(phase23).every(Boolean);
   const phase24Ok = Object.values(phase24).every(Boolean);
   const phase25Ok = Object.values(phase25).every(Boolean);
+  const phase26Ok = Object.values(phase26).every(Boolean);
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -559,7 +681,8 @@ const CHROMIUM_ARGS = [
     phase22Ok &&
     phase23Ok &&
     phase24Ok &&
-    phase25Ok ? 0 : 1
+    phase25Ok &&
+    phase26Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);
