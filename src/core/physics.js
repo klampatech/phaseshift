@@ -1,9 +1,5 @@
 import * as THREE from 'three';
-import {
-  CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE,
-  PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT,
-  BLOCK_PROPERTIES, PHASE_STEP_THRESHOLD, PHASE_STEP_COOLDOWN,
-} from './constants.js';
+import { PHASE_COUNT, PHASE_STEP_THRESHOLD, PHASE_STEP_COOLDOWN } from './constants.js';
 
 const GRAVITY = 25.0;
 const JUMP_VELOCITY = 8.0;
@@ -63,19 +59,15 @@ export class PhysicsManager {
     return this._isFlying;
   }
 
-  // Check if a block position is solid in a given phase (phase-relative collision)
+  // Check if a block position is solid in a given phase (phase-relative collision).
+  // Phase 2.2: delegates to World.isBlockSolid so there's a single source of
+  // truth for "is this block solid here, now" — physics, the spawn raycast,
+  // and any future caller all read the same per-phase mask.
   _isBlockSolid(x, y, z, phase) {
     phase = phase ?? this._phaseManager.getCurrentPhase();
-    const block = this._world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z), phase);
-    if (block === BLOCK_AIR) return false;
-    const props = BLOCK_PROPERTIES[block];
-    if (!props) return false;
-    // Use phase-specific solid mask (from constants.js phaseSolid array)
-    if (props.phaseSolid) {
-      return props.phaseSolid[phase];
-    }
-    // Fallback to legacy single boolean solid
-    return props.solid;
+    return this._world.isBlockSolid(
+      Math.floor(x), Math.floor(y), Math.floor(z), phase
+    );
   }
 
   // Check if a lock exists at position (for collision)

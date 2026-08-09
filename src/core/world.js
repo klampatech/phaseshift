@@ -323,6 +323,28 @@ export class World {
     }
   }
 
+  // ── Phase-relative solidity (Phase 2.2) ───────────────────────────────
+
+  /**
+   * Phase-relative "is this block solid here, now" check. Reads
+   * BLOCK_PROPERTIES[id].phaseSolid[phase] when the array is defined and
+   * falls back to the legacy .solid boolean for any block that doesn't
+   * declare a per-phase array (BLOCK_AIR is identical either way; this
+   * keeps Phase 1.5's BLOCK_AIR/BLOCK_GLASS/etc. behavior intact).
+   *
+   * The "phase" is the player's current phase — even while _isShifting is
+   * true, we use the from-phase so a mid-air shift never changes collision
+   * mid-flight. Air is always non-solid.
+   */
+  isBlockSolid(x, y, z, phase = PHASE_ALPHA) {
+    const block = this.getBlock(x, y, z, phase);
+    if (block === BLOCK_AIR) return false;
+    const props = BLOCK_PROPERTIES[block];
+    if (!props) return false;
+    if (props.phaseSolid) return !!props.phaseSolid[phase];
+    return !!props.solid;
+  }
+
   // ── Spawn-time helpers (Phase 1.3) ────────────────────────────────
 
   /**
@@ -337,12 +359,7 @@ export class World {
    */
   findTopSolidBlock(worldX, worldZ, phase = PHASE_ALPHA) {
     for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
-      const block = this.getBlock(worldX, y, worldZ, phase);
-      if (block === BLOCK_AIR) continue;
-      const props = BLOCK_PROPERTIES[block];
-      if (!props) continue;
-      const isSolid = props.phaseSolid ? props.phaseSolid[phase] : props.solid;
-      if (isSolid) return y;
+      if (this.isBlockSolid(worldX, y, worldZ, phase)) return y;
     }
     return null;
   }

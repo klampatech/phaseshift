@@ -235,6 +235,29 @@ const CHROMIUM_ARGS = [
   console.log('\n=== Phase 1 closure static-analysis (against source files) ===');
   console.log(JSON.stringify(phase17, null, 2));
 
+  // Phase 2.2: phase-relative collision. World.isBlockSolid is the single
+  // source of truth for "is this block solid here, now" — it reads
+  // BLOCK_PROPERTIES[id].phaseSolid[phase] with a .solid fallback.
+  // PhysicsManager._isBlockSolid delegates to it; the renderer must NOT
+  // reach into phaseSolid for culling (visibility is per-phase data).
+  const physicsSrc = path.resolve(__dirname, '..', '..', 'src', 'core', 'physics.js');
+  const physicsText2 = fs2.existsSync(physicsSrc) ? fs2.readFileSync(physicsSrc, 'utf8') : '';
+  const phase22 = {
+    world_is_block_solid_defined: /isBlockSolid\s*\(\s*x\s*,\s*y\s*,\s*z\s*(?:,\s*phase[^)]*)?\s*\)/.test(worldText),
+    world_is_block_solid_reads_phase_solid: /props\.phaseSolid\s*\[\s*phase\s*\]/.test(worldText),
+    world_is_block_solid_falls_back_to_solid: /props\.phaseSolid[\s\S]{0,200}?props\.solid/.test(worldText),
+    world_is_block_solid_not_legacy_only: !/isBlockSolid[\s\S]*?return\s+props\.solid\s*;/.test(worldText),
+    physics_delegates_to_world_is_block_solid: /_isBlockSolid[\s\S]{0,200}?this\._world\.isBlockSolid\s*\(/.test(physicsText2),
+    physics_has_no_bare_props_solid_reads: !/\bprops\.solid\b/.test(physicsText2),
+    physics_check_collision_uses_is_block_solid: (physicsText2.match(/_isBlockSolid\s*\(/g) || []).length >= 3,
+    renderer_does_not_use_phase_solid: !/phaseSolid/.test(rendererText),
+    renderer_uses_phase_data_for_culling: /data\s*\[\s*ni\s*\]\s*!==\s*BLOCK_AIR/.test(rendererText),
+    renderer_is_surrounded_does_not_consult_block_properties: !/isSurrounded[\s\S]*?BLOCK_PROPERTIES/.test(rendererText),
+    physics_does_not_redefine_phase_cycling: !/cyclePhase\s*\(/.test(physicsText2) && !/forceCyclePhase/.test(physicsText2),
+  };
+  console.log('\n=== Phase 2.2 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase22, null, 2));
+
   // Phase 2.1: phase shift is fully wired end-to-end.
   const audioSrc = path.resolve(__dirname, '..', '..', 'src', 'audio', 'manager.js');
   const hudSrc = path.resolve(__dirname, '..', '..', 'src', 'ui', 'hud.js');
@@ -295,6 +318,17 @@ const CHROMIUM_ARGS = [
     phase17_world_imports_global_state: phase17.world_imports_global_state,
     phase17_save_snapshot_defined: phase17.save_snapshot_defined,
     phase17_init_applies_saved_state: phase17.init_applies_saved_state,
+    phase22_world_is_block_solid_defined: phase22.world_is_block_solid_defined,
+    phase22_world_is_block_solid_reads_phase_solid: phase22.world_is_block_solid_reads_phase_solid,
+    phase22_world_is_block_solid_falls_back_to_solid: phase22.world_is_block_solid_falls_back_to_solid,
+    phase22_world_is_block_solid_not_legacy_only: phase22.world_is_block_solid_not_legacy_only,
+    phase22_physics_delegates_to_world_is_block_solid: phase22.physics_delegates_to_world_is_block_solid,
+    phase22_physics_has_no_bare_props_solid_reads: phase22.physics_has_no_bare_props_solid_reads,
+    phase22_physics_check_collision_uses_is_block_solid: phase22.physics_check_collision_uses_is_block_solid,
+    phase22_renderer_does_not_use_phase_solid: phase22.renderer_does_not_use_phase_solid,
+    phase22_renderer_uses_phase_data_for_culling: phase22.renderer_uses_phase_data_for_culling,
+    phase22_renderer_is_surrounded_does_not_consult_block_properties: phase22.renderer_is_surrounded_does_not_consult_block_properties,
+    phase22_physics_does_not_redefine_phase_cycling: phase22.physics_does_not_redefine_phase_cycling,
     phase21_audio_play_shift_defined: phase21.audio_play_shift_defined,
     phase21_post_processing_set_phase_alias: phase21.post_processing_set_phase_alias,
     phase21_post_processing_update_phase_present: phase21.post_processing_update_phase_present,
@@ -308,7 +342,7 @@ const CHROMIUM_ARGS = [
     phase21_force_cycle_phase_hook_intact: phase21.force_cycle_phase_hook_intact,
     phase21_contextmenu_prevent_default_intact: phase21.contextmenu_prevent_default_intact,
   };
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -328,6 +362,7 @@ const CHROMIUM_ARGS = [
   const phase16Ok = Object.values(phase16).every(Boolean);
   const phase17Ok = Object.values(phase17).every(Boolean);
   const phase21Ok = Object.values(phase21).every(Boolean);
+  const phase22Ok = Object.values(phase22).every(Boolean);
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -338,7 +373,8 @@ const CHROMIUM_ARGS = [
     phase15Ok &&
     phase16Ok &&
     phase17Ok &&
-    phase21Ok ? 0 : 1
+    phase21Ok &&
+    phase22Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

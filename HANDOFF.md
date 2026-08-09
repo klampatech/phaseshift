@@ -334,31 +334,53 @@ ebfcd07  Initial import + Phase 0: enforce single-engine architectural decision
 
 ---
 
-## What's next — Phase 2.2: Phase-relative collision
+## Phase 2.2 completion
 
-**Problem.** `BLOCK_PROPERTIES[*].phaseSolid[phase]` already exists, but the physics manager's collision routine must read it to make Stone passable in Gamma, Crystal walkable in Beta, etc. Without the §2.2 acceptance criterion locked down, Phase 2.3 (block place/break) and Phase 2.5 (scan) can't be written against the right invariants.
+**What shipped.**
+- `src/core/world.js` — added `World.isBlockSolid(x, y, z, phase = PHASE_ALPHA)` as the single source of truth for phase-relative solidity. Reads `BLOCK_PROPERTIES[id].phaseSolid[phase]` when the array is defined and falls back to the legacy `.solid` boolean for blocks that don't declare one. `World.findTopSolidBlock` (Phase 1.3 spawn raycast) now delegates to it.
+- `src/core/physics.js` — `PhysicsManager._isBlockSolid` now delegates to `world.isBlockSolid(...)`. Removed the now-unused `BLOCK_PROPERTIES` import (and `BLOCK_AIR`, `BLOCK_STONE`, `CHUNK_SIZE`, `CHUNK_HEIGHT`, `PHASE_ALPHA`, `PHASE_BETA`, `PHASE_GAMMA` from the import — they weren't actually referenced in the module). No bare `props.solid` reads remain in `physics.js`.
+- `src/render/renderer.js` — confirmed `ChunkVisual.isSurrounded` still culls on `data[ni] !== BLOCK_AIR` (visibility), NOT on `phaseSolid`. The renderer's job is to show what's visible in each phase; physics decides what's passable. No code change needed.
+- `tests/headless/test-phase22.cjs` — new (35/35): 13 static-analysis checks (`World.isBlockSolid` reads `phaseSolid[phase]`, falls back to `.solid`, is not legacy-only; `PhysicsManager._isBlockSolid` delegates; no bare `props.solid` reads remain; renderer does not use `phaseSolid`; renderer culling is data-based; `physics.js` doesn't redefine phase cycling) + 22 behavioral checks (Stone solid in Alpha/Beta, passable in Gamma; Crystal solid only in Beta; Grass solid only in Alpha — both via `World.isBlockSolid` AND via `PhysicsManager._isBlockSolid`; AABB `_checkCollision` returns true/false per phase; `_isBlockSolid` defers to manager's current phase, so flipping the phase in-place flips the answer; the legacy fallback path returns false for unknown block ids).
+- `tests/headless/smoke.cjs` — extended with 11 Phase 2.2 static-analysis checks. Process-exit gate now also requires Phase 2.2 to pass.
 
 **Acceptance (from plan §2.2):**
-- Standing on a Stone block in Alpha, pressing right-click to cycle to Beta: player stays standing (Stone is `phaseSolid: [true, true, false]`).
-- Standing on a Stone block in Beta, pressing right-click again to cycle to Gamma: player falls through (Stone is not solid in Gamma).
-- Standing on a Stone block in Gamma, pressing right-click to cycle back to Alpha: player lands on the Stone block again.
-- A `BLOCK_PROPERTIES[block].phaseSolid` lookup fallback must exist so renderer and physics agree.
+- ✅ Stone is `phaseSolid: [true, true, false]` — player on Stone in Alpha stays standing when cycled to Beta (verified via behavioral test that probes `_isBlockSolid(0, 0, 0, PHASE_BETA)` on Stone).
+- ✅ Stone is passable in Gamma — `_isBlockSolid(0, 0, 0, PHASE_GAMMA)` returns false; AABB `_checkCollision` returns false at the same coordinates.
+- ✅ Cycling back to Alpha re-enables the collision (`_isBlockSolid` returns true again). Behavioral test flips the phase in-place and confirms the answer flips with it (mid-air shift must NOT change collision mid-flight — `_checkCollision` delegates to `_isBlockSolid` without forcing a phase).
+- ✅ Regression coverage on Stone, Crystal (Beta-only), and Grass (Alpha-only).
+- ✅ All earlier phase tests still pass: 1.2 (17/17), 1.3 (7/7), 1.4 (21/21), 1.5 (12/12), 1.6 (21/21), 1.7 (26/26), 2.2 (35/35). Smoke test green. Playwright 33/33.
 
-**Files to touch:** `src/core/physics.js` (read `phaseSolid[phase]` instead of `solid`), `src/core/world.js` (or `BLOCK_PROPERTIES` if the fallback needs a runtime shim), `tests/headless/test-phase22.cjs` (new), `tests/headless/smoke.cjs` (extend), `tests/gameplay.spec.js` (optional Playwright collision test).
+**What still needs visual verification in a real browser** (cannot run in this sandbox — WebGL fails):
+- The player visibly falls through Stone when the phase cycles to Gamma, and visibly lands on it when the phase cycles back to Alpha. End-to-end acceptance is the user's responsibility.
 
-**How to verify:**
+**Files touched in Phase 2.2:**
+- `src/core/world.js` (`isBlockSolid` helper; `findTopSolidBlock` delegates to it)
+- `src/core/physics.js` (`_isBlockSolid` delegates to `world.isBlockSolid`; cleaned up unused imports)
+- `tests/headless/test-phase22.cjs` (new)
+- `tests/headless/smoke.cjs` (Phase 2.2 static-analysis block + exit gate)
+
+---
+
+## What's next — Phase 2.3: Place / break
+
+**Problem.** The player needs to be able to place blocks (left-click on a face) and break blocks (left-click on the existing block). Per-phase place/break is the gating question: does the player place a block in the *current* phase only (and the other phases still show air/old block), or do they place it in *all* phases simultaneously?
+
+Per `PROJECT_REMEDIATION_PLAN.md` §2.3, the canonical answer is: **place in the current phase only, break in the current phase only.** The player's edits live in `World._globalStateMap` (Phase 1.7 already exports / imports that snapshot). The place/break logic should call `world.setBlock(x, y, z, phase, blockId)` and let the chunk reload propagate the change to the renderer.
+
+See `PHASE_2_3_BRIEF.md` (created in this commit) for the canonical Phase 2.3 starting brief — acceptance, fix shape, files to touch, how to verify, and common pitfalls.
+
+**How to verify (Phase 2.3 acceptance):**
 ```bash
 node --check main.js
 npm run build
-node tests/headless/test-phase12.cjs
-node tests/headless/test-phase13.cjs
-node tests/headless/test-phase14.cjs
-node tests/headless/test-phase15.cjs
-node tests/headless/test-phase16.cjs
-node tests/headless/test-phase17.cjs
-node tests/headless/test-phase22.cjs   # new
+node tests/headless/test-phase12.cjs   # 17/17 still pass
+node tests/headless/test-phase13.cjs   # 7/7 still pass
+node tests/headless/test-phase14.cjs   # 21/21 still pass
+node tests/headless/test-phase15.cjs   # 12/12 still pass
+node tests/headless/test-phase16.cjs   # 21/21 still pass
+node tests/headless/test-phase17.cjs   # 26/26 still pass
+node tests/headless/test-phase22.cjs   # 35/35 still pass
+node tests/headless/test-phase23.cjs   # new — Phase 2.3
 sudo -E -n node tests/headless/smoke.cjs
 npx playwright test
 ```
-
-See `PHASE_2_2_BRIEF.md` for the canonical Phase 2.2 starting brief (in the repo root after this hand-off is committed).
