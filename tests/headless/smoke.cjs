@@ -543,6 +543,109 @@ const CHROMIUM_ARGS = [
     debug_find_anchor_under_player_hook: /__phaseShifter__[\s\S]*?findAnchorUnderPlayer\s*\(/.test(srcText),
   };
 
+  // Phase 2.8: Audio integration — ambient music on phase change,
+  // footsteps on phase-and-block-filtered ground, crunch on break,
+  // chime on shift, bass pulse on resonance, and
+  // audioManager.init() only when the user clicks the blocker.
+  //
+  // The new pure module src/audio/footsteps.js exports
+  // footstepInterval, shouldPlayFootstep, materialFromBlock,
+  // FOOTSTEP_MATERIALS. The new constants FOOTSTEP_INTERVAL = 0.4
+  // is in src/core/constants.js. main.js#blocker click listener
+  // calls audioManager.init() (the lazy init — the §2.8 acceptance
+  // is that init() fires on the user gesture, not in the subsequent
+  // pointerlockchange handler). The per-frame game loop calls
+  // shouldPlayFootstep + audioManager.playFootstep (the footstep
+  // throttle path). breakBlock calls audioManager.playBlockBreak;
+  // tryPlaceStoneOnFace and __phaseShifter__.placeBlock call
+  // audioManager.playBlockPlace. onPhaseChanged calls
+  // stopAmbientMusic BEFORE startAmbientMusic (the §2.8 ordering
+  // contract).
+  const footstepsSrc = path.resolve(__dirname, '..', '..', 'src', 'audio', 'footsteps.js');
+  const footstepsText = fs2.existsSync(footstepsSrc) ? fs2.readFileSync(footstepsSrc, 'utf8') : '';
+  const phase28 = {
+    // Constants
+    footstep_interval_defined: /export\s+const\s+FOOTSTEP_INTERVAL\s*=\s*0\.4\b/.test(constantsText),
+    // src/audio/footsteps.js module exports
+    footsteps_module_exports_footstep_interval: /export\s+function\s+footstepInterval\s*\(/.test(footstepsText),
+    footsteps_module_exports_should_play_footstep: /export\s+function\s+shouldPlayFootstep\s*\(/.test(footstepsText),
+    footsteps_module_exports_material_from_block: /export\s+function\s+materialFromBlock\s*\(/.test(footstepsText),
+    footsteps_module_exports_footstep_materials: /export\s+const\s+FOOTSTEP_MATERIALS\b/.test(footstepsText),
+    // AudioEngine API
+    audio_play_shift_defined: /playShift\s*\(\s*phase\s*\)/.test(audioText2),
+    audio_play_resonance_defined: /playResonance\s*\(\s*phase\s*(?:=\s*0)?\s*\)/.test(audioText2),
+    audio_play_block_break_defined: /playBlockBreak\s*\(\s*\)/.test(audioText2),
+    audio_play_block_place_defined: /playBlockPlace\s*\(\s*\)/.test(audioText2),
+    audio_play_collapse_defined: /playCollapse\s*\(\s*\)/.test(audioText2),
+    audio_play_footstep_defined: /playFootstep\s*\(\s*material[^)]*\)/.test(audioText2),
+    audio_start_ambient_music_defined: /startAmbientMusic\s*\(\s*phase\s*\)/.test(audioText2),
+    audio_stop_ambient_music_defined: /stopAmbientMusic\s*\(\s*\)/.test(audioText2),
+    audio_play_footstep_has_fallback: /freqs\[material\]\s*\|\|\s*\d+/.test(audioText2),
+    // main.js wiring
+    main_imports_should_play_footstep: /import\s*\{[^}]*shouldPlayFootstep[^}]*\}\s*from\s*['"]\.\/src\/audio\/footsteps\.js['"]/.test(srcText),
+    main_imports_material_from_block: /import\s*\{[^}]*materialFromBlock[^}]*\}\s*from\s*['"]\.\/src\/audio\/footsteps\.js['"]/.test(srcText),
+    main_imports_footstep_interval: /import\s*\{[^}]*FOOTSTEP_INTERVAL[^}]*\}\s*from\s*['"]\.\/src\/core\/constants\.js['"]/.test(srcText),
+    // Lazy init: audioManager.init() fires on the blocker click, not in the pointerlockchange listener.
+    main_blocker_click_listener_calls_init: (() => {
+      const start = srcText.indexOf("blocker.addEventListener('click'");
+      const end2 = srcText.indexOf("addEventListener('pointerlockchange'");
+      if (start < 0 || end2 <= start) return false;
+      const body = srcText.slice(start, end2);
+      return /audioManager\.init\s*\(\s*\)/.test(body);
+    })(),
+    main_blocker_click_listener_calls_resume: (() => {
+      const start = srcText.indexOf("blocker.addEventListener('click'");
+      const end2 = srcText.indexOf("addEventListener('pointerlockchange'");
+      if (start < 0 || end2 <= start) return false;
+      const body = srcText.slice(start, end2);
+      return /audioManager\.resume\s*\(\s*\)/.test(body);
+    })(),
+    main_pointerlockchange_listener_no_init: (() => {
+      const start = srcText.indexOf("addEventListener('pointerlockchange'");
+      const end2 = srcText.indexOf('// HUD', start);
+      if (start < 0 || end2 <= start) return false;
+      const body = srcText.slice(start, end2);
+      return !/audioManager\.init\s*\(\s*\)/.test(body);
+    })(),
+    main_pointerlockchange_listener_calls_resume: (() => {
+      const start = srcText.indexOf("addEventListener('pointerlockchange'");
+      const end2 = srcText.indexOf('// HUD', start);
+      if (start < 0 || end2 <= start) return false;
+      const body = srcText.slice(start, end2);
+      return /audioManager\.resume\s*\(\s*\)/.test(body);
+    })(),
+    // Per-frame footstep tick
+    main_game_loop_calls_should_play_footstep: /function\s+gameLoop[\s\S]*?shouldPlayFootstep\s*\(/.test(srcText),
+    main_game_loop_calls_play_footstep: /function\s+gameLoop[\s\S]*?audioManager\.playFootstep\s*\(/.test(srcText),
+    main_game_loop_calls_material_from_block: /function\s+gameLoop[\s\S]*?materialFromBlock\s*\(/.test(srcText),
+    main_game_loop_uses_world_get_block_per_phase: /function\s+gameLoop[\s\S]*?world\.getBlock\s*\([^)]*phaseManager\.getCurrentPhase\s*\(\s*\)/.test(srcText),
+    main_footstep_tick_no_chunk_alpha_data: (() => {
+      const tickMatch = srcText.match(/Phase 2\.8: footstep tick[\s\S]*?Camera follow \(Phase 1\.2\)/);
+      return tickMatch ? !/chunk\.alphaData/.test(tickMatch[0]) : false;
+    })(),
+    // playBlockBreak / playBlockPlace call sites
+    main_break_block_calls_play_block_break: /function\s+breakBlock[\s\S]*?audioManager\.playBlockBreak\s*\(/.test(srcText),
+    main_try_place_stone_on_face_calls_play_block_place: /function\s+tryPlaceStoneOnFace[\s\S]*?audioManager\.playBlockPlace\s*\(/.test(srcText),
+    main_place_block_debug_hook_calls_play_block_place: /__phaseShifter__[\s\S]*?placeBlock\s*\([\s\S]*?audioManager\.playBlockPlace\s*\(/.test(srcText),
+    // onPhaseChanged ordering
+    main_on_phase_changed_stop_before_start: /function\s+onPhaseChanged[\s\S]*?audioManager\.stopAmbientMusic\s*\(\s*\)[\s\S]*?audioManager\.startAmbientMusic\s*\(\s*phase\s*\)/.test(srcText),
+    main_on_phase_changed_calls_play_shift: /function\s+onPhaseChanged[\s\S]*?audioManager\.playShift\s*\(\s*phase\s*\)/.test(srcText),
+    // Debug hooks
+    debug_force_play_footstep_hook: /__phaseShifter__[\s\S]*?forcePlayFootstep\s*\(/.test(srcText),
+    debug_tick_footsteps_hook: /__phaseShifter__[\s\S]*?tickFootsteps\s*\(\s*dt\s*,\s*ctx\s*\)/.test(srcText),
+    debug_get_footstep_timer_hook: /__phaseShifter__[\s\S]*?getFootstepTimer\s*\(/.test(srcText),
+    debug_force_phase_collapse_hook: /__phaseShifter__[\s\S]*?forcePhaseCollapse\s*\(/.test(srcText),
+    debug_play_block_break_debug_hook: /__phaseShifter__[\s\S]*?playBlockBreakDebug\s*\(/.test(srcText),
+    debug_play_block_place_debug_hook: /__phaseShifter__[\s\S]*?playBlockPlaceDebug\s*\(/.test(srcText),
+    debug_play_shift_debug_hook: /__phaseShifter__[\s\S]*?playShiftDebug\s*\(\s*phase\s*\)/.test(srcText),
+    debug_play_resonance_debug_hook: /__phaseShifter__[\s\S]*?playResonanceDebug\s*\(\s*phase\s*\)/.test(srcText),
+    debug_play_collapse_debug_hook: /__phaseShifter__[\s\S]*?playCollapseDebug\s*\(/.test(srcText),
+    debug_play_footstep_debug_hook: /__phaseShifter__[\s\S]*?playFootstepDebug\s*\(\s*material\s*\)/.test(srcText),
+    debug_start_ambient_music_debug_hook: /__phaseShifter__[\s\S]*?startAmbientMusicDebug\s*\(\s*phase\s*\)/.test(srcText),
+    debug_stop_ambient_music_debug_hook: /__phaseShifter__[\s\S]*?stopAmbientMusicDebug\s*\(/.test(srcText),
+  };
+
+
   const physicsSrc = path.resolve(__dirname, '..', '..', 'src', 'core', 'physics.js');
   const physicsText2 = fs2.existsSync(physicsSrc) ? fs2.readFileSync(physicsSrc, 'utf8') : '';
   const phase22 = {
@@ -779,8 +882,51 @@ const CHROMIUM_ARGS = [
     phase27_debug_is_anchor_at: phase27.debug_is_anchor_at,
     phase27_debug_tick_anchors_hook: phase27.debug_tick_anchors_hook,
     phase27_debug_find_anchor_under_player_hook: phase27.debug_find_anchor_under_player_hook,
+    phase28_footstep_interval_defined: phase28.footstep_interval_defined,
+    phase28_footsteps_module_exports_footstep_interval: phase28.footsteps_module_exports_footstep_interval,
+    phase28_footsteps_module_exports_should_play_footstep: phase28.footsteps_module_exports_should_play_footstep,
+    phase28_footsteps_module_exports_material_from_block: phase28.footsteps_module_exports_material_from_block,
+    phase28_footsteps_module_exports_footstep_materials: phase28.footsteps_module_exports_footstep_materials,
+    phase28_audio_play_shift_defined: phase28.audio_play_shift_defined,
+    phase28_audio_play_resonance_defined: phase28.audio_play_resonance_defined,
+    phase28_audio_play_block_break_defined: phase28.audio_play_block_break_defined,
+    phase28_audio_play_block_place_defined: phase28.audio_play_block_place_defined,
+    phase28_audio_play_collapse_defined: phase28.audio_play_collapse_defined,
+    phase28_audio_play_footstep_defined: phase28.audio_play_footstep_defined,
+    phase28_audio_start_ambient_music_defined: phase28.audio_start_ambient_music_defined,
+    phase28_audio_stop_ambient_music_defined: phase28.audio_stop_ambient_music_defined,
+    phase28_audio_play_footstep_has_fallback: phase28.audio_play_footstep_has_fallback,
+    phase28_main_imports_should_play_footstep: phase28.main_imports_should_play_footstep,
+    phase28_main_imports_material_from_block: phase28.main_imports_material_from_block,
+    phase28_main_imports_footstep_interval: phase28.main_imports_footstep_interval,
+    phase28_main_blocker_click_listener_calls_init: phase28.main_blocker_click_listener_calls_init,
+    phase28_main_blocker_click_listener_calls_resume: phase28.main_blocker_click_listener_calls_resume,
+    phase28_main_pointerlockchange_listener_no_init: phase28.main_pointerlockchange_listener_no_init,
+    phase28_main_pointerlockchange_listener_calls_resume: phase28.main_pointerlockchange_listener_calls_resume,
+    phase28_main_game_loop_calls_should_play_footstep: phase28.main_game_loop_calls_should_play_footstep,
+    phase28_main_game_loop_calls_play_footstep: phase28.main_game_loop_calls_play_footstep,
+    phase28_main_game_loop_calls_material_from_block: phase28.main_game_loop_calls_material_from_block,
+    phase28_main_game_loop_uses_world_get_block_per_phase: phase28.main_game_loop_uses_world_get_block_per_phase,
+    phase28_main_footstep_tick_no_chunk_alpha_data: phase28.main_footstep_tick_no_chunk_alpha_data,
+    phase28_main_break_block_calls_play_block_break: phase28.main_break_block_calls_play_block_break,
+    phase28_main_try_place_stone_on_face_calls_play_block_place: phase28.main_try_place_stone_on_face_calls_play_block_place,
+    phase28_main_place_block_debug_hook_calls_play_block_place: phase28.main_place_block_debug_hook_calls_play_block_place,
+    phase28_main_on_phase_changed_stop_before_start: phase28.main_on_phase_changed_stop_before_start,
+    phase28_main_on_phase_changed_calls_play_shift: phase28.main_on_phase_changed_calls_play_shift,
+    phase28_debug_force_play_footstep_hook: phase28.debug_force_play_footstep_hook,
+    phase28_debug_tick_footsteps_hook: phase28.debug_tick_footsteps_hook,
+    phase28_debug_get_footstep_timer_hook: phase28.debug_get_footstep_timer_hook,
+    phase28_debug_force_phase_collapse_hook: phase28.debug_force_phase_collapse_hook,
+    phase28_debug_play_block_break_debug_hook: phase28.debug_play_block_break_debug_hook,
+    phase28_debug_play_block_place_debug_hook: phase28.debug_play_block_place_debug_hook,
+    phase28_debug_play_shift_debug_hook: phase28.debug_play_shift_debug_hook,
+    phase28_debug_play_resonance_debug_hook: phase28.debug_play_resonance_debug_hook,
+    phase28_debug_play_collapse_debug_hook: phase28.debug_play_collapse_debug_hook,
+    phase28_debug_play_footstep_debug_hook: phase28.debug_play_footstep_debug_hook,
+    phase28_debug_start_ambient_music_debug_hook: phase28.debug_start_ambient_music_debug_hook,
+    phase28_debug_stop_ambient_music_debug_hook: phase28.debug_stop_ambient_music_debug_hook,
   };
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -806,6 +952,7 @@ const CHROMIUM_ARGS = [
   const phase25Ok = Object.values(phase25).every(Boolean);
   const phase26Ok = Object.values(phase26).every(Boolean);
   const phase27Ok = Object.values(phase27).every(Boolean);
+  const phase28Ok = Object.values(phase28).every(Boolean);
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -822,7 +969,8 @@ const CHROMIUM_ARGS = [
     phase24Ok &&
     phase25Ok &&
     phase26Ok &&
-    phase27Ok ? 0 : 1
+    phase27Ok &&
+    phase28Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

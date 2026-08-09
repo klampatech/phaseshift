@@ -574,4 +574,153 @@ test('placeBlock debug hook writes Stone at (x, y, z) in the current phase (Phas
     expect(r5.isAt).toBe(false);
   });
 
+  test('Audio integration: debug hooks callable + footstep throttle math + collapse stub (Phase 2.8)', async ({ page }) => {
+    // Phase 2.8 acceptance:
+    //   - breaking a block plays crunch (playBlockBreak)
+    //   - placing a block plays soft click (playBlockPlace)
+    //   - shifting plays chime (playShift)
+    //   - resonance plays bass pulse (playResonance)
+    //   - phase-collapse plays vacuum sweep (playCollapse)
+    //   - footsteps play every 0.4s while moving and grounded
+    //   - audioManager.init() fires on the blocker click (lazy init)
+    // The Playwright sandbox can't verify the audible output (no
+    // AudioContext), so the test asserts the API surface is reachable
+    // from the debug hooks + the footstep throttle math.
+    await page.waitForTimeout(500);
+
+    // 1) The play*Debug wrappers are all callable.
+    const r1 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      return {
+        break: typeof ps.playBlockBreakDebug === 'function' && ps.playBlockBreakDebug() === true,
+        place: typeof ps.playBlockPlaceDebug === 'function' && ps.playBlockPlaceDebug() === true,
+        shift: typeof ps.playShiftDebug === 'function',
+        resonance: typeof ps.playResonanceDebug === 'function',
+        collapse: typeof ps.playCollapseDebug === 'function' && ps.playCollapseDebug() === true,
+        footstep: typeof ps.playFootstepDebug === 'function',
+        startMusic: typeof ps.startAmbientMusicDebug === 'function',
+        stopMusic: typeof ps.stopAmbientMusicDebug === 'function' && ps.stopAmbientMusicDebug() === true,
+      };
+    });
+    expect(r1.break).toBe(true);
+    expect(r1.place).toBe(true);
+    expect(r1.shift).toBe(true);
+    expect(r1.resonance).toBe(true);
+    expect(r1.collapse).toBe(true);
+    expect(r1.footstep).toBe(true);
+    expect(r1.startMusic).toBe(true);
+    expect(r1.stopMusic).toBe(true);
+
+    // 2) playShiftDebug(phase) returns the phase echo.
+    const r2 = await page.evaluate(() => window.__phaseShifter__.playShiftDebug(1));
+    expect(r2.phase).toBe(1);
+
+    // 3) playResonanceDebug(phase) returns the phase echo.
+    const r3 = await page.evaluate(() => window.__phaseShifter__.playResonanceDebug(2));
+    expect(r3.phase).toBe(2);
+
+    // 4) playFootstepDebug('stone') returns the material echo.
+    const r4 = await page.evaluate(() => window.__phaseShifter__.playFootstepDebug('stone'));
+    expect(r4.material).toBe('stone');
+
+    // 5) startAmbientMusicDebug(phase) returns the phase echo.
+    const r5 = await page.evaluate(() => window.__phaseShifter__.startAmbientMusicDebug(0));
+    expect(r5.phase).toBe(0);
+
+    // 6) tickFootsteps(dt, ctx) throttle math:
+    //   - tickFootsteps(0.5, { isMoving: true, isGrounded: true })
+    //     returns { play: true, remainingTimer: 0.4 }
+    //   - tickFootsteps(0.2, { isMoving: true, isGrounded: true })
+    //     returns { play: false, remainingTimer: 0.2 }
+    // The test bypasses the game loop (which can't run without
+    // WebGL) and asserts the per-tick math directly.
+    const r6 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const t1 = ps.tickFootsteps(0.5, { isMoving: true, isGrounded: true });
+      const t2 = ps.tickFootsteps(0.2, { isMoving: true, isGrounded: true });
+      const t3 = ps.tickFootsteps(0.5, { isMoving: false, isGrounded: true });
+      const t4 = ps.tickFootsteps(0.5, { isMoving: true, isGrounded: false });
+      return {
+        t1Play: t1.play,
+        t1Remaining: t1.remainingTimer,
+        t2Play: t2.play,
+        t2Remaining: t2.remainingTimer,
+        t3Play: t3.play,
+        t3Remaining: t3.remainingTimer,
+        t4Play: t4.play,
+        t4Remaining: t4.remainingTimer,
+      };
+    });
+    expect(r6.t1Play).toBe(true);
+    expect(Math.abs(r6.t1Remaining - 0.4) < 0.001).toBe(true);
+    expect(r6.t2Play).toBe(false);
+    expect(Math.abs(r6.t2Remaining - 0.2) < 0.001).toBe(true);
+    expect(r6.t3Play).toBe(false);
+    expect(r6.t3Remaining).toBe(0);
+    expect(r6.t4Play).toBe(false);
+    expect(r6.t4Remaining).toBe(0);
+
+    // 7) forcePlayFootstep(material) is callable.
+    const r7 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      return {
+        stone: ps.forcePlayFootstep('stone'),
+        wood: ps.forcePlayFootstep('wood'),
+        crystal: ps.forcePlayFootstep('crystal'),
+        voidMat: ps.forcePlayFootstep('void'),
+      };
+    });
+    expect(r7.stone.material).toBe('stone');
+    expect(r7.stone.ok).toBe(true);
+    expect(r7.wood.material).toBe('wood');
+    expect(r7.crystal.material).toBe('crystal');
+    expect(r7.voidMat.material).toBe('void');
+
+    // 8) getFootstepTimer() returns a number (the accumulator value).
+    const r8 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      return {
+        timer: ps.getFootstepTimer(),
+      };
+    });
+    expect(typeof r8.timer).toBe('number');
+
+    // 9) forcePhaseCollapse() in a non-Alpha phase sets energy to 0 +
+    // calls playCollapse. Refuses in Alpha (the §2.8 contract).
+    const r9 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      // Ensure we're in Beta so the collapse can fire.
+      ps.phaseManager.setPhase(1);
+      ps.phaseManager.notify();
+      const energyBefore = ps.phaseManager.getEnergy();
+      const result = ps.forcePhaseCollapse();
+      return {
+        energyBefore,
+        ok: result && result.ok,
+        phase: result && result.phase,
+        energyAfter: result && result.energy,
+      };
+    });
+    expect(r9.energyBefore).toBeGreaterThan(0);
+    expect(r9.ok).toBe(true);
+    expect(r9.phase).toBe(1);
+    expect(r9.energyAfter).toBe(0);
+
+    // 10) forcePhaseCollapse() in Alpha is refused (alpha-cannot-collapse).
+    const r10 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      ps.phaseManager.setPhase(0);
+      ps.phaseManager.notify();
+      const result = ps.forcePhaseCollapse();
+      return {
+        ok: result && result.ok,
+        reason: result && result.reason,
+        phase: result && result.phase,
+      };
+    });
+    expect(r10.ok).toBe(false);
+    expect(r10.reason).toBe('alpha-cannot-collapse');
+    expect(r10.phase).toBe(0);
+  });
+
 });

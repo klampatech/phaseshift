@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT } from './src/core/constants.js';
+import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL } from './src/core/constants.js';
 import { World } from './src/core/world.js';
 import { PhaseManager } from './src/core/phase.js';
 import { PhysicsManager } from './src/core/physics.js';
@@ -11,6 +11,10 @@ import { AudioManager } from './src/audio/manager.js';
 import { SaveSystem, Settings } from './src/save/system.js';
 import { scanResults, phaseLensDrain, lensRadius, belowDrainThreshold, hasDifferences } from './src/scan/lens.js';
 import { resonateResults, resonateRadius, resonateCost, totalSwappedCount } from './src/resonance/resonate.js';
+// Phase 2.8: footstep throttle (every 0.4s) + phase-and-block filter.
+// The call site is the game loop (the accumulator lives in main.js);
+// the helper is the pure module.
+import { shouldPlayFootstep, materialFromBlock, footstepInterval, FOOTSTEP_MATERIALS } from './src/audio/footsteps.js';
 import { placeAnchorAt, snapYForCell, cellUnderPlayer, anchorLifetime, ANCHOR_FILL_COLOR, ANCHOR_BORDER_COLOR } from './src/anchor/anchor.js';
 
 // Eye height: distance from feet to eyes. Player physics height is 1.7 (see
@@ -66,6 +70,13 @@ let resonancePulseActive = false;
 // Phase 2.6: one-shot gate for the "Insufficient energy" notification.
 // Reset on Q release so the next press can re-trigger.
 let resonance_insufficientNotifiedThisPress = false;
+// Phase 2.8: footstep accumulator. The game loop decrements this
+// by deltaTime each frame and calls audioManager.playFootstep(material)
+// when the accumulator crosses zero AND the player is moving + grounded.
+// The canonical interval is FOOTSTEP_INTERVAL (0.4s; the plan's §2.8
+// "every 0.4s"). The accumulator lives in main.js (the game loop owns
+// it) so the audio engine stays scene-agnostic.
+let footstepTimer = 0;
 let currentBlockPlaced = null; // block type for shift+click placement
 let blockBreaking = false;
 let blockBreakProgress = 0;
@@ -207,18 +218,36 @@ function init() {
   const blocker = document.getElementById('blocker');
   controls = new Controls(camera, renderer.domElement);
 
-  // Pointer lock
+  // Pointer lock. Phase 2.8: audioManager.init() now fires on the
+  // blocker click (the user gesture), not inside the subsequent
+  // pointerlockchange listener. The risk register (row #12) calls
+  // this out: doing it lazily after pointer lock means the first
+  // phase-shift audio is lost. The AudioContext needs a user gesture
+  // to unlock, and the click is the unambiguous one. The
+  // pointerlockchange listener still calls audioManager.resume() on
+  // the suspended-context path (some browsers suspend the context
+  // again on tab visibility change).
   blocker.addEventListener('click', () => {
+    if (!gameRunning && audioManager && typeof audioManager.init === 'function') {
+      audioManager.init();
+      audioManager.resume();
+    }
     renderer.domElement.requestPointerLock();
   });
 
   document.addEventListener('pointerlockchange', () => {
     if (document.pointerLockElement === renderer.domElement) {
       blocker.classList.add('hidden');
+      // Defensive: some browsers (Chromium, Firefox) suspend the
+      // AudioContext on tab visibility change. resume() on the next
+      // pointer lock is the recovery path. init() stays on the blocker
+      // click only — the AudioContext is created once, then resumed
+      // on each re-focus.
+      if (audioManager && typeof audioManager.resume === 'function') {
+        audioManager.resume();
+      }
       if (!gameRunning) {
         gameRunning = true;
-        audioManager.init();
-        audioManager.resume();
         lastTime = performance.now();
         // Initial HUD update so phase names show immediately
         hud.update(phaseManager, physicsManager);
@@ -491,7 +520,14 @@ function onPhaseChanged(phaseManager) {
     postProcessing.setPhase(phase);
   }
 
-  // Update ambient music
+  // Phase 2.8 audio on phase change. The plan's order is:
+  //   1) stopAmbientMusic()    — tear down the current track
+  //   2) startAmbientMusic(phase) — spin up the new track
+  //   3) playShift(phase)      — chime on the cycle transition
+  // The stop-before-start ordering is the contract; the AudioEngine
+  // short-circuits on !this.initialized so the headless tests can
+  // exercise the wiring without a real AudioContext. The init()
+  // pathway is on the blocker click (the user gesture), not here.
   if (audioManager) {
     audioManager.stopAmbientMusic();
     audioManager.startAmbientMusic(phase);
@@ -560,20 +596,28 @@ function gameLoop(time) {
   // Physics update
   const ctrlState = controls.getState();
   const velocity = physicsManager.getVelocity();
-  
+
+  // Phase 2.8: footstep tick relies on isMoving + isGrounded. We
+  // hoist moveX + moveZ + isGrounded to the function scope so the
+  // post-physics footstep block can read them. The values are
+  // computed fresh here (and once more inside the if/else) so the
+  // footstep block sees the same `isMoving` the physics block fed
+  // into physicsManager.update().
+  let moveX = 0, moveZ = 0;
+  if (ctrlState.moveZ < 0) moveZ -= 1;
+  if (ctrlState.moveZ > 0) moveZ += 1;
+  if (ctrlState.moveX < 0) moveX -= 1;
+  if (ctrlState.moveX > 0) moveX += 1;
+  const isMoving = (moveX !== 0 || moveZ !== 0);
+  const isGrounded = !!physicsManager.isGrounded;
+
   // Apply gravity
   if (!physicsManager.isGrounded) {
     physicsManager.update(deltaTime);
   } else {
     // On ground: apply movement
-    let moveX = 0, moveZ = 0;
-    if (ctrlState.moveZ < 0) moveZ -= 1;
-    if (ctrlState.moveZ > 0) moveZ += 1;
-    if (ctrlState.moveX < 0) moveX -= 1;
-    if (ctrlState.moveX > 0) moveX += 1;
-    
     const speed = ctrlState.sprint ? 1.5 : 1;
-    
+
     // Apply camera direction (Phase 1.2: quaternion-derived basis)
     if (moveX !== 0 || moveZ !== 0) {
       // controls._onMouseMove already applies yaw/pitch to camera.quaternion
@@ -605,6 +649,30 @@ function gameLoop(time) {
     }
   }
   // End of game loop ground physics else block
+
+  // Phase 2.8: footstep tick. Throttles audioManager.playFootstep(material)
+  // to every footstepInterval() seconds while the player is moving
+  // AND grounded. The phase-and-block filter is the per-phase
+  // world.getBlock lookup on the cell directly under the player's
+  // feet in the current phase. The accumulator lives in main.js (the
+  // game loop owns it) so the audio engine stays scene-agnostic.
+  // The cell below the player is `floor(playerY) - 1` (same convention
+  // as cellUnderPlayer in src/anchor/anchor.js).
+  if (audioManager && typeof audioManager.playFootstep === 'function' && world) {
+    const tickResult = shouldPlayFootstep(footstepTimer, deltaTime, isMoving, isGrounded);
+    footstepTimer = tickResult.remainingTimer;
+    if (tickResult.play) {
+      const playerPos = physicsManager.getPos();
+      const cellX = Math.floor(playerPos.x);
+      const cellY = Math.floor(playerPos.y) - 1;
+      const cellZ = Math.floor(playerPos.z);
+      const blockType = world.getBlock(cellX, cellY, cellZ, phaseManager.getCurrentPhase());
+      const material = materialFromBlock(blockType, phaseManager.getCurrentPhase());
+      if (material) {
+        audioManager.playFootstep(material);
+      }
+    }
+  }
 
   // Camera follow (Phase 1.2): trail the player with eye-height offset.
   // Done after every physics tick so the camera reflects the freshest position.
@@ -980,6 +1048,14 @@ function tryPlaceStoneOnFace(hit) {
   if (!result.ok) return false;
   updateChunkVisuals();
   spawnPlaceParticles(result.x, result.y, result.z, BLOCK_STONE);
+  // Phase 2.8: soft click on placement. Guarded with the audioManager
+  // existence + the method presence so the headless smoke test can
+  // exercise the path without an AudioContext. The engine short-
+  // circuits on !this.initialized, so the call is safe even when
+  // the WebAudio API failed to construct.
+  if (audioManager && typeof audioManager.playBlockPlace === 'function') {
+    audioManager.playBlockPlace();
+  }
   hud.showNotification(`BLOCK PLACED (${result.x}, ${result.y}, ${result.z})`, '#5aa85a');
   return true;
 }
@@ -988,31 +1064,41 @@ function breakBlock() {
   const pos = physicsManager.getPos();
   const dir = getCameraDirection();
   const hit = raycastBlock(pos, dir);
-  
+
   if (hit) {
     // Can only break blocks in current phase (visible)
     const blockType = hit.blockType;
     const chunk = world.getChunk(hit.blockX, hit.blockZ);
-    
+
     if (chunk && chunk.alphaData) {
       // Get the properties of the block we're looking at
       const props = BLOCK_PROPERTIES[blockType];
-      
+
       // Check if block is visible/solid in current phase
       if (props && props.phase && !props.phase.includes(phaseManager.getCurrentPhase())) {
         hud.showNotification('Block not solid in current phase', '#ff4444');
         return;
       }
-      
+
       // Place air at this position to break the block
       placeBlockAt(hit.blockX, hit.blockY, hit.blockZ, BLOCK_AIR);
       hud.showNotification(`BLOCK BROKEN (${hit.blockX}, ${hit.blockY}, ${hit.blockZ})`, '#ff4444');
-      
+
       // Update the chunk visuals
       updateChunkVisuals();
-      
+
       // Spawn collection particle effect
       spawnBreakParticles(hit.blockX, hit.blockY, hit.blockZ, hit.blockType);
+
+      // Phase 2.8: crunchy noise on break. Same guard pattern as
+      // tryPlaceStoneOnFace — guarded with audioManager + method
+      // presence so the headless smoke test can exercise the path
+      // without an AudioContext. The engine short-circuits on
+      // !this.initialized, so the call is safe even when WebAudio
+      // failed to construct.
+      if (audioManager && typeof audioManager.playBlockBreak === 'function') {
+        audioManager.playBlockBreak();
+      }
     }
   }
 }
@@ -1457,6 +1543,119 @@ if (typeof window !== 'undefined') {
       const phase = phaseManager ? phaseManager.getCurrentPhase() : 0;
       return world.findAnchorUnderPlayer(p.x, p.y, p.z, phase);
     },
+    // Phase 2.8: footstep debug hooks. The Playwright test exercises
+    // the throttle math + the per-phase material lookup without
+    // needing pointer lock. tickFootsteps(dt, ctx) is the per-tick
+    // pure helper — it returns the { play, remainingTimer } shape
+    // that shouldPlayFootstep produces, without mutating the audio
+    // engine or the world. forcePlayFootstep(material) is a
+    // pass-through to audioManager.playFootstep. getFootstepTimer()
+    // exposes the current accumulator for invariant tests.
+    tickFootsteps(dt, ctx) {
+      const d = (typeof dt === 'number') ? dt : 0;
+      const isMoving = ctx && typeof ctx.isMoving === 'boolean' ? ctx.isMoving : false;
+      const isGrounded = ctx && typeof ctx.isGrounded === 'boolean' ? ctx.isGrounded : false;
+      return shouldPlayFootstep(footstepTimer, d, isMoving, isGrounded);
+    },
+    // Phase 2.8: explicitly advance the footstep accumulator from
+    // outside the game loop. The Playwright test uses this to drive
+    // the production footstep tick (which mutates the module-
+    // scoped footstepTimer) and then read getFootstepTimer() to
+    // assert the throttle math.
+    advanceFootstepTimer(dt) {
+      const d = (typeof dt === 'number') ? dt : 0;
+      const isMoving = (physicsManager && physicsManager.isGrounded) ? true : false;
+      // Use the player's actual isGrounded. If neither is moving nor
+      // grounded, the helper still decrements the accumulator but
+      // doesn't fire; the test asserts the remainingTimer shape.
+      const isGrounded = !!(physicsManager && physicsManager.isGrounded);
+      const result = shouldPlayFootstep(footstepTimer, d, isMoving, isGrounded);
+      footstepTimer = result.remainingTimer;
+      return result;
+    },
+    getFootstepTimer() {
+      return footstepTimer;
+    },
+    forcePlayFootstep(material) {
+      if (!audioManager || typeof audioManager.playFootstep !== 'function') return null;
+      audioManager.playFootstep(material);
+      return { material: material || 'stone', ok: true };
+    },
+    // Phase 2.8: pass-through debug wrappers for the audio API.
+    // The Playwright test asserts the API surface is reachable from
+    // the debug surface even though WebAudio fails in the sandbox
+    // (the engine short-circuits on !this.initialized).
+    playBlockBreakDebug() {
+      if (!audioManager || typeof audioManager.playBlockBreak !== 'function') return null;
+      audioManager.playBlockBreak();
+      return true;
+    },
+    playBlockPlaceDebug() {
+      if (!audioManager || typeof audioManager.playBlockPlace !== 'function') return null;
+      audioManager.playBlockPlace();
+      return true;
+    },
+    playShiftDebug(phase) {
+      if (!audioManager || typeof audioManager.playShift !== 'function') return null;
+      const p = (typeof phase === 'number') ? phase : (phaseManager ? phaseManager.getCurrentPhase() : 0);
+      audioManager.playShift(p);
+      return { phase: p };
+    },
+    playResonanceDebug(phase) {
+      if (!audioManager || typeof audioManager.playResonance !== 'function') return null;
+      const p = (typeof phase === 'number') ? phase : (phaseManager ? phaseManager.getCurrentPhase() : 0);
+      audioManager.playResonance(p);
+      return { phase: p };
+    },
+    playCollapseDebug() {
+      if (!audioManager || typeof audioManager.playCollapse !== 'function') return null;
+      audioManager.playCollapse();
+      return true;
+    },
+    playFootstepDebug(material) {
+      if (!audioManager || typeof audioManager.playFootstep !== 'function') return null;
+      audioManager.playFootstep(material || 'stone');
+      return { material: material || 'stone' };
+    },
+    startAmbientMusicDebug(phase) {
+      if (!audioManager || typeof audioManager.startAmbientMusic !== 'function') return null;
+      const p = (typeof phase === 'number') ? phase : (phaseManager ? phaseManager.getCurrentPhase() : 0);
+      audioManager.startAmbientMusic(p);
+      return { phase: p };
+    },
+    stopAmbientMusicDebug() {
+      if (!audioManager || typeof audioManager.stopAmbientMusic !== 'function') return null;
+      audioManager.stopAmbientMusic();
+      return true;
+    },
+    // Phase 2.8: phase collapse stub. The §2.8 deliverable is the
+    // audio call site; the §3.2 stabilizer/collapse state machine
+    // is a separate session. The hook sets energy to 0 (the collapse
+    // precondition) and calls audioManager.playCollapse() so the
+    // audio wiring is testable. The Playwright test asserts the
+    // call is reachable, not the respawn-to-stabilizer behavior
+    // (that's §3.2).
+    forcePhaseCollapse() {
+      if (!phaseManager) return null;
+      const phase = phaseManager.getCurrentPhase();
+      if (phase === PHASE_ALPHA) {
+        // The collapse precondition is "any non-Alpha phase" per
+        // the §2.8 brief. Refuse to collapse in Alpha — the audio
+        // wouldn't fire meaningfully and the player is in the
+        // "safe" phase.
+        return { ok: false, reason: 'alpha-cannot-collapse', phase };
+      }
+      if (phaseManager.setEnergy) {
+        phaseManager.setEnergy(0);
+      } else if (phaseManager.consumeEnergy) {
+        // Best-effort fallback: consume all current energy.
+        phaseManager.consumeEnergy(phaseManager.getEnergy());
+      }
+      if (audioManager && typeof audioManager.playCollapse === 'function') {
+        audioManager.playCollapse();
+      }
+      return { ok: true, phase, energy: phaseManager.getEnergy() };
+    },
     // Phase 2.3: placeBlock(x, y, z, blockType) test hook. Calls the
     // same placeBlock helper that the RMB contextmenu handler uses, so
     // Playwright tests can verify the per-phase write + global state
@@ -1470,6 +1669,13 @@ if (typeof window !== 'undefined') {
       if (result.ok) {
         updateChunkVisuals();
         spawnPlaceParticles(result.x, result.y, result.z, blockType);
+        // Phase 2.8: soft click on placement (debug hook matches the
+        // RMB path). Guarded with audioManager + method presence so
+        // the headless test exercises the wiring without an
+        // AudioContext. The engine short-circuits on !this.initialized.
+        if (audioManager && typeof audioManager.playBlockPlace === 'function') {
+          audioManager.playBlockPlace();
+        }
         if (hud) hud.showNotification(`BLOCK PLACED (${result.x}, ${result.y}, ${result.z})`, '#5aa85a');
       }
       return result;

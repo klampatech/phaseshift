@@ -191,6 +191,15 @@ export const ANCHOR_FADE_WINDOW = 3;
 export const ANCHOR_FILL_COLOR = 0xffee88;
 export const ANCHOR_BORDER_COLOR = 0xffcc00;
 export const ANCHOR_COST = 0;
+// Phase 2.8: how often the footstep sound fires while the player is
+// moving and grounded (seconds). The plan's §2.8 acceptance is
+// "every 0.4s". The game loop uses a per-frame accumulator (the
+// same pattern as Phase 2.7's anchor lifetime) so a tab-switch
+// pause doesn't dump the entire pause into the timer. The footstep
+// is also gated by isMoving && isGrounded and a phase-and-block
+// filter (the cell under the player's feet in the current phase
+// must be a non-air block — see src/audio/footsteps.js).
+export const FOOTSTEP_INTERVAL = 0.4;
 export const ENERGY_REGEN_RATE = 0.005;
 export const PHASE_DRAIN_RATE = 0.02;
 export const WATER_DRAIN = 0.15;

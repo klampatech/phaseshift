@@ -91,7 +91,15 @@ export class AudioEngine {
     noise.stop(now + 0.3);
   }
 
-  // Footstep sound
+  // Phase 2.8: Footstep sound. The caller (main.js game loop +
+  // src/audio/footsteps.js#shouldPlayFootstep) throttles the call
+  // to every footstepInterval() seconds while moving and grounded,
+  // and looks up the material name via materialFromBlock (the
+  // phase-and-block filter). The four canonical material names
+  // (stone / wood / crystal / void) have distinct lowpass filters;
+  // anything else falls back to 200 Hz (the closest lowpass). The
+  // method is a no-op without an AudioContext — the headless tests
+  // assert the API surface, not the audible output.
   playFootstep(material = 'stone') {
     if (!this.initialized) return;
     const ctx = this.ctx;
