@@ -48,6 +48,11 @@ export class SaveSystem {
       biomesDiscovered: gameState.biomesDiscovered || [],
       echoesFound: gameState.echoesFound || 0,
       worldState: gameState.worldState, // Block changes
+      // Phase 2.7: include the anchor list in the save blob so placed
+      // anchors survive a save → reload round-trip. The §1.7 / §2.4
+      // save blob (without `anchors`) is still loadable — _normalizeState
+      // defaults anchors to an empty array.
+      anchors: Array.isArray(gameState.anchors) ? gameState.anchors : [],
       timestamp: Date.now(),
     };
 
@@ -117,6 +122,7 @@ export class SaveSystem {
       },
       phase: Number.isFinite(state.phase) ? state.phase : 0,
       worldState: this._coerceWorldState(state.worldState),
+      anchors: this._coerceAnchors(state.anchors),
       timestamp: Number.isFinite(state.timestamp) ? state.timestamp : Date.now(),
     };
   }
@@ -131,6 +137,7 @@ export class SaveSystem {
       biomesDiscovered: [],
       echoesFound: 0,
       worldState: {},
+      anchors: [],
       timestamp: Date.now(),
     };
   }
@@ -193,6 +200,10 @@ export class SaveSystem {
    * Returns the saved state object for tests.
    */
   saveGame(x, y, z, phase, extra) {
+    // Phase 2.7: anchors are passed through `extra.anchors` (the
+    // canonical save shape is { worldState, anchors } from the §1.7
+    // and §2.7 save blobs). Back-compat: a §1.7 / §2.4 save without
+    // anchors still loads cleanly (anchors defaults to an empty array).
     const state = {
       seed: this.getWorldSeed(),
       position: { x, y, z },
@@ -200,6 +211,7 @@ export class SaveSystem {
       timestamp: Date.now(),
       ...(extra || {}),
     };
+    if (!('anchors' in state)) state.anchors = [];
     this.save(state);
     return state;
   }
@@ -209,8 +221,11 @@ export class SaveSystem {
    * block memory produced by World.exportGlobalState(). The snapshot
    * survives across reloads via loadGame().
    */
-  saveSnapshot(x, y, z, phase, worldState) {
-    return this.saveGame(x, y, z, phase, { worldState: worldState || {} });
+  saveSnapshot(x, y, z, phase, worldState, anchors) {
+    return this.saveGame(x, y, z, phase, {
+      worldState: worldState || {},
+      anchors: this._coerceAnchors(anchors),
+    });
   }
 
   /**
@@ -232,6 +247,7 @@ export class SaveSystem {
         z: Number.isFinite(pos.z) ? pos.z : 0,
       },
       worldState: this._coerceWorldState(raw.worldState),
+      anchors: this._coerceAnchors(raw.anchors),
       timestamp: stamp,
     };
   }
@@ -247,6 +263,42 @@ export class SaveSystem {
       if (typeof blockId !== 'number' || !Number.isFinite(blockId)) continue;
       if (!Number.isInteger(blockId) || blockId < 0) continue;
       out[key] = blockId;
+    }
+    return out;
+  }
+
+  /**
+   * Phase 2.7: coerce the anchor list from a save blob. Defensive —
+   * rejects non-arrays, non-finite / non-integer / out-of-range ids
+   * so a tampered save can't poison the world. Mirrors
+   * `_coerceWorldState` (Phase 2.4) but for the anchor shape:
+   *   `{ x, y, z, phase, remaining }` per entry.
+   *
+   * Phase ranges 0–2 (PHASE_ALPHA–PHASE_GAMMA). Remaining ranges
+   * 0–ANCHOR_LIFETIME (clamped). Missing / null / non-array input
+   * returns an empty array (back-compat with §1.7 / §2.4 blobs
+   * that don't include anchors).
+   */
+  _coerceAnchors(value) {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    for (const entry of value) {
+      if (!entry || typeof entry !== 'object') continue;
+      const x = entry.x;
+      const y = entry.y;
+      const z = entry.z;
+      const phase = entry.phase;
+      const remaining = entry.remaining;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+      if (!Number.isInteger(phase) || phase < 0 || phase > 2) continue;
+      if (!Number.isFinite(remaining) || remaining < 0) continue;
+      out.push({
+        x: Math.floor(x),
+        y: Math.floor(y),
+        z: Math.floor(z),
+        phase,
+        remaining: Math.min(10, remaining), // ANCHOR_LIFETIME = 10
+      });
     }
     return out;
   }

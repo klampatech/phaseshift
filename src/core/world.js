@@ -12,6 +12,10 @@ import {
   EROSION_MAP, EROSION_THRESHOLD, EROSION_RADIUS,
 } from '../core/constants.js';
 import { TerrainGenerator } from '../gen/terrain.js';
+import {
+  anchorKey, tickAnchors as _tickAnchorsPure, cellUnderPlayer as _cellUnderPlayerPure,
+  ANCHOR_LIFETIME,
+} from '../anchor/anchor.js';
 
 // Chunk data structure: 3 Uint8Arrays (one per phase)
 class Chunk {
@@ -68,6 +72,15 @@ export class World {
     this._echoes = [];
     // Resonance cores (amplifiers)
     this._resonanceCores = [];
+    // Phase 2.7: Phase Anchor (Shift+LMB) — the player-placed lock
+    // that holds them on a block through a phase shift. Keyed by
+    // the canonical `${x},${y},${z},${phase}` string (the same
+    // convention as World._globalKey + the anchor helper). Each
+    // entry stores the cell + the phase + the remaining seconds
+    // (decremented by tickAnchors). The orphan PhaseLockManager used
+    // Date.now() for the expiry check; the new API uses a per-frame
+    // dt accumulator so the lifetime is sandbox-safe.
+    this._anchors = new Map();
   }
 
   _globalKey(x, y, z, phase) {
@@ -738,6 +751,212 @@ export class World {
     for (const [key, data] of Object.entries(erosionData)) {
       this._erosionState.set(key, data);
     }
+  }
+
+  // ── Phase Anchor (Phase 2.7) ────────────────────────────────────
+  //
+  // The Phase Anchor is the player-placed lock that holds the player
+  // on a block through a phase shift. The keys are the canonical
+  // `${x},${y},${z},${phase}` string (same as World._globalKey). The
+  // values are { x, y, z, phase, remaining } where `remaining` is the
+  // seconds until the anchor expires (decremented per-frame by
+  // tickAnchors). The orphan PhaseLockManager used Date.now() for the
+  // expiry check; the new API uses a per-frame dt accumulator so the
+  // lifetime is sandbox-safe (no wall-clock dependency).
+
+  /**
+   * Create a new anchor at the given (x, y, z) in the given phase.
+   * Idempotent: if the key already exists, the `remaining` lifetime
+   * is refreshed to ANCHOR_LIFETIME (the §2.7 spec — re-pressing
+   * Shift+LMB on the same cell extends the lock). The phase arg is
+   * the player's current phase (the anchor lives per-phase, same as
+   * per-phase place/break from §2.3).
+   *
+   * Returns `{ ok: true, refreshed }` where `refreshed` is true when
+   * the entry was already present. Returns `{ ok: false, reason }`
+   * for invalid input (non-finite coords, out-of-range phase).
+   */
+  createAnchor(x, y, z, phase) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+      return { ok: false, reason: 'bad-input' };
+    }
+    if (!Number.isInteger(phase) || phase < PHASE_ALPHA || phase >= PHASE_COUNT) {
+      return { ok: false, reason: 'bad-input' };
+    }
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    const iz = Math.floor(z);
+    const key = anchorKey(ix, iy, iz, phase);
+    const refreshed = this._anchors.has(key);
+    this._anchors.set(key, {
+      x: ix, y: iy, z: iz, phase,
+      remaining: ANCHOR_LIFETIME,
+    });
+    return { ok: true, refreshed, key };
+  }
+
+  /**
+   * Remove the anchor at the given (x, y, z, phase). Returns
+   * `{ ok, removed }` where `removed` is true when an entry was
+   * actually deleted. Returns `{ ok: false, reason: 'bad-input' }`
+   * for invalid input.
+   */
+  removeAnchor(x, y, z, phase) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+      return { ok: false, reason: 'bad-input' };
+    }
+    if (!Number.isInteger(phase) || phase < PHASE_ALPHA || phase >= PHASE_COUNT) {
+      return { ok: false, reason: 'bad-input' };
+    }
+    const key = anchorKey(Math.floor(x), Math.floor(y), Math.floor(z), phase);
+    const removed = this._anchors.delete(key);
+    return { ok: true, removed, key };
+  }
+
+  /**
+   * Snapshot the active anchors for the renderer + save system.
+   * Returns a fresh array of `{ x, y, z, phase, remaining }` so
+   * callers can mutate the result without affecting the world's
+   * internal state. Used by main.js#tickAnchors to drive the
+   * per-frame overlay update.
+   */
+  getAnchors() {
+    const out = [];
+    for (const [, anchor] of this._anchors) {
+      out.push({
+        x: anchor.x, y: anchor.y, z: anchor.z, phase: anchor.phase,
+        remaining: anchor.remaining,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Walk the anchors map, decrement `remaining` by `dt`, and remove
+   * any that have expired. Returns the list of expired keys so the
+   * renderer can remove the corresponding wireframes. The decrement
+   * logic is the pure helper in src/anchor/anchor.js#tickAnchors;
+   * this method is the world-side effect: it applies the decrement
+   * to the map AND collects the expired keys.
+   *
+   * Mirrors the per-frame update loop of the orphan PhaseLockManager
+   * (Date.now() was the orphan's mechanism; dt is the new mechanism).
+   */
+  tickAnchors(dt) {
+    if (!(this._anchors instanceof Map)) return [];
+    const d = Number.isFinite(dt) && dt > 0 ? dt : 0;
+    if (d === 0) return [];
+    const expired = [];
+    for (const [key, anchor] of this._anchors) {
+      if (!anchor || typeof anchor.remaining !== 'number') {
+        expired.push(key);
+        continue;
+      }
+      const next = anchor.remaining - d;
+      if (next <= 0) {
+        expired.push(key);
+      } else {
+        anchor.remaining = next;
+      }
+    }
+    for (const key of expired) {
+      this._anchors.delete(key);
+    }
+    return expired;
+  }
+
+  /**
+   * Find the anchor at the cell directly under the player's feet.
+   * Returns `null` if no anchor is present at that cell in the
+   * player's current phase. Used by onPhaseChanged to decide
+   * whether to snap the player to the anchor (the §2.7 contract:
+   * "Standing on it through a phase shift keeps you on the block").
+   *
+   * The current phase is passed in (not read from a phaseManager)
+   * so the helper is phase-agnostic and testable.
+   */
+  findAnchorUnderPlayer(playerX, playerY, playerZ, currentPhase = PHASE_ALPHA) {
+    const cell = _cellUnderPlayerPure(playerX, playerY, playerZ);
+    if (!cell) return null;
+    if (!Number.isInteger(currentPhase) || currentPhase < PHASE_ALPHA || currentPhase >= PHASE_COUNT) {
+      return null;
+    }
+    const key = anchorKey(cell.x, cell.y, cell.z, currentPhase);
+    const anchor = this._anchors.get(key);
+    if (!anchor) return null;
+    return {
+      x: anchor.x, y: anchor.y, z: anchor.z, phase: anchor.phase,
+      remaining: anchor.remaining,
+    };
+  }
+
+  /**
+   * Boolean check: is an anchor present at the given cell in the
+   * given phase? Used by the physics to make the anchor collision-
+   * solid in all phases (the §2.7 contract). Currently not consumed
+   * by physics.js (the §2.7 "standing on it through a phase shift"
+   * logic is handled by onPhaseChanged in main.js), but exposed
+   * for future phases and for tests.
+   */
+  isAnchorActive(x, y, z, phase) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false;
+    if (!Number.isInteger(phase) || phase < PHASE_ALPHA || phase >= PHASE_COUNT) return false;
+    const key = anchorKey(Math.floor(x), Math.floor(y), Math.floor(z), phase);
+    return this._anchors.has(key);
+  }
+
+  /**
+   * Snapshot the active anchors for the save system. Same shape
+   * as getAnchors() but kept as a separate API so the save
+   * system can be called without dragging the renderer along.
+   * The save system also calls this from its `loadSnapshot`
+   * round-trip to populate the world's anchor list.
+   */
+  exportAnchors() {
+    return this.getAnchors();
+  }
+
+  /**
+   * Apply a saved anchor list. Defensive — rejects non-finite /
+   * non-integer / out-of-range ids so a tampered save can't
+   * poison the world. Mirrors `_coerceWorldState` from
+   * src/save/system.js. Returns the number of anchors actually
+   * applied. An undefined/null/non-array input clears the
+   * anchor list (back-compat with §1.7 / §2.4 save blobs that
+   * don't include anchors).
+   */
+  importAnchors(snapshot) {
+    if (!Array.isArray(snapshot)) {
+      this._anchors.clear();
+      return 0;
+    }
+    let applied = 0;
+    for (const entry of snapshot) {
+      if (!entry || typeof entry !== 'object') continue;
+      const x = entry.x;
+      const y = entry.y;
+      const z = entry.z;
+      const phase = entry.phase;
+      const remaining = entry.remaining;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+      if (!Number.isInteger(phase) || phase < PHASE_ALPHA || phase >= PHASE_COUNT) continue;
+      if (!Number.isFinite(remaining) || remaining < 0) continue;
+      const key = anchorKey(Math.floor(x), Math.floor(y), Math.floor(z), phase);
+      this._anchors.set(key, {
+        x: Math.floor(x), y: Math.floor(y), z: Math.floor(z), phase,
+        remaining: Math.max(0, Math.min(ANCHOR_LIFETIME, remaining)),
+      });
+      applied++;
+    }
+    return applied;
+  }
+
+  /**
+   * Clear all anchors. Used by the debug hook `clearAnchors()`
+   * and on scene reload. The orphan's `clearAll` is the model.
+   */
+  clearAnchors() {
+    this._anchors.clear();
   }
 
   /** Find the nearest stabilizer block to a position */

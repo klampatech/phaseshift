@@ -10,7 +10,7 @@
 //          current phase
 //        - main.js contextmenu handler does the disambiguation:
 //          placeBlock hit-or-no-hit → cycle phase fallback
-//        - main.js placeAnchor is stubbed (no BLOCK_15 stray write)
+//        - main.js placeAnchor delegates to placeAnchorAt + world.createAnchor (Phase 2.7)
 //        - main.js spawnPlaceParticles mirrors spawnBreakParticles
 //        - main.js exposes __phaseShifter__.placeBlock debug hook
 //        - main.js contextmenu handler still calls preventDefault +
@@ -134,14 +134,24 @@ function check(label, ok, extra = '') {
     /addEventListener\(\s*['"]contextmenu['"][\s\S]*?e\.preventDefault\(\)[\s\S]{0,400}?cyclePhase\s*\(\s*\)/.test(mainText)
   );
 
-  // placeAnchor stubbed — no BLOCK_15 (BLOCK_STABILIZER) stray write.
+  // placeAnchor is now a real implementation (Phase 2.7). The
+  // "no BLOCK_15 stray write" contract still holds — the real
+  // placeAnchor does not call placeBlockAt with id 15 anywhere.
   check(
     'main.js placeAnchor no longer writes BLOCK_STABILIZER (id 15) via placeBlockAt',
     !/placeBlockAt\s*\([^)]*,\s*15\s*\)/.test(mainText)
   );
+  // The §2.7 deferred notification is gone — placeAnchor now
+  // delegates to placeAnchorAt + world.createAnchor. The check
+  // verifies the new contract: the function body uses placeAnchorAt,
+  // calls raycastBlock, and calls world.createAnchor.
   check(
-    'main.js placeAnchor shows the §2.7 deferred notification',
-    /placeAnchor[\s\S]{0,400}?Anchor placement pending §2\.7/.test(mainText)
+    'main.js placeAnchor delegates to placeAnchorAt (Phase 2.7)',
+    /function\s+placeAnchor\s*\(\s*\)\s*\{[\s\S]{0,1500}?placeAnchorAt\s*\(/.test(mainText)
+  );
+  check(
+    'main.js placeAnchor calls world.createAnchor (Phase 2.7)',
+    /function\s+placeAnchor\s*\(\s*\)\s*\{[\s\S]{0,2000}?world\.createAnchor\s*\(/.test(mainText)
   );
 
   // spawnPlaceParticles is defined and mirrors spawnBreakParticles sig.

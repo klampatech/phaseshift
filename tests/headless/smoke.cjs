@@ -212,8 +212,8 @@ const CHROMIUM_ARGS = [
 
   // Phase 1.6: SaveSystem exposes unified save/load + metadata, and main.js
   // does not touch localStorage / JSON / Date.now directly.
-  const saveSrc = path.resolve(__dirname, '..', '..', 'src', 'save', 'system.js');
-  const saveText = fs2.existsSync(saveSrc) ? fs2.readFileSync(saveSrc, 'utf8') : '';
+  const saveSrc2 = path.resolve(__dirname, "..", "..", "src", "save", "system.js");
+  const saveText = fs2.existsSync(saveSrc2) ? fs2.readFileSync(saveSrc2, 'utf8') : '';
   const phaseSrc = path.resolve(__dirname, '..', '..', 'src', 'core', 'phase.js');
   const phaseText = fs2.existsSync(phaseSrc) ? fs2.readFileSync(phaseSrc, 'utf8') : '';
   const saveFnStart = srcText.indexOf('function saveGame(');
@@ -454,6 +454,84 @@ const CHROMIUM_ARGS = [
     audio_play_resonance_with_phase: /playResonance\s*\(\s*phase\s*\)/.test(audioText2) || /playResonance\s*\(\s*phase\s*=\s*0\s*\)/.test(audioText2),
   };
 
+  // Phase 2.7: Phase Anchor (Shift+LMB) — the player-placed lock that
+  // holds the player on a block through a phase shift. The new pure
+  // module src/anchor/anchor.js exports placeAnchorAt, snapYForCell,
+  // cellUnderPlayer, anchorLifetime, anchorFadeOpacity,
+  // anchorBorderOpacity, anchorKey, tickAnchors, isAnchorExpired.
+  // The new ANCHOR_LIFETIME / ANCHOR_FADE_WINDOW / ANCHOR_FILL_COLOR /
+  // ANCHOR_BORDER_COLOR / ANCHOR_COST constants are in
+  // src/core/constants.js. World gains createAnchor / removeAnchor /
+  // tickAnchors / findAnchorUnderPlayer / isAnchorActive /
+  // exportAnchors / importAnchors / clearAnchors. main.js#placeAnchor
+  // is now a real implementation (replaces the Phase 2.3 stub).
+  // onPhaseChanged calls findAnchorUnderPlayer + setPosition
+  // (the §2.7 snap-to-anchor logic). The per-frame game loop calls
+  // tickAnchorsPerFrame(deltaTime). SaveSystem.saveSnapshot accepts
+  // an anchor list. The new AnchorOverlay class in
+  // src/render/renderer.js owns its own THREE.Group named
+  // 'anchorOverlay'.
+  const anchorSrc = path.resolve(__dirname, '..', '..', 'src', 'anchor', 'anchor.js');
+  const anchorText = fs2.existsSync(anchorSrc) ? fs2.readFileSync(anchorSrc, 'utf8') : '';
+  const saveSrc3 = path.resolve(__dirname, "..", "..", "src", "save", "system.js");
+  const saveText3 = fs2.existsSync(saveSrc3) ? fs2.readFileSync(saveSrc3, 'utf8') : '';
+  const phase27 = {
+    // Constants
+    anchor_lifetime_defined: /export\s+const\s+ANCHOR_LIFETIME\s*=\s*10\b/.test(constantsText),
+    anchor_fade_window_defined: /export\s+const\s+ANCHOR_FADE_WINDOW\s*=\s*3\b/.test(constantsText),
+    anchor_fill_color_defined: /export\s+const\s+ANCHOR_FILL_COLOR\s*=\s*0xffee88\b/.test(constantsText),
+    anchor_border_color_defined: /export\s+const\s+ANCHOR_BORDER_COLOR\s*=\s*0xffcc00\b/.test(constantsText),
+    anchor_cost_zero: /export\s+const\s+ANCHOR_COST\s*=\s*0\b/.test(constantsText),
+    // src/anchor/anchor.js module exports
+    anchor_module_exports_place_anchor_at: /export\s+function\s+placeAnchorAt\s*\(/.test(anchorText),
+    anchor_module_exports_snap_y_for_cell: /export\s+function\s+snapYForCell\s*\(/.test(anchorText),
+    anchor_module_exports_cell_under_player: /export\s+function\s+cellUnderPlayer\s*\(/.test(anchorText),
+    anchor_module_exports_anchor_lifetime: /export\s+function\s+anchorLifetime\s*\(/.test(anchorText),
+    anchor_module_exports_anchor_fade_opacity: /export\s+function\s+anchorFadeOpacity\s*\(/.test(anchorText),
+    anchor_module_exports_anchor_key: /export\s+function\s+anchorKey\s*\(/.test(anchorText),
+    anchor_module_exports_tick_anchors: /export\s+function\s+tickAnchors\s*\(/.test(anchorText),
+    // World API
+    world_create_anchor_defined: /createAnchor\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*\)/.test(worldText),
+    world_remove_anchor_defined: /removeAnchor\s*\(/.test(worldText),
+    world_tick_anchors_defined: /tickAnchors\s*\(\s*dt\s*\)/.test(worldText),
+    world_find_anchor_under_player_defined: /findAnchorUnderPlayer\s*\(/.test(worldText),
+    world_is_anchor_active_defined: /isAnchorActive\s*\(/.test(worldText),
+    world_export_anchors_defined: /exportAnchors\s*\(/.test(worldText),
+    world_import_anchors_defined: /importAnchors\s*\(/.test(worldText),
+    world_anchors_map_initialized: /this\._anchors\s*=\s*new\s+Map\s*\(\s*\)/.test(worldText),
+    // main.js wiring
+    main_imports_place_anchor_at: /import\s*\{[^}]*placeAnchorAt[^}]*\}\s*from\s*['"]\.\/src\/anchor\/anchor\.js['"]/.test(srcText),
+    main_imports_anchor_overlay: /import\s*\{[^}]*AnchorOverlay[^}]*\}\s*from\s*['"]\.\/src\/render\/renderer\.js['"]/.test(srcText),
+    main_place_anchor_delegates: /function\s+placeAnchor\s*\(\s*\)\s*\{[\s\S]{0,2000}?placeAnchorAt\s*\(/.test(srcText),
+    main_place_anchor_creates: /function\s+placeAnchor\s*\(\s*\)\s*\{[\s\S]{0,2500}?world\.createAnchor\s*\(/.test(srcText),
+    main_place_anchor_shows: /function\s+placeAnchor\s*\(\s*\)\s*\{[\s\S]{0,3000}?renderer\.showAnchor\s*\(/.test(srcText),
+    main_place_anchor_no_block_15: !/placeBlockAt\s*\([^)]*,\s*15\s*\)/.test(srcText),
+    main_place_anchor_no_deferred_notification: !/Anchor placement pending §2\.7/.test(srcText),
+    main_on_phase_changed_snap_to_anchor: /function\s+onPhaseChanged[\s\S]*?findAnchorUnderPlayer\s*\(/.test(srcText) && /function\s+onPhaseChanged[\s\S]*?physicsManager\.setPosition\s*\(/.test(srcText),
+    main_per_frame_tick_anchors: /tickAnchorsPerFrame\s*\(\s*deltaTime\s*\)/.test(srcText),
+    main_save_game_passes_anchors: /function\s+saveGame[\s\S]{0,1500}?saveSystem\.saveSnapshot\s*\(\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*anchors\s*\)/.test(srcText),
+    main_init_imports_saved_anchors: /world\.importAnchors\s*\(/.test(srcText),
+    // SaveSystem wiring
+    save_snapshot_accepts_anchors: /saveSnapshot\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*,\s*worldState\s*,\s*anchors\s*\)/.test(saveText),
+    save_coerce_anchors_defined: /_coerceAnchors\s*\(/.test(saveText),
+    save_load_game_returns_anchors: /loadGame\s*\(\s*\)[\s\S]{0,2000}?anchors\s*:\s*this\._coerceAnchors/.test(saveText),
+    // AnchorOverlay + Renderer forwarding
+    anchor_overlay_class_exported: /export\s+class\s+AnchorOverlay\b/.test(rendererText),
+    anchor_overlay_own_group: /class\s+AnchorOverlay[\s\S]{0,2000}?this\.group\.name\s*=\s*['"]anchorOverlay['"]/.test(rendererText),
+    renderer_show_anchor_forwards: /showAnchor\s*\(\s*anchor\s*\)\s*\{[\s\S]*?this\.anchorOverlay\.showAnchor/.test(rendererText),
+    renderer_update_anchors_forwards: /updateAnchors\s*\(\s*snapshot\s*,\s*removedKeys\s*\)\s*\{[\s\S]*?this\.anchorOverlay\.updateAnchors/.test(rendererText),
+    renderer_clear_anchors_forwards: /clearAnchors\s*\(\s*\)\s*\{[\s\S]*?this\.anchorOverlay\.clearAnchors/.test(rendererText),
+    // Debug hooks
+    debug_force_place_anchor: /__phaseShifter__[\s\S]*?forcePlaceAnchor\s*\(/.test(srcText),
+    debug_get_anchor_count: /__phaseShifter__[\s\S]*?getAnchorCount\s*\(/.test(srcText),
+    debug_get_anchor_mesh_count: /__phaseShifter__[\s\S]*?getAnchorMeshCount\s*\(/.test(srcText),
+    debug_get_anchor_keys: /__phaseShifter__[\s\S]*?getAnchorKeys\s*\(/.test(srcText),
+    debug_clear_anchors: /__phaseShifter__[\s\S]*?clearAnchors\s*\(\s*\)/.test(srcText),
+    debug_is_anchor_at: /__phaseShifter__[\s\S]*?isAnchorAt\s*\(/.test(srcText),
+    debug_tick_anchors_hook: /__phaseShifter__[\s\S]*?tickAnchors\s*\(\s*dt\s*\)/.test(srcText),
+    debug_find_anchor_under_player_hook: /__phaseShifter__[\s\S]*?findAnchorUnderPlayer\s*\(/.test(srcText),
+  };
+
   const physicsSrc = path.resolve(__dirname, '..', '..', 'src', 'core', 'physics.js');
   const physicsText2 = fs2.existsSync(physicsSrc) ? fs2.readFileSync(physicsSrc, 'utf8') : '';
   const phase22 = {
@@ -641,8 +719,55 @@ const CHROMIUM_ARGS = [
     phase26_renderer_update_resonance_pulse_forwards: phase26.renderer_update_resonance_pulse_forwards,
     phase26_renderer_clear_resonance_pulse_forwards: phase26.renderer_clear_resonance_pulse_forwards,
     phase26_audio_play_resonance_with_phase: phase26.audio_play_resonance_with_phase,
+    phase27_anchor_lifetime_defined: phase27.anchor_lifetime_defined,
+    phase27_anchor_fade_window_defined: phase27.anchor_fade_window_defined,
+    phase27_anchor_fill_color_defined: phase27.anchor_fill_color_defined,
+    phase27_anchor_border_color_defined: phase27.anchor_border_color_defined,
+    phase27_anchor_cost_zero: phase27.anchor_cost_zero,
+    phase27_anchor_module_exports_place_anchor_at: phase27.anchor_module_exports_place_anchor_at,
+    phase27_anchor_module_exports_snap_y_for_cell: phase27.anchor_module_exports_snap_y_for_cell,
+    phase27_anchor_module_exports_cell_under_player: phase27.anchor_module_exports_cell_under_player,
+    phase27_anchor_module_exports_anchor_lifetime: phase27.anchor_module_exports_anchor_lifetime,
+    phase27_anchor_module_exports_anchor_fade_opacity: phase27.anchor_module_exports_anchor_fade_opacity,
+    phase27_anchor_module_exports_anchor_key: phase27.anchor_module_exports_anchor_key,
+    phase27_anchor_module_exports_tick_anchors: phase27.anchor_module_exports_tick_anchors,
+    phase27_world_create_anchor_defined: phase27.world_create_anchor_defined,
+    phase27_world_remove_anchor_defined: phase27.world_remove_anchor_defined,
+    phase27_world_tick_anchors_defined: phase27.world_tick_anchors_defined,
+    phase27_world_find_anchor_under_player_defined: phase27.world_find_anchor_under_player_defined,
+    phase27_world_is_anchor_active_defined: phase27.world_is_anchor_active_defined,
+    phase27_world_export_anchors_defined: phase27.world_export_anchors_defined,
+    phase27_world_import_anchors_defined: phase27.world_import_anchors_defined,
+    phase27_world_anchors_map_initialized: phase27.world_anchors_map_initialized,
+    phase27_main_imports_place_anchor_at: phase27.main_imports_place_anchor_at,
+    phase27_main_imports_anchor_overlay: phase27.main_imports_anchor_overlay,
+    phase27_main_place_anchor_delegates: phase27.main_place_anchor_delegates,
+    phase27_main_place_anchor_creates: phase27.main_place_anchor_creates,
+    phase27_main_place_anchor_shows: phase27.main_place_anchor_shows,
+    phase27_main_place_anchor_no_block_15: phase27.main_place_anchor_no_block_15,
+    phase27_main_place_anchor_no_deferred_notification: phase27.main_place_anchor_no_deferred_notification,
+    phase27_main_on_phase_changed_snap_to_anchor: phase27.main_on_phase_changed_snap_to_anchor,
+    phase27_main_per_frame_tick_anchors: phase27.main_per_frame_tick_anchors,
+    phase27_main_save_game_passes_anchors: phase27.main_save_game_passes_anchors,
+    phase27_main_init_imports_saved_anchors: phase27.main_init_imports_saved_anchors,
+    phase27_save_snapshot_accepts_anchors: phase27.save_snapshot_accepts_anchors,
+    phase27_save_coerce_anchors_defined: phase27.save_coerce_anchors_defined,
+    phase27_save_load_game_returns_anchors: phase27.save_load_game_returns_anchors,
+    phase27_anchor_overlay_class_exported: phase27.anchor_overlay_class_exported,
+    phase27_anchor_overlay_own_group: phase27.anchor_overlay_own_group,
+    phase27_renderer_show_anchor_forwards: phase27.renderer_show_anchor_forwards,
+    phase27_renderer_update_anchors_forwards: phase27.renderer_update_anchors_forwards,
+    phase27_renderer_clear_anchors_forwards: phase27.renderer_clear_anchors_forwards,
+    phase27_debug_force_place_anchor: phase27.debug_force_place_anchor,
+    phase27_debug_get_anchor_count: phase27.debug_get_anchor_count,
+    phase27_debug_get_anchor_mesh_count: phase27.debug_get_anchor_mesh_count,
+    phase27_debug_get_anchor_keys: phase27.debug_get_anchor_keys,
+    phase27_debug_clear_anchors: phase27.debug_clear_anchors,
+    phase27_debug_is_anchor_at: phase27.debug_is_anchor_at,
+    phase27_debug_tick_anchors_hook: phase27.debug_tick_anchors_hook,
+    phase27_debug_find_anchor_under_player_hook: phase27.debug_find_anchor_under_player_hook,
   };
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -667,6 +792,7 @@ const CHROMIUM_ARGS = [
   const phase24Ok = Object.values(phase24).every(Boolean);
   const phase25Ok = Object.values(phase25).every(Boolean);
   const phase26Ok = Object.values(phase26).every(Boolean);
+  const phase27Ok = Object.values(phase27).every(Boolean);
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -682,7 +808,8 @@ const CHROMIUM_ARGS = [
     phase23Ok &&
     phase24Ok &&
     phase25Ok &&
-    phase26Ok ? 0 : 1
+    phase26Ok &&
+    phase27Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

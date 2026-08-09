@@ -454,4 +454,124 @@ test('placeBlock debug hook writes Stone at (x, y, z) in the current phase (Phas
     expect(cleanup.visible).toBe(false);
   });
 
+  test('Phase Anchor: forcePlaceAnchor creates a wireframe + lifetime + snap-to-anchor (Phase 2.7)', async ({ page }) => {
+    // Phase 2.7 acceptance:
+    //   - Shift+LMB on a block shows a glowing outline
+    //   - The lifetime is 10 seconds (re-pressing refreshes)
+    //   - After 10 seconds the outline disappears
+    //   - The anchor is collision-solid in ALL phases (the snap-to-
+    //     anchor logic re-snaps the player Y on phase change)
+    // The Playwright test can't verify the 3D visual (no WebGL in
+    // this sandbox), so it asserts the non-visual invariants: the
+    // anchor count, the wireframe mesh count, the lifetime math,
+    // and the findAnchorUnderPlayer / isAnchorAt lookups.
+    await page.waitForTimeout(500);
+
+    // 1) The anchor placement + wireframe.
+    const r1 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      // Place at (5, 5, 5) in the current phase.
+      const r = ps.forcePlaceAnchor(5, 5, 5);
+      return {
+        ok: r && r.ok,
+        refreshed: r && r.refreshed,
+        x: r && r.x, y: r && r.y, z: r && r.z,
+        count: r && r.count,
+        meshCount: r && r.meshCount,
+        remaining: r && r.remaining,
+        anchorCount: ps.getAnchorCount(),
+        meshCount2: ps.getAnchorMeshCount(),
+        keys: ps.getAnchorKeys(),
+        isAt: ps.isAnchorAt(5, 5, 5),
+      };
+    });
+    expect(r1.ok).toBe(true);
+    expect(r1.refreshed).toBe(false);
+    expect(r1.x).toBe(5);
+    expect(r1.y).toBe(5);
+    expect(r1.z).toBe(5);
+    expect(r1.count).toBe(1);
+    expect(r1.meshCount).toBe(2); // 1 fill mesh + 1 edge mesh
+    expect(r1.remaining).toBe(10);
+    expect(r1.anchorCount).toBe(1);
+    expect(r1.meshCount2).toBe(2);
+    expect(r1.keys).toContain('5,5,5,0');
+    expect(r1.isAt).toBe(true);
+
+    // 2) Re-pressing on the same cell refreshes the lifetime.
+    const r2 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      // Wait briefly so the lifetime is non-trivially advanced.
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          const r = ps.forcePlaceAnchor(5, 5, 5);
+          resolve({
+            refreshed: r && r.refreshed,
+            remaining: r && r.remaining,
+            count: r && r.count,
+          });
+        }, 100);
+      });
+    });
+    expect(r2.refreshed).toBe(true);
+    // After refresh, the remaining is back to 10.
+    expect(r2.remaining).toBeGreaterThanOrEqual(9.9);
+    expect(r2.remaining).toBeLessThanOrEqual(10);
+    expect(r2.count).toBe(1);
+
+    // 3) After 11 seconds, the anchor expires.
+    const r3 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const expiredKeys = ps.tickAnchors(11);
+      return {
+        expiredKeys,
+        anchorCount: ps.getAnchorCount(),
+        meshCount: ps.getAnchorMeshCount(),
+        isAt: ps.isAnchorAt(5, 5, 5),
+      };
+    });
+    expect(r3.expiredKeys).toContain('5,5,5,0');
+    expect(r3.anchorCount).toBe(0);
+    expect(r3.meshCount).toBe(0);
+    expect(r3.isAt).toBe(false);
+
+    // 4) findAnchorUnderPlayer returns the anchor when the player
+    // is standing on it. This is the §2.7 snap-to-anchor contract:
+    // "Standing on it through a phase shift keeps you on the block."
+    const r4 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      // Place an anchor at (10, 10, 10).
+      ps.forcePlaceAnchor(10, 10, 10);
+      // Move the player on top of it (Y = 10 + 1 + 1.8 = 12.8).
+      ps.physicsManager.setPosition(10.4, 12.8, 10.4);
+      const under = ps.findAnchorUnderPlayer();
+      return {
+        underX: under && under.x,
+        underY: under && under.y,
+        underZ: under && under.z,
+        underPhase: under && under.phase,
+        anchorCount: ps.getAnchorCount(),
+      };
+    });
+    expect(r4.underX).toBe(10);
+    expect(r4.underY).toBe(10);
+    expect(r4.underZ).toBe(10);
+    expect(r4.underPhase).toBe(0); // Alpha (the default for the test)
+    expect(r4.anchorCount).toBe(1);
+
+    // 5) clearAnchors wipes both the world state and the renderer.
+    const r5 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      ps.clearAnchors();
+      return {
+        anchorCount: ps.getAnchorCount(),
+        meshCount: ps.getAnchorMeshCount(),
+        isAt: ps.isAnchorAt(10, 10, 10),
+      };
+    });
+    expect(r5.anchorCount).toBe(0);
+    expect(r5.meshCount).toBe(0);
+    expect(r5.isAt).toBe(false);
+  });
+
 });

@@ -178,6 +178,19 @@ export const SCAN_RADIUS = 4;
 // 0.75s fade) so the renderer can decide when to dispose the mesh.
 export const RESONANCE_RADIUS = 1;
 export const RESONANCE_PULSE_DURATION = 1.0;
+// Phase 2.7: Phase Anchor (Shift+LMB) — the player-placed lock that
+// holds them on a block through a phase shift. The lifetime is the
+// number of seconds before the outline disappears (the plan's §2.7
+// acceptance). The fade window is the seconds-before-expiry during
+// which the outline pulse-fades (mirrors the orphan PhaseLockManager
+// behavior). The fill + border colors are the yellow-glow palette
+// from the orphan. The cost is 0 (anchors are free; the §2.7 spec
+// is just "10 seconds the outline disappears" with no energy mention).
+export const ANCHOR_LIFETIME = 10;
+export const ANCHOR_FADE_WINDOW = 3;
+export const ANCHOR_FILL_COLOR = 0xffee88;
+export const ANCHOR_BORDER_COLOR = 0xffcc00;
+export const ANCHOR_COST = 0;
 export const ENERGY_REGEN_RATE = 0.005;
 export const PHASE_DRAIN_RATE = 0.02;
 export const WATER_DRAIN = 0.15;

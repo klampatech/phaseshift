@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST } from './src/core/constants.js';
+import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT } from './src/core/constants.js';
 import { World } from './src/core/world.js';
 import { PhaseManager } from './src/core/phase.js';
 import { PhysicsManager } from './src/core/physics.js';
-import { setupLighting, createPlayerMesh, createSkybox, ChunkVisual, setupPostProcessing, ScanOverlay, ResonancePulse } from './src/render/renderer.js';
+import { setupLighting, createPlayerMesh, createSkybox, ChunkVisual, setupPostProcessing, ScanOverlay, ResonancePulse, AnchorOverlay } from './src/render/renderer.js';
 import { Controls } from './src/input/controls.js';
 import { placeBlock as placeBlockAtTarget } from './src/input/placeBlock.js';
 import { HUD } from './src/ui/hud.js';
@@ -11,6 +11,7 @@ import { AudioManager } from './src/audio/manager.js';
 import { SaveSystem, Settings } from './src/save/system.js';
 import { scanResults, phaseLensDrain, lensRadius, belowDrainThreshold, hasDifferences } from './src/scan/lens.js';
 import { resonateResults, resonateRadius, resonateCost, totalSwappedCount } from './src/resonance/resonate.js';
+import { placeAnchorAt, snapYForCell, cellUnderPlayer, anchorLifetime, ANCHOR_FILL_COLOR, ANCHOR_BORDER_COLOR } from './src/anchor/anchor.js';
 
 // Eye height: distance from feet to eyes. Player physics height is 1.7 (see
 // src/core/physics.js PLAYER_HEIGHT); 1.6 is a comfortable eye offset for a
@@ -138,6 +139,20 @@ function init() {
   if (_hasSave) {
     phaseManager.setPhase(_savedState.phase);
     world.importGlobalState(_savedState.worldState);
+    // Phase 2.7: import the saved anchor list. The legacy §1.7 /
+    // §2.4 save blob has no `anchors` key — `_coerceAnchors` returns
+    // an empty array in that case. World.importAnchors(snapshot)
+    // returns the count actually applied. The renderer's overlay
+    // group is empty until placeAnchor() fires — we don't pre-draw
+    // wireframes on init because the player's position may have
+    // moved (and the snap-to-anchor logic only fires on phase change).
+    if (Array.isArray(_savedState.anchors) && _savedState.anchors.length > 0) {
+      world.importAnchors(_savedState.anchors);
+    } else {
+      // Defensive: ensure the anchor list is empty even when the save
+      // blob has no anchors (back-compat with §1.7 / §2.4).
+      world.importAnchors([]);
+    }
   }
 
   // Audio (must be before pointerlock handler)
@@ -482,6 +497,31 @@ function onPhaseChanged(phaseManager) {
     audioManager.startAmbientMusic(phase);
     audioManager.playShift(phase);
   }
+
+  // Phase 2.7: snap-to-anchor — if the player is standing on an
+  // anchor cell, re-snap the player Y to the anchor's top so the
+  // phase shift doesn't drop them through (the §2.7 contract: a
+  // block under an anchor stays solid in ALL phases for the
+  // duration of the lock). The check is `findAnchorUnderPlayer`:
+  // it returns the anchor at the cell directly under the player's
+  // feet in the current phase. If the player is mid-jump, mid-fall,
+  // or standing on a non-anchor block, no snap fires.
+  if (world && physicsManager && typeof world.findAnchorUnderPlayer === 'function') {
+    const playerPos = physicsManager.getPos();
+    const underAnchor = world.findAnchorUnderPlayer(
+      playerPos.x, playerPos.y, playerPos.z, phase
+    );
+    if (underAnchor) {
+      const snapY = snapYForCell(underAnchor.y);
+      if (Number.isFinite(snapY)) {
+        // The physics manager's setPosition is the canonical way to move
+        // the player without breaking the camera follow + collision
+        // detection (the §1.2 follow code glues the camera to the
+        // new position on the next frame).
+        physicsManager.setPosition(playerPos.x, snapY, playerPos.z);
+      }
+    }
+  }
 }
 
 function gameLoop(time) {
@@ -683,6 +723,15 @@ function gameLoop(time) {
     }
   }
 
+  // Phase 2.7: advance the Phase Anchor (Shift+LMB) lifetime every
+  // frame. The world is the single source of truth for the per-cell
+  // `remaining` value; the renderer's AnchorOverlay is driven by
+  // the snapshot + the removed-key list. The overlay disposes
+  // expired wireframes so the renderer doesn't leak. No per-frame
+  // gate — the per-frame cost is O(active anchors), which is small
+  // in practice (a few anchors at most).
+  tickAnchorsPerFrame(deltaTime);
+
   // Handle Block Interaction (Mouse)
   // Already handled by event listeners
 
@@ -836,15 +885,88 @@ function performResonance(pos) {
 }
 
 
-// Phase 2.3: placeAnchor is a no-op stub. The full lockManager integration
-// lives in Phase 2.7 (per PROJECT_REMEDIATION_PLAN §2.7). Without this stub,
-// the previous implementation would write a stray BLOCK_STABILIZER (id 15)
-// into the world at the targeted face — not a Phase 2.3 concern but a
-// pollution we want to avoid. The brief recommends showing a notification
-// instead so the input binding (Shift+LMB) is visibly acknowledged.
+// Phase 2.7: placeAnchor() — the Shift+LMB Phase Anchor. Raycasts
+// the targeted block, validates via the pure placeAnchorAt helper,
+// and writes the anchor through World.createAnchor (idempotent —
+// re-pressing on the same cell refreshes the lifetime rather than
+// stacking). The renderer's AnchorOverlay draws the yellow-glow
+// wireframe. The per-frame game loop calls world.tickAnchors(dt) +
+// renderer.updateAnchors(...) to drive the pulse-fade animation in
+// the last 3 seconds + the lifetime expiry.
+//
+// Acceptance (per plan §2.7):
+//   - Shift+LMB on a block shows a glowing outline
+//   - Standing on it through a phase shift keeps you on the block
+//     (the snap-to-anchor logic in onPhaseChanged)
+//   - After 10 seconds the outline disappears
 function placeAnchor() {
+  if (!world || !phaseManager || !physicsManager) return;
+  const pos = physicsManager.getPos();
+  const dir = getCameraDirection();
+  const hit = raycastBlock(pos, dir);
+  if (!hit) {
+    if (hud) hud.showNotification('No block in range', '#ff6644');
+    return;
+  }
+  const currentPhase = phaseManager.getCurrentPhase();
+  // The pure helper mirrors the §2.3 placeBlock API: rejects
+  // no-hit, target-not-air, and overlaps-player.
+  const result = placeAnchorAt(pos.x, pos.y, pos.z, hit, currentPhase, world);
+  if (!result.ok) {
+    if (hud) {
+      const reason = result.reason || 'invalid';
+      const msg = reason === 'overlaps-player'
+        ? 'Cannot anchor a block you are standing inside'
+        : reason === 'target-not-air'
+        ? 'Block not solid in current phase'
+        : 'Anchor placement failed';
+      hud.showNotification(msg, '#ff6644');
+    }
+    return;
+  }
+  // Idempotent: createAnchor refreshes the lifetime if the cell
+  // is already anchored (the §2.7 spec — re-pressing extends the lock).
+  const created = world.createAnchor(result.x, result.y, result.z, result.phase);
+  if (!created || !created.ok) {
+    if (hud) hud.showNotification('Anchor placement failed', '#ff6644');
+    return;
+  }
+  // Draw the wireframe. We pass the snapshot from getAnchors() so
+  // the overlay reads the freshest `remaining` value.
+  if (renderer && typeof renderer.showAnchor === 'function') {
+    renderer.showAnchor({
+      x: result.x, y: result.y, z: result.z, phase: result.phase,
+      remaining: anchorLifetime(),
+    });
+  }
   if (hud) {
-    hud.showNotification('Anchor placement pending §2.7', '#ff6644');
+    const msg = created.refreshed
+      ? `Anchor refreshed (${result.x}, ${result.y}, ${result.z})`
+      : `Anchor placed (${result.x}, ${result.y}, ${result.z})`;
+    const color = created.refreshed ? '#ffcc00' : '#ffee88';
+    hud.showNotification(msg, color);
+  }
+}
+
+// Phase 2.7: per-frame anchor update. Walks the world's anchor list,
+// decrements each `remaining`, removes expired ones, and forwards
+// the result to the renderer's AnchorOverlay. Mirrors the §2.6
+// per-frame Resonance pulse loop (one update per frame, no leak
+// because the overlay disposes expired wireframes).
+function tickAnchorsPerFrame(dt) {
+  if (!world) return;
+  const d = Number.isFinite(dt) && dt > 0 ? dt : 0;
+  if (d === 0) return;
+  // 1. Decrement + collect expired. The world is the single source
+  //    of truth for the lifetime math.
+  const removedKeys = world.tickAnchors(d);
+  // 2. Snapshot the remaining anchors for the renderer (the
+  //    overlay applies per-anchor opacity from the snapshot).
+  const snapshot = world.getAnchors();
+  // 3. Drive the overlay. updateAnchors also disposes any
+  //    wireframes whose key is in removedKeys.
+  if (renderer && typeof renderer.updateAnchors === 'function') {
+    renderer.updateAnchors(snapshot, removedKeys);
   }
 }
 
@@ -1136,7 +1258,11 @@ function saveGame() {
   const pos = physicsManager.getPos();
   const phase = phaseManager.getCurrentPhase();
   const worldState = world.exportGlobalState();
-  saveSystem.saveSnapshot(pos.x, pos.y, pos.z, phase, worldState);
+  // Phase 2.7: include the anchor list in the save snapshot so
+  // placed anchors survive a save → reload round-trip. The legacy
+  // §1.7 / §2.4 save blob (without anchors) is still loadable.
+  const anchors = world.exportAnchors ? world.exportAnchors() : [];
+  saveSystem.saveSnapshot(pos.x, pos.y, pos.z, phase, worldState, anchors);
   hud.showNotification('GAME SAVED', '#4488ff');
   refreshSaveInfo();
 }
@@ -1260,6 +1386,76 @@ if (typeof window !== 'undefined') {
         renderer.clearResonancePulse();
       }
       resonancePulseActive = false;
+    },
+    // Phase 2.7: forcePlaceAnchor(x, y, z, phase?) — places an anchor
+    // at the given cell in the given phase (defaults to the player's
+    // current phase). Mirrors the §2.6 forceResonate() pattern: the
+    // Playwright test uses this to assert the anchor overlay wiring
+    // without needing pointer lock + Shift+LMB. The hook delegates
+    // to world.createAnchor (idempotent — re-pressing on the same
+    // cell refreshes the lifetime) and renderer.showAnchor (draws
+    // the wireframe). Returns the per-press report:
+    //   { ok, refreshed, x, y, z, phase, count, meshCount, remaining }
+    forcePlaceAnchor(x, y, z, phase) {
+      if (!world || !phaseManager) return null;
+      const p = (typeof phase === 'number') ? phase : phaseManager.getCurrentPhase();
+      const created = world.createAnchor(x, y, z, p);
+      if (!created || !created.ok) {
+        return { ok: false, reason: created && created.reason };
+      }
+      const anchor = world.getAnchors().find(a => a.x === Math.floor(x) && a.y === Math.floor(y) && a.z === Math.floor(z) && a.phase === p);
+      if (renderer && typeof renderer.showAnchor === 'function') {
+        renderer.showAnchor(anchor || { x, y, z, phase: p, remaining: 10 });
+      }
+      return {
+        ok: true,
+        refreshed: created.refreshed,
+        x: Math.floor(x), y: Math.floor(y), z: Math.floor(z), phase: p,
+        count: world.getAnchors().length,
+        meshCount: renderer && renderer.anchorOverlay ? renderer.anchorOverlay.getMeshCount() : 0,
+        remaining: anchor ? anchor.remaining : 10,
+      };
+    },
+    // Phase 2.7: anchor inspection hooks — the Playwright test uses
+    // these to confirm the overlay produced a wireframe after a press.
+    getAnchorCount() {
+      if (!world) return 0;
+      return world.getAnchors().length;
+    },
+    getAnchorMeshCount() {
+      return renderer && renderer.anchorOverlay
+        ? renderer.anchorOverlay.getMeshCount()
+        : 0;
+    },
+    getAnchorKeys() {
+      return renderer && renderer.anchorOverlay
+        ? renderer.anchorOverlay.getAnchorKeys()
+        : [];
+    },
+    clearAnchors() {
+      if (world && typeof world.clearAnchors === 'function') world.clearAnchors();
+      if (renderer && typeof renderer.clearAnchors === 'function') renderer.clearAnchors();
+    },
+    isAnchorAt(x, y, z, phase) {
+      if (!world) return false;
+      const p = (typeof phase === 'number') ? phase : phaseManager.getCurrentPhase();
+      return world.isAnchorActive(x, y, z, p);
+    },
+    // Phase 2.7: programmatic lifetime tick. The Playwright test uses
+    // this to assert the 10-second expiry without waiting 10 real
+    // seconds. Tick by 11 seconds → every anchor should expire.
+    tickAnchors(dt) {
+      if (!world) return [];
+      return world.tickAnchors(dt);
+    },
+    // Phase 2.7: programmatic snap-to-anchor test. Returns the
+    // anchor under the player's feet (or null). The Playwright test
+    // uses this to assert the §2.7 acceptance #6.
+    findAnchorUnderPlayer() {
+      if (!world || !physicsManager) return null;
+      const p = physicsManager.getPos();
+      const phase = phaseManager ? phaseManager.getCurrentPhase() : 0;
+      return world.findAnchorUnderPlayer(p.x, p.y, p.z, phase);
     },
     // Phase 2.3: placeBlock(x, y, z, blockType) test hook. Calls the
     // same placeBlock helper that the RMB contextmenu handler uses, so

@@ -6,7 +6,13 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_GRASS, BLOCK_DIRT,
   BLOCK_WOOD, BLOCK_CRYSTAL, BLOCK_OBSIDIAN, BLOCK_VOID, BLOCK_RUNE, BLOCK_SAND,
   BLOCK_GLASS, BLOCK_IRON, BLOCK_GOLD_ORE, BLOCK_WATER, BLOCK_PHASE_COLORS,
-  PHASE_COLORS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION } from '../core/constants.js';
+  PHASE_COLORS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION,
+  ANCHOR_LIFETIME, ANCHOR_FILL_COLOR, ANCHOR_BORDER_COLOR } from '../core/constants.js';
+import {
+  anchorKey as _anchorKey,
+  anchorFadeOpacity as _anchorFadeOpacity,
+  anchorBorderOpacity as _anchorBorderOpacity,
+} from '../anchor/anchor.js';
 
 // Block texture colors (low-poly style)
 const BLOCK_COLORS = {
@@ -796,6 +802,224 @@ function resonanceSpherePulse(t, phase) {
   return { radius, opacity, color };
 }
 
+
+// ── Phase Anchor Overlay (Phase 2.7) ────────────────────────────
+
+/**
+ * Owns the Phase Anchor wireframes: the yellow-glow outline that
+ * appears on a block when the player presses Shift+LMB. The overlay
+ * lives in its own THREE.Group (separate from the chunk-mesh group,
+ * the Phase Lens overlay group, and the Resonance pulse group) so
+ * the four visuals are fully independent.
+ *
+ * Lifecycle (mirrors the orphan PhaseLockManager's per-anchor
+ * BoxGeometry + EdgesGeometry pattern):
+ *   1. main.js calls `showAnchor(anchor)` on Shift+LMB. The overlay
+ *      creates a 1.02-cube BoxGeometry (translucent yellow fill) +
+ *      a 1.02-cube EdgesGeometry (bright gold border) at the anchor
+ *      cell. The materials are per-anchor (NOT shared) so the
+ *      pulse-fade in the last 3 seconds can be applied per-anchor
+ *      without affecting siblings.
+ *   2. main.js calls `updateAnchors(snapshot, removedKeys)` every
+ *      frame. The overlay applies the per-anchor fade opacity (from
+ *      `anchorFadeOpacity(remaining)`) to each anchor's fill
+ *      material, then disposes the geometry + materials of any
+ *      anchors whose key is in `removedKeys`.
+ *   3. When the lifetime expires (or the player presses Shift+LMB
+ *      on a different cell, leaving the previous one to expire),
+ *      the overlay auto-disposes the wireframe — no leak.
+ *
+ * The overlay must update every frame (the brief's "pulse-fade
+ * animation must be visible" pitfall). The mesh's material.opacity
+ * is set per-frame so the fade is visible.
+ *
+ * Independent of the Phase Lens overlay (different group, different
+ * clear API) and the Resonance pulse (different group, different
+ * clear API). Clearing the lens or the pulse does not affect the
+ * anchor overlay and vice versa.
+ */
+export class AnchorOverlay {
+  constructor(scene) {
+    this.scene = scene;
+    this.group = new THREE.Group();
+    this.group.name = 'anchorOverlay';
+    this.scene.add(this.group);
+
+    // Map<key, { group, fill, edges, fillMat, edgeMat, boxGeom, edgeGeom }>
+    // key is `${x},${y},${z},${phase}` (same convention as the orphan
+    // PhaseLockManager + World._anchors).
+    this._anchors = new Map();
+  }
+
+  /**
+   * Show an anchor outline at (x, y, z) in the given phase. If an
+   * outline already exists for the same key, the existing one is
+   * disposed first (the lifetime was refreshed by the world's
+   * createAnchor; the visual re-fires from the new remaining).
+   */
+  showAnchor(anchor) {
+    if (!anchor || typeof anchor !== 'object') return;
+    const { x, y, z, phase } = anchor;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+    if (typeof phase !== 'number' || phase < 0 || phase > 2) return;
+
+    const key = _anchorKey(Math.floor(x), Math.floor(y), Math.floor(z), phase);
+
+    // Dispose any existing wireframe for this key (refresh path).
+    this._disposeKey(key);
+
+    const remaining = (typeof anchor.remaining === 'number')
+      ? anchor.remaining
+      : ANCHOR_LIFETIME;
+    const fillOp = _anchorFadeOpacity(remaining);
+    const edgeOp = _anchorBorderOpacity(remaining);
+
+    // 1.02-cube box (slightly larger than the 1.0 voxel so the
+    // outline doesn't z-fight with the block's face). Mirrors the
+    // orphan's BoxGeometry(1.02, 1.02, 1.02) + EdgesGeometry
+    // combination.
+    const boxGeom = new THREE.BoxGeometry(1.02, 1.02, 1.02);
+    const fillMat = new THREE.MeshBasicMaterial({
+      color: ANCHOR_FILL_COLOR,
+      transparent: true,
+      opacity: fillOp,
+      depthWrite: false,
+    });
+    const fillMesh = new THREE.Mesh(boxGeom, fillMat);
+    fillMesh.position.set(Math.floor(x) + 0.5, Math.floor(y) + 0.5, Math.floor(z) + 0.5);
+
+    const edges = new THREE.EdgesGeometry(boxGeom);
+    const edgeMat = new THREE.LineBasicMaterial({
+      color: ANCHOR_BORDER_COLOR,
+      transparent: true,
+      opacity: edgeOp,
+    });
+    const edgeMesh = new THREE.LineSegments(edges, edgeMat);
+    edgeMesh.position.set(Math.floor(x) + 0.5, Math.floor(y) + 0.5, Math.floor(z) + 0.5);
+
+    const innerGroup = new THREE.Group();
+    innerGroup.add(fillMesh);
+    innerGroup.add(edgeMesh);
+    this.group.add(innerGroup);
+
+    this._anchors.set(key, {
+      group: innerGroup,
+      fill: fillMesh,
+      edges: edgeMesh,
+      fillMat,
+      edgeMat,
+      boxGeom,
+      edgeGeom: edges,
+    });
+  }
+
+  /**
+   * Per-frame update. `snapshot` is the array of `{ x, y, z, phase,
+   * remaining }` from `World.getAnchors()`. `removedKeys` is the
+   * array of expired keys from `World.tickAnchors`. The overlay:
+   *   1. Updates the fill + edge opacity for each anchor in the
+   *      snapshot (the pulse-fade animation in the last 3 seconds).
+   *   2. Disposes any anchor whose key is in `removedKeys` (the
+   *      wireframe is removed cleanly so the renderer doesn't leak).
+   *
+   * Defensive: any anchor in `removedKeys` that's NOT in the
+   * internal map is a no-op (the world and the overlay may have
+   * raced; the safe thing is to ignore the orphan key).
+   */
+  updateAnchors(snapshot, removedKeys) {
+    // 1. Apply per-frame opacity to the live anchors.
+    if (Array.isArray(snapshot)) {
+      for (const a of snapshot) {
+        if (!a || typeof a !== 'object') continue;
+        const key = _anchorKey(a.x, a.y, a.z, a.phase);
+        const rec = this._anchors.get(key);
+        if (!rec) continue;
+        const r = (typeof a.remaining === 'number') ? a.remaining : ANCHOR_LIFETIME;
+        if (rec.fillMat) rec.fillMat.opacity = _anchorFadeOpacity(r);
+        if (rec.edgeMat) rec.edgeMat.opacity = _anchorBorderOpacity(r);
+      }
+    }
+
+    // 2. Remove the wireframes whose keys are in removedKeys.
+    if (Array.isArray(removedKeys)) {
+      for (const key of removedKeys) {
+        this._disposeKey(key);
+      }
+    }
+  }
+
+  /**
+   * Clear all anchor wireframes. Used on scene reload / debug
+   * cleanup. Disposes every geometry + material so the renderer
+   * doesn't leak.
+   */
+  clearAnchors() {
+    for (const key of [...this._anchors.keys()]) {
+      this._disposeKey(key);
+    }
+  }
+
+  /**
+   * Number of wireframes currently in the overlay group. Used by
+   * the Playwright test to assert the anchor produced a visual
+   * after a press. Note: each wireframe is a `THREE.Group` with
+   * 2 children (the fill mesh + the edges mesh), so this count
+   * is the number of inner groups, not the total child count.
+   */
+  getAnchorCount() {
+    return this._anchors.size;
+  }
+
+  /**
+   * List of keys currently visible. Used by the test to assert
+   * the canonical key format + the lifecycle of the overlay.
+   */
+  getAnchorKeys() {
+    return [...this._anchors.keys()];
+  }
+
+  /**
+   * Get the number of raw meshes (fill + edges) currently in the
+   * overlay group. Used by the test to assert the wireframe was
+   * actually drawn (a child of `this.group` per anchor × 2 = 2N).
+   */
+  getMeshCount() {
+    let count = 0;
+    for (const child of this.group.children) {
+      count += child.children ? child.children.length : 1;
+    }
+    return count;
+  }
+
+  /**
+   * Internal: dispose a single anchor's resources. Removes the
+   * group from the scene + disposes the geometry + materials so
+   * the renderer doesn't leak. Safe to call on a non-existent
+   * key (no-op).
+   */
+  _disposeKey(key) {
+    const rec = this._anchors.get(key);
+    if (!rec) return;
+    this._anchors.delete(key);
+    if (rec.group) {
+      if (rec.group.parent) rec.group.parent.remove(rec.group);
+    }
+    if (rec.boxGeom) rec.boxGeom.dispose();
+    if (rec.edgeGeom) rec.edgeGeom.dispose();
+    if (rec.fillMat) rec.fillMat.dispose();
+    if (rec.edgeMat) rec.edgeMat.dispose();
+  }
+
+  /**
+   * Remove the overlay group from the scene. Used in dispose() /
+   * hot-reload.
+   */
+  dispose() {
+    this.clearAnchors();
+    if (this.group.parent) this.group.parent.remove(this.group);
+  }
+}
+
 export class Renderer {
   constructor(world, scene, camera, phaseManager, webglRenderer) {
     this.world = world;
@@ -839,6 +1063,14 @@ export class Renderer {
     // pulse is independent of the overlay — clearing the lens does
     // not affect the pulse and vice versa.
     this.resonancePulse = new ResonancePulse(scene);
+
+    // Phase 2.7: Phase Anchor (Shift+LMB) — the yellow-glow outline
+    // that appears on a block when the player presses Shift+LMB.
+    // The overlay lives in its own THREE.Group (an `AnchorOverlay`
+    // instance) so the chunk-mesh group, the Phase Lens overlay, and
+    // the Resonance pulse are all untouched. The four visuals are
+    // fully independent: clearing one does not affect the others.
+    this.anchorOverlay = new AnchorOverlay(scene);
   }
 
   // Phase 2.6: thin wrappers over the ResonancePulse so main.js has
@@ -854,6 +1086,22 @@ export class Renderer {
 
   clearResonancePulse() {
     if (this.resonancePulse) this.resonancePulse.clearResonancePulse();
+  }
+
+  // Phase 2.7: thin wrappers over the AnchorOverlay so main.js has
+  // a single dispatcher API. The brief is explicit: the renderer is
+  // the owner of the visual, main.js is the dispatcher. These
+  // wrappers are also the surface the static-analysis checks poke.
+  showAnchor(anchor) {
+    if (this.anchorOverlay) this.anchorOverlay.showAnchor(anchor);
+  }
+
+  updateAnchors(snapshot, removedKeys) {
+    if (this.anchorOverlay) this.anchorOverlay.updateAnchors(snapshot, removedKeys);
+  }
+
+  clearAnchors() {
+    if (this.anchorOverlay) this.anchorOverlay.clearAnchors();
   }
 
   // Phase 2.5: thin wrappers over the ScanOverlay so main.js has a
