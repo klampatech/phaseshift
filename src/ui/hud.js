@@ -99,15 +99,26 @@ export class HUD {
     // Block hint for phase-walking through blocks (throttled)
     this._updateBlockHint(phaseManager, physicsManager, world);
 
-    // Update HTML phase indicator (pre-existing in index.html)
+    // Update HTML phase indicator (pre-existing in index.html). Phase 2.1
+    // also drives the #phase-indicator dot's background color so the player
+    // gets a visible cue next to the phase name. Hex → RGB tuple for the
+    // indicator's backgroundColor so we can build a box-shadow halo too.
     const phaseName = document.querySelector('#phase-name');
+    const phaseIndicator = document.querySelector('#phase-indicator');
     const energyFill = document.querySelector('#energy-fill');
     const phaseNames = ['ALPHA', 'BETA', 'GAMMA'];
     const phaseColors = ['#5aa85a', '#3399e6', '#d9b34c'];
+    const phaseRgb = [[0x5a, 0xa8, 0x5a], [0x33, 0x99, 0xe6], [0xd9, 0xb3, 0x4c]];
 
     if (phaseName) {
       phaseName.textContent = phaseNames[phase];
       phaseName.style.color = phaseColors[phase];
+      phaseName.style.textShadow = `0 0 8px ${phaseColors[phase]}`;
+    }
+    if (phaseIndicator) {
+      const [r, g, b] = phaseRgb[phase] || [255, 255, 255];
+      phaseIndicator.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
+      phaseIndicator.style.boxShadow = `0 0 8px rgba(${r}, ${g}, ${b}, 0.7)`;
     }
     if (energyFill) {
       energyFill.style.width = (energy / maxEnergy * 100) + '%';

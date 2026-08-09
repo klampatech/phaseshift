@@ -3,10 +3,11 @@ import { test, expect } from '@playwright/test';
 test('hud init check', async ({ page }) => {
   await page.goto('/');
   await page.click('#blocker');
-  await page.waitForFunction(() => 
-    typeof window.__phaseShifter__ !== 'undefined' && 
-    window.__phaseShifter__.phaseManager !== null
-  );
+  await page.waitForFunction(() => window.__phaseShifter__ !== undefined);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('#phase-name');
+    return el && el.textContent && el.textContent.length > 0;
+  });
   const text = await page.evaluate(() => document.querySelector('#phase-name')?.textContent);
   console.log('Phase name text:', text);
   const allElements = await page.evaluate(() => {

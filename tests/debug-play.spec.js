@@ -25,7 +25,7 @@ test('debug game load', async ({ page }) => {
       phaseNameText: phaseName?.textContent,
       hasPhaseShifter: typeof window.__phaseShifter__ !== 'undefined',
       phaseValue: window.__phaseShifter__?.phase,
-      phaseManager: window.__phaseShifter__?.phaseManager,
+      phaseManagerExists: typeof window.__phaseShifter__?.phaseName === 'string',
       hasForceCyclePhase: typeof window.__phaseShifter__?.forceCyclePhase === 'function',
     };
   });

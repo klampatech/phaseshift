@@ -24,8 +24,8 @@ test.describe('Debug Tests', () => {
         hasGlobal: true,
         chunkCount: ps.worldData?.chunkCount ?? 'N/A',
         blockCount: ps.worldData?.blockCount ?? 'N/A',
-        currentPhase: ps.phaseData?.currentPhase ?? 'N/A',
-        energy: ps.phaseData?.energy ?? 'N/A',
+        currentPhase: ps.phase,
+        energy: ps.energy,
         playerPos: ps.playerData?.position ? ps.playerData.position : 'N/A'
       };
     });

@@ -3,12 +3,11 @@ import { test, expect } from '@playwright/test';
 test.describe('World System', () => {
   test('chunks are loaded around player on initialization', async ({ page }) => {
     await page.goto('/');
-    await page.waitForTimeout(3000);
-    
-    const chunksLoaded = await page.evaluate(() => {
-      return window.__phaseShifter__.chunkCount;
-    });
-    
+    await page.waitForFunction(() => window.__phaseShifter__ && typeof window.__phaseShifter__.chunkCount === 'number');
+
+    // 3x3 chunks are loaded eagerly via world.updateChunks(spawnX, spawnZ)
+    // in init() — must be at least 9 (the no-save default).
+    const chunksLoaded = await page.evaluate(() => window.__phaseShifter__.chunkCount);
     expect(chunksLoaded).toBeGreaterThanOrEqual(1);
   });
 
@@ -36,7 +35,7 @@ test.describe('World System', () => {
           }
         });
       }
-      return { chunkCount, blockCount, totalBlocks, hasWorld: !!world, hasPhaseMgr: !!ps.phaseManager, firstChunkAlpha };
+      return { chunkCount, blockCount, totalBlocks, hasWorld: !!world, hasPhaseMgr: typeof ps.phaseName === 'string', firstChunkAlpha };
     });
     
     console.log('DEBUG:', JSON.stringify(debugInfo));

@@ -82,6 +82,36 @@ export class World {
     this._globalStateMap.set(this._globalKey(x, y, z, phase), blockId);
   }
 
+  /**
+   * Snapshot the player block memory so the save system can persist it.
+   * Keys are the canonical `${x},${y},${z},${phase}` string and values are
+   * the block id. Air entries are filtered out to keep the save small.
+   */
+  exportGlobalState() {
+    const out = {};
+    for (const [key, blockId] of this._globalStateMap) {
+      if (blockId !== BLOCK_AIR) out[key] = blockId;
+    }
+    return out;
+  }
+
+  /**
+   * Replace the player block memory from a previously exported snapshot.
+   * Used by SaveSystem to re-apply player edits on load.
+   */
+  importGlobalState(snapshot) {
+    this._globalStateMap.clear();
+    if (!snapshot || typeof snapshot !== 'object') return 0;
+    let count = 0;
+    for (const [key, blockId] of Object.entries(snapshot)) {
+      if (typeof blockId === 'number' && blockId !== BLOCK_AIR) {
+        this._globalStateMap.set(key, blockId);
+        count++;
+      }
+    }
+    return count;
+  }
+
   getBiome(x, z) {
     const regionX = Math.floor(x / 64);
     const regionZ = Math.floor(z / 64);
@@ -98,7 +128,35 @@ export class World {
   }
 
   getChunkKey(cx, cz) { return `${cx},${cz}`; }
+
+  /** Return the loaded chunk containing the given absolute world coordinates. */
+  getChunk(x, z) {
+    const cx = Math.floor(x / CHUNK_SIZE);
+    const cz = Math.floor(z / CHUNK_SIZE);
+    return this.chunks.get(this.getChunkKey(cx, cz));
+  }
+
   getTerrainGen() { return this.terrainGen; }
+
+  // ── Index helpers (Phase 1.4) ─────────────────────────────────────
+
+  /** Linear index for local voxel coordinates within a chunk. */
+  index(x, y, z) {
+    return x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_HEIGHT;
+  }
+
+  /** Semantic alias for call sites indexing chunk-local voxel data. */
+  localIndex(x, y, z) {
+    return this.index(x, y, z);
+  }
+
+  /** Convert a linear chunk-data index back to local voxel coordinates. */
+  unpackIndex(i) {
+    const x = i % CHUNK_SIZE;
+    const z = Math.floor(i / (CHUNK_SIZE * CHUNK_HEIGHT));
+    const y = Math.floor(i / CHUNK_SIZE) % CHUNK_HEIGHT;
+    return { x, y, z };
+  }
 
   ensureChunk(cx, cz) {
     const key = this.getChunkKey(cx, cz);
@@ -140,9 +198,7 @@ export class World {
     for (let p = 0; p < PHASE_COUNT; p++) {
       const data = [chunk.alphaData, chunk.betaData, chunk.gammaData][p];
       for (let i = 0; i < data.length; i++) {
-        const bx = i % CHUNK_SIZE;
-        const bz = Math.floor(i / (CHUNK_SIZE * CHUNK_HEIGHT));
-        const by = Math.floor(i / CHUNK_SIZE) % CHUNK_HEIGHT;
+        const { x: bx, y: by, z: bz } = this.unpackIndex(i);
         const wx = cx * CHUNK_SIZE + bx;
         const wy = by;
         const wz = cz * CHUNK_SIZE + bz;
@@ -184,7 +240,7 @@ export class World {
       return BLOCK_AIR;
     }
 
-    return data[lx + wy * CHUNK_SIZE + lz * CHUNK_SIZE * CHUNK_HEIGHT];
+    return data[this.localIndex(lx, wy, lz)];
   }
 
   // Set block at world coordinates for a given phase
@@ -204,7 +260,7 @@ export class World {
     const data = [chunk.alphaData, chunk.betaData, chunk.gammaData][phase];
     if (!data) return;
 
-    const idx = lx + wy * CHUNK_SIZE + lz * CHUNK_SIZE * CHUNK_HEIGHT;
+    const idx = this.localIndex(lx, wy, lz);
     const oldBlock = data[idx];
     data[idx] = blockId;
 

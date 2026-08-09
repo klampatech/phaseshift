@@ -4,10 +4,11 @@ test('hud init check with logs', async ({ page }) => {
   page.on('console', msg => console.log(`BROWSER: ${msg.text()}`));
   await page.goto('/');
   await page.click('#blocker');
-  await page.waitForFunction(() => 
-    typeof window.__phaseShifter__ !== 'undefined' && 
-    window.__phaseShifter__.phaseManager !== null
-  );
+  await page.waitForFunction(() => window.__phaseShifter__ !== undefined);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('#phase-name');
+    return el && el.textContent && el.textContent.length > 0;
+  });
   // Now check phase-name
   await page.waitForTimeout(500);
   const text = await page.evaluate(() => {
@@ -16,10 +17,10 @@ test('hud init check with logs', async ({ page }) => {
       exists: !!el,
       text: el?.textContent,
       html: el?.outerHTML,
-      phaseManager: window.__phaseShifter__?.phaseManager,
+      phaseManagerExists: typeof window.__phaseShifter__?.phaseName === 'string',
       phaseValue: window.__phaseShifter__?.phase,
       phaseNames: ['ALPHA', 'BETA', 'GAMMA'],
-      phaseNamesArray: window.__phaseShifter__?.phaseManager?.getCurrentPhase?.()
+      phaseNameValue: window.__phaseShifter__?.phaseName
     };
   });
   console.log('Result:', JSON.stringify(text, null, 2));

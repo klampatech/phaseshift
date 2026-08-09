@@ -14,7 +14,12 @@ This plan is sequenced. Each phase has explicit acceptance criteria and a "defin
 | 1.1 — Fix init crash | ✅ Done | `8907b61` | Added missing DOM (`#btn-inv`, `#btn-opts`, `#inv-close`, `#inventory-panel`, `#crafting-panel`). Guarded all `addEventListener` calls. Removed `throw e` from init try/catch. `setupMenuButtons()` is now the last call in `init()`. Headless test infra at `tests/headless/` (`smoke.cjs` + `safeOn` unit test) verifies DOM presence + init recovery. |
 | 1.2 — Camera follow + movement direction | ✅ Done | `c4c9cd3` | Camera trails player with eye-height offset (`+EYE_HEIGHT=1.6`). Movement basis derived from `camera.quaternion` — old `Math.atan2(camera.position.x - pos.x, …)` formula removed; pitch no longer warps the horizontal basis. 13 unit tests (`test-camera-basis.cjs`) + 17 combined static+behavioral tests (`test-phase12.cjs`) passing. Smoke test extended with source-level static-analysis checks. |
 | 1.3 — Safe spawn | ✅ Done | `31d0f48` | Player now spawns via downward raycast from y=CHUNK_HEIGHT-1 within a 3×3 chunk area at (0, 0), falling back to a 5×5 expansion and then to a hard-coded y=30. Added `World.findTopSolidBlock(worldX, worldZ, phase)` helper and extended `World.updateChunks(x, z, radius)` with an optional radius. Init logs `console.info('[Phase Shifter] Spawned at', pos.toArray())`. Headless test `tests/headless/test-phase13.cjs` covers 3 static-analysis checks + 4 behavioral checks (7/7). Smoke test `tests/headless/smoke.cjs` extended with the same Phase 1.3 static-analysis block. |
-| 2 — Core mechanics | Pending | — | |
+| 1.4 — Single index scheme | ✅ Done | Working tree | Added canonical `World.index()`, `World.localIndex()`, and `World.unpackIndex()` helpers; migrated world, renderer, scan, and resonance indexing call sites. Added `test-phase14.cjs` (21/21) and Phase 1.4 smoke checks. |
+| 1.5 — Chunk lookup + mutation path | ✅ Done | Working tree | Added `World.getChunk(x, z)`, migrated active code to `chunk.cx`/`chunk.cz`, and routed block edits/raycast reads through the World API. Added `test-phase15.cjs` (12/12) and Phase 1.5 smoke checks. |
+| 1.6 — SaveSystem API unification | ✅ Done | Working tree | Added `SaveSystem.saveGame/loadGame/getLastSaveInfo`, normalized load + `getLastSaveInfo`, and wired `init()` to restore saved position and phase. `main.js` no longer references `localStorage`/`JSON.stringify`/`JSON.parse`/`Date.now`. Tests: `test-phase16.cjs` 21/21, `smoke.cjs` Phase 1.6 checks green, Playwright suite 31/31. |
+| 1.7 — Phase 1 closure (player block memory survives save/load) | ✅ Done | Working tree | `World.exportGlobalState()` / `importGlobalState()` and `SaveSystem.saveSnapshot(x, y, z, phase, worldState)` persist and re-apply player edits. `init()` re-applies the saved state via `world.importGlobalState(_savedState.worldState)`. `#save-info` is guarded. End-to-end Playwright spec `e2e-save-reload.spec.js` proves Pause→Save→reload→restore across page navigation. |
+| 1.7 — Phase 1 closure (player block memory survives save/load) | ✅ Done | Working tree | `World.exportGlobalState()` / `importGlobalState()` and `SaveSystem.saveSnapshot(x, y, z, phase, worldState)` persist and re-apply player edits. `init()` re-applies the saved state via `world.importGlobalState(_savedState.worldState)`. `#save-info` is guarded. End-to-end Playwright spec `e2e-save-reload.spec.js` proves Pause→Save→reload→restore across page navigation. |
+| 2 — Core mechanics | 🚧 In progress | 2.1 ✅ | Phase 2.2 — Phase-relative collision is up next. See `PHASE_2_2_BRIEF.md`. |
 | 3 — World feel | Pending | — | |
 | 4 — Polish | Pending | — | |
 | 5 — Enjoyable | Pending | — | |
@@ -102,6 +107,8 @@ After this phase, the player can:
 - Walk around and the camera follows.
 - Pause and resume.
 - Save and reload.
+
+**Phase 1.7 closure (working tree, 2026-08):** save/load now also persists player block edits (broken/placed blocks). Pause → Save → Quit → page reload → Start restores position, phase, and the world's player memory. New Playwright spec `tests/e2e-save-reload.spec.js` proves it.
 
 None of the phase mechanics work yet — that's Phase 2.
 
@@ -492,7 +499,7 @@ main.js                (deletes; combine with src/main.js)
 ## Appendix C — Order of operations cheat sheet
 
 1. **Day 1 morning:** Phase 0 (decided), Phase 1.1–1.2 (crash + camera).
-2. **Day 1 afternoon:** Phase 1.3–1.5 (spawn + index + getChunk).
+2. **Day 1 afternoon:** Phase 1.3–1.5 (spawn + index + getChunk). Phase 1.6–1.7 (save/load + closure) followed.
 3. **Day 2:** Phase 1.6 (save/load), Phase 2.1–2.4 (phase mechanics).
 4. **Day 3:** Phase 2.5–2.8 (scan/resonance/anchor/audio).
 5. **Day 4:** Phase 3 (biomes, echoes, stabilizers, tutorial).

@@ -14,8 +14,8 @@ test('find why __phaseShifter__ is not defined', async ({ page }) => {
   const result = await page.evaluate(() => {
     return {
       phaseShifter: typeof window.__phaseShifter__,
-      hasPhaseManager: typeof window.__phaseShifter?.phaseManager,
-      hasPhaseData: typeof window.__phaseShifter?.phaseData,
+      hasPhaseName: typeof window.__phaseShifter__?.phaseName,
+      hasIsShifting: typeof window.__phaseShifter__?.isShifting,
       player: typeof window.__phaseShifter?.player,
       phase: window.__phaseShifter?.phase,
       playerEnergy: window.__phaseShifter?.player?.energy

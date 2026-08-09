@@ -84,6 +84,12 @@ function init() {
   settings = new Settings();
   saveSystem = new SaveSystem();
 
+  // Phase 1.6: if a save exists, restore the last position and phase. The
+  // returned state is normalized (Phase 1.6 acceptance) and may be null on
+  // a fresh start.
+  const _savedState = saveSystem.loadGame();
+  const _hasSave = !!_savedState;
+
   // Create world
   world = new World(scene, (chunk) => updateChunkVisual(chunk));
 
@@ -93,6 +99,14 @@ function init() {
 
   // Create physics manager
   physicsManager = new PhysicsManager(world, phaseManager);
+
+  // Apply the loaded phase before we read the world so phase-relative
+  // collision matches the saved state. Also re-apply the player's block
+  // memory so broken/placed blocks survive a reload.
+  if (_hasSave) {
+    phaseManager.setPhase(_savedState.phase);
+    world.importGlobalState(_savedState.worldState);
+  }
 
   // Audio (must be before pointerlock handler)
   audioManager = new AudioManager();
@@ -109,24 +123,29 @@ function init() {
   //   3. If none found, expand to a 5×5 chunk area and retry.
   //   4. If still none, fall back to a known-safe y=30 so the game still
   //      loads. Logged as an error so it's visible.
-  world.updateChunks(0, 0);
+  // Phase 1.6: prefer the saved player position; otherwise spawn near (0, 0).
+  const _spawnXZ = _hasSave
+    ? { x: _savedState.position.x, z: _savedState.position.z }
+    : { x: 0, z: 0 };
+  // Load a 3x3 chunk area first; the safe-spawn raycast only needs one column.
+  world.updateChunks(_spawnXZ.x, _spawnXZ.z);
   console.log("Initial chunks loaded:", world.getChunks().size);
 
-  let topSolidY = world.findTopSolidBlock(0, 0);
+  let topSolidY = world.findTopSolidBlock(_spawnXZ.x, _spawnXZ.z);
   if (topSolidY === null) {
-    console.warn('[Phase Shifter] No solid block at (0, 0); expanding to 5x5 chunk area');
-    world.updateChunks(0, 0, 2); // radius=2 → 5x5 chunks around (0, 0)
-    topSolidY = world.findTopSolidBlock(0, 0);
+    console.warn(`[Phase Shifter] No solid block at (${_spawnXZ.x}, ${_spawnXZ.z}); expanding to 5x5 chunk area`);
+    world.updateChunks(_spawnXZ.x, _spawnXZ.z, 2); // radius=2 → 5x5 chunks around the spawn column
+    topSolidY = world.findTopSolidBlock(_spawnXZ.x, _spawnXZ.z);
   }
 
   if (topSolidY !== null) {
     // Feet on top of the highest solid block: pos.y = blockY + 1 (top
     // surface) + PLAYER_HEIGHT (1.7). PLAYER_HEIGHT is defined in
     // src/core/physics.js.
-    physicsManager.setPosition(0, topSolidY + 1 + 1.7, 0);
+    physicsManager.setPosition(_spawnXZ.x, topSolidY + 1 + 1.7, _spawnXZ.z);
   } else {
     console.error('[Phase Shifter] No solid block found in 5x5 area; falling back to y=30');
-    physicsManager.setPosition(0, 30, 0);
+    physicsManager.setPosition(_spawnXZ.x, 30, _spawnXZ.z);
   }
 
   // Initialize the camera at the spawn position (with EYE_HEIGHT offset).
@@ -135,6 +154,7 @@ function init() {
   camera.position.set(_spawnPos.x, _spawnPos.y + EYE_HEIGHT, _spawnPos.z);
 
   console.info('[Phase Shifter] Spawned at', _spawnPos.toArray());
+  refreshSaveInfo();
 
   // Setup controls
   const blocker = document.getElementById('blocker');
@@ -329,14 +349,7 @@ function togglePause() {
   
   if (gamePaused) {
     pauseMenu.style.display = 'flex';
-    // Restore last save info
-    const saveInfo = document.getElementById('save-info');
-    if (saveInfo && saveSystem) {
-      const lastSave = saveSystem.getLastSaveInfo();
-      if (lastSave) {
-        saveInfo.textContent = `Last save: ${lastSave}`;
-      }
-    }
+    refreshSaveInfo();
   } else {
     pauseMenu.style.display = 'none';
     renderer.domElement.requestPointerLock();
@@ -349,18 +362,40 @@ function onResize() {
   renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
+// Parse a '#rrggbb' hex string into [r, g, b] 0-255 integers. Returns
+// white on parse failure so the HUD never shows NaN.
+function parseHexColor(hex) {
+  if (typeof hex !== 'string' || hex[0] !== '#' || hex.length !== 7) {
+    return [255, 255, 255];
+  }
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+}
+
 function onPhaseChanged(phaseManager) {
   const phase = phaseManager.getCurrentPhase();
   const targetPhase = phaseManager.targetPhase;
   const colors = ['#5aa85a', '#3399e6', '#d9b34c'];
   const names = ['ALPHA', 'BETA', 'GAMMA'];
 
-  // Update the #phase-name DOM element
+  // Update the #phase-name DOM element and the #phase-indicator dot.
+  // Both must change together so the HUD reads as one unit. Hex → RGB
+  // tuple for the indicator backgroundColor (Phase 2.1 brief).
   const phaseNameEl = document.querySelector('#phase-name');
+  const phaseIndicatorEl = document.querySelector('#phase-indicator');
+  const displayPhase = phaseManager._isShifting ? targetPhase : phase;
+  const [hexR, hexG, hexB] = parseHexColor(colors[displayPhase]);
   if (phaseNameEl) {
-    const displayPhase = phaseManager._isShifting ? targetPhase : phase;
     phaseNameEl.textContent = names[displayPhase];
     phaseNameEl.style.color = colors[displayPhase];
+    phaseNameEl.style.textShadow = `0 0 8px ${colors[displayPhase]}`;
+  }
+  if (phaseIndicatorEl) {
+    phaseIndicatorEl.style.backgroundColor = `rgb(${hexR}, ${hexG}, ${hexB})`;
+    phaseIndicatorEl.style.boxShadow = `0 0 8px rgba(${hexR}, ${hexG}, ${hexB}, 0.7)`;
   }
 
   if (hud) {
@@ -387,6 +422,15 @@ function onPhaseChanged(phaseManager) {
   if (lighting && lighting.phaseLight) {
     lighting.phaseLight.color.set(colors[phase]);
     lighting.phaseLight.intensity = 0.3 + (phase * 0.1);
+  }
+
+  // Drive the post-processing uPhase uniform immediately on a phase
+  // change so the shader tint tracks the active phase at the exact
+  // moment the cycle completes (Phase 2.1 acceptance: uniform updated on
+  // every shift). The game loop also calls updatePhase() per-frame so
+  // the uResonating side keeps responding to the Q-key state.
+  if (postProcessing && typeof postProcessing.setPhase === 'function') {
+    postProcessing.setPhase(phase);
   }
 
   // Update ambient music
@@ -537,9 +581,35 @@ function gameLoop(time) {
   // Update phase-based post-processing
   postProcessing.updatePhase(phaseManager.getCurrentPhase(), ctrlState.resonating);
 
+  // Phase 2.1: drive the full-screen color pulse during a shift so the
+  // player gets a visible ~1.5s color pulse (rgba(targetPhaseColor,
+  // 1 - shiftProgress) per the brief). The overlay is transparent when
+  // not shifting so it has no effect on normal rendering.
+  updatePhaseShiftOverlay();
+
   // Render with post-processing
   postProcessing.composer.render();
   requestAnimationFrame(gameLoop);
+}
+
+// Phase 2.1: update the #phase-shift-overlay background to match the
+// target phase color * (1 - shiftProgress). Called once per frame.
+function updatePhaseShiftOverlay() {
+  const overlay = document.getElementById('phase-shift-overlay');
+  if (!overlay) return;
+  if (!phaseManager._isShifting) {
+    // Transparent when idle. Use rgba so future JS reads of the
+    // backgroundColor still parse cleanly.
+    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0)';
+    return;
+  }
+  const targetPhase = phaseManager.getTargetPhase();
+  const colors = ['#5aa85a', '#3399e6', '#d9b34c'];
+  const [r, g, b] = parseHexColor(colors[targetPhase] || '#ffffff');
+  // 1 - shiftProgress: full saturation at start of shift, transparent at
+  // the end. Cap at 0.55 so the pulse isn't blinding during heavy bloom.
+  const alpha = Math.max(0, Math.min(0.55, (1 - phaseManager.getPhaseShiftProgress()) * 0.55));
+  overlay.style.backgroundColor = `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function updatePhaseLensVisibility() {
@@ -566,8 +636,8 @@ function performScan(pos) {
   const chunks = world.getChunks();
   
   chunks.forEach((chunk) => {
-    const cx = chunk.x * CHUNK_SIZE;
-    const cz = chunk.z * CHUNK_SIZE;
+    const cx = chunk.cx * CHUNK_SIZE;
+    const cz = chunk.cz * CHUNK_SIZE;
     const dx = pos.x - cx;
     const dz = pos.z - cz;
     
@@ -584,7 +654,7 @@ function performScan(pos) {
         if (dist > scanRadius) continue;
         
         for (let y = 0; y < CHUNK_HEIGHT; y++) {
-          const block = chunk.alphaData[y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x];
+          const block = chunk.alphaData[world.index(x, y, z)];
           if (block !== BLOCK_AIR) {
             scannedBlocks++;
           }
@@ -613,8 +683,8 @@ function performResonance(pos) {
   const chunks = world.getChunks();
   
   chunks.forEach((chunk) => {
-    const cx = chunk.x * CHUNK_SIZE;
-    const cz = chunk.z * CHUNK_SIZE;
+    const cx = chunk.cx * CHUNK_SIZE;
+    const cz = chunk.cz * CHUNK_SIZE;
     const dx = pos.x - cx;
     const dz = pos.z - cz;
     
@@ -630,7 +700,7 @@ function performResonance(pos) {
         if (dist > resonanceRadius) continue;
         
         for (let y = 0; y < CHUNK_HEIGHT; y++) {
-          const block = chunk.alphaData[y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x];
+          const block = chunk.alphaData[world.index(x, y, z)];
           if (block !== BLOCK_AIR) {
             const props = BLOCK_PROPERTIES[block];
             if (props && props.phase) {
@@ -652,7 +722,8 @@ function performResonance(pos) {
     resonanceBlocks.forEach(rb => {
       const blockProps = BLOCK_PROPERTIES[rb.block];
       const chunk = world.getChunk(rb.x, rb.z);
-      const cKey = `${chunk.x},${chunk.z}`;
+      if (!chunk) return;
+      const cKey = `${chunk.cx},${chunk.cz}`;
       const visual = chunkVisuals.get(cKey);
       if (visual && blockProps && blockProps.phase) {
         const phases = ['alpha', 'beta', 'gamma'];
@@ -736,16 +807,7 @@ function breakBlock() {
 }
 
 function placeBlockAt(x, y, z, blockType) {
-  const chunk = world.getChunk(x, z);
-  if (!chunk || !chunk.alphaData) return;
-  
-  // Convert world coords to chunk local coords
-  const localX = ((x - chunk.x * CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-  const localZ = ((z - chunk.z * CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-  
-  // Set the block (index = y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x)
-  const index = y * CHUNK_SIZE * CHUNK_SIZE + localZ * CHUNK_SIZE + localX;
-  chunk.alphaData[index] = blockType;
+  world.setBlock(x, y, z, phaseManager.getCurrentPhase(), blockType);
 }
 
 function updateChunkVisuals() {
@@ -803,16 +865,9 @@ function raycastBlock(origin, direction) {
     );
     
     // Find the block type
-    const chunk = world.getChunk(blockX, blockZ);
-    let blockType = BLOCK_AIR;
-    if (chunk && chunk.alphaData) {
-      const localX = ((blockX - chunk.x * CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-      const localZ = ((blockZ - chunk.z * CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-      const index = blockY * CHUNK_SIZE * CHUNK_SIZE + localZ * CHUNK_SIZE + localX;
-      if (index >= 0 && index < chunk.alphaData.length) {
-        blockType = chunk.alphaData[index];
-      }
-    }
+    const blockType = world.getBlock(
+      blockX, blockY, blockZ, phaseManager.getCurrentPhase()
+    );
     
     return {
       blockX, blockY, blockZ, blockType, face: faceNormal
@@ -939,17 +994,19 @@ function updateInventoryUI() {
 
 function saveGame() {
   const pos = physicsManager.getPos();
-  saveSystem.saveGame(pos.x, pos.y, pos.z, phaseManager.getCurrentPhase());
+  const phase = phaseManager.getCurrentPhase();
+  const worldState = world.exportGlobalState();
+  saveSystem.saveSnapshot(pos.x, pos.y, pos.z, phase, worldState);
   hud.showNotification('GAME SAVED', '#4488ff');
-  
-  // Update save info in pause menu
+  refreshSaveInfo();
+}
+
+function refreshSaveInfo() {
+  if (!saveSystem) return;
   const saveInfo = document.getElementById('save-info');
-  if (saveInfo && saveSystem) {
-    const lastSave = saveSystem.getLastSaveInfo();
-    if (lastSave) {
-      saveInfo.textContent = `Last save: ${lastSave}`;
-    }
-  }
+  if (!saveInfo) return;
+  const lastSave = saveSystem.getLastSaveInfo();
+  saveInfo.textContent = lastSave ? `Last save: ${lastSave}` : '';
 }
 
 // Debug hooks for testing
@@ -983,6 +1040,13 @@ if (typeof window !== 'undefined') {
       return [...biomes];
     },
     get phase() { return phaseManager && phaseManager.getCurrentPhase ? phaseManager.getCurrentPhase() : -1; },
+    get lastSaveInfo() { return saveSystem ? saveSystem.getLastSaveInfo() : null; },
+    saveSnapshot(x, y, z, phase, worldState) {
+      if (!saveSystem) return null;
+      return saveSystem.saveSnapshot(x, y, z, phase, worldState);
+    },
+    get phaseName() { return phaseManager && phaseManager.getPhaseName ? phaseManager.getPhaseName() : ''; },
+    get isShifting() { return phaseManager && phaseManager.isShifting ? !!phaseManager.isShifting : false; },
     get energy() { return phaseManager && phaseManager.getEnergy ? phaseManager.getEnergy() : 0; },
     get playerPos() { return physicsManager && physicsManager.getPos ? physicsManager.getPos() : null; },
     // Nested API (for advanced debugging)

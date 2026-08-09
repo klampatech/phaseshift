@@ -104,15 +104,13 @@ export class ChunkVisual {
         const block = data[i];
         if (block === BLOCK_AIR) continue;
 
-        const lx = i % CHUNK_SIZE;
-        const lz = Math.floor(i / (CHUNK_SIZE * CHUNK_HEIGHT));
-        const ly = Math.floor(i / CHUNK_SIZE) % CHUNK_HEIGHT;
+        const { x: lx, y: ly, z: lz } = world.unpackIndex(i);
         const wx = this.chunk.cx * CHUNK_SIZE + lx;
         const wy = ly;
         const wz = this.chunk.cz * CHUNK_SIZE + lz;
 
         // Face culling: skip blocks fully surrounded by solid blocks
-        if (this.isSurrounded(data, lx, ly, lz)) continue;
+        if (this.isSurrounded(data, lx, ly, lz, world)) continue;
 
         positions.push(wx, wy, wz);
 
@@ -157,7 +155,7 @@ export class ChunkVisual {
     }
   }
 
-  isSurrounded(data, x, y, z) {
+  isSurrounded(data, x, y, z, world) {
     // Check 6 neighbors
     const neighbors = [
       [1, 0, 0], [-1, 0, 0],
@@ -173,7 +171,7 @@ export class ChunkVisual {
       if (nx < 0 || nx >= CHUNK_SIZE || nz < 0 || nz >= CHUNK_SIZE || ny < 0 || ny >= CHUNK_HEIGHT) {
         continue; // Edge of chunk - always render
       }
-      const ni = nx + ny * CHUNK_SIZE + nz * CHUNK_SIZE * CHUNK_HEIGHT;
+      const ni = world.localIndex(nx, ny, nz);
       if (data[ni] !== BLOCK_AIR) {
         solidNeighbors++;
       }
@@ -296,6 +294,13 @@ export function setupPostProcessing(renderer, scene, camera) {
     updatePhase(phase, resonating) {
       phasePass.uniforms.uPhase.value = phase;
       phasePass.uniforms.uResonating.value = resonating ? 1.0 : 0.0;
+    },
+    // Phase 2.1 alias — main.js#onPhaseChanged calls setPhase(phase) on a
+    // cycle completion so the shader tint updates at the exact moment of
+    // the phase change (the per-frame updatePhase still drives the
+    // uResonating side from the Q-key state).
+    setPhase(phase) {
+      phasePass.uniforms.uPhase.value = phase;
     },
   };
 }

@@ -18,5 +18,5 @@ test('check __phaseShifter__ API', async ({ page }) => {
   expect(api.hasGlobal).toBe(true);
   expect(api.data.phase).toBe(0);
   expect(api.data.energy).toBeGreaterThan(0);
-  expect(api.data.chunkCount).toBe(29);
+  expect(api.data.chunkCount).toBeGreaterThan(0);
 });

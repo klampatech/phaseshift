@@ -28,10 +28,23 @@
       position: absolute; top: 15px; left: 15px; width: 12px; height: 12px;
       border-radius: 50%; z-index: 50; pointer-events: none;
       border: 1px solid #fff;
+      background: #5aa85a;
+      transition: background-color 0.4s ease, box-shadow 0.4s ease;
     }
     #phase-name {
       position: absolute; top: 15px; left: 32px; color: #fff;
       font-family: monospace; font-size: 12px; z-index: 50; pointer-events: none;
+      transition: color 0.4s ease, text-shadow 0.4s ease;
+    }
+    /* Phase 2.1: full-screen color pulse during a shift. Driven by
+       main.js (alpha = 1 - phaseManager.getPhaseShiftProgress()). The
+       mix-blend-mode lets the post-FX phase tint show through. */
+    #phase-shift-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0);
+      pointer-events: none; z-index: 5;
+      mix-blend-mode: screen;
+      transition: background-color 0.1s linear;
     }
     #energy-bar {
       position: absolute; bottom: 20px; left: 20px; width: 200px; height: 12px;
@@ -111,6 +124,7 @@
     <p style="margin-top: 15px; color: #88ccff;">Click anywhere to play</p>
   </div>
   <div id="hud">
+    <div id="phase-shift-overlay"></div>
     <div id="crosshair"></div>
     <div id="phase-indicator"></div>
     <div id="phase-name"></div>

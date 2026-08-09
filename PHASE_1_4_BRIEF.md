@@ -126,3 +126,8 @@ git remote set-url origin https://github.com/klampatech/phaseshift.git
 ```
 
 After pushing, update `PROJECT_REMEDIATION_PLAN.md` Progress table (Phase 1.4 → ✅ Done), update `HANDOFF.md` for Phase 1.5 hand-off, and create `PHASE_1_5_BRIEF.md` following the same template.
+
+
+## Next up
+
+- Phase 2.1 — Phase shift. See `PHASE_2_1_BRIEF.md` for the self-contained starting brief.
