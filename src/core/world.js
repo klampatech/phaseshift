@@ -85,26 +85,32 @@ export class World {
   /**
    * Snapshot the player block memory so the save system can persist it.
    * Keys are the canonical `${x},${y},${z},${phase}` string and values are
-   * the block id. Air entries are filtered out to keep the save small.
+   * the block id. Phase 2.4: BLOCK_AIR entries ARE included — a player
+   * break is a real edit and must survive a save/reload round-trip. The
+   * map only contains entries the player has touched, so untouched
+   * generator cells are not in the snapshot and the save does not bloat.
    */
   exportGlobalState() {
     const out = {};
     for (const [key, blockId] of this._globalStateMap) {
-      if (blockId !== BLOCK_AIR) out[key] = blockId;
+      out[key] = blockId; // Preserve BLOCK_AIR too: a player break is a real edit.
     }
     return out;
   }
 
   /**
    * Replace the player block memory from a previously exported snapshot.
-   * Used by SaveSystem to re-apply player edits on load.
+   * Used by SaveSystem to re-apply player edits on load. Phase 2.4:
+   * BLOCK_AIR entries ARE accepted — a player break is a real edit and
+   * the snapshot is the canonical truth on reload. Garbage in the save
+   * blob (NaN, fractional, strings) is still rejected via Number.isFinite.
    */
   importGlobalState(snapshot) {
     this._globalStateMap.clear();
     if (!snapshot || typeof snapshot !== 'object') return 0;
     let count = 0;
     for (const [key, blockId] of Object.entries(snapshot)) {
-      if (typeof blockId === 'number' && blockId !== BLOCK_AIR) {
+      if (typeof blockId === 'number' && Number.isFinite(blockId)) {
         this._globalStateMap.set(key, blockId);
         count++;
       }

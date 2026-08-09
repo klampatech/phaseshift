@@ -273,6 +273,42 @@ const CHROMIUM_ARGS = [
   };
   console.log('\n=== Phase 2.3 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase23, null, 2));
+
+  // Phase 2.4: phase memory persistence across save/reload. BLOCK_AIR
+  // is now a first-class player edit — a break is a real edit and must
+  // survive a save → reload round-trip (the wider §2.4 acceptance). The
+  // export and import sides no longer filter AIR; the snapshot is the
+  // canonical truth on load. SaveSystem._coerceWorldState accepts
+  // BLOCK_AIR (id 0) but still rejects NaN / Infinity / fractional /
+  // negative / non-numbers.
+  const phase24 = {
+    export_global_state_preserves_block_air:
+      /exportGlobalState[\s\S]{0,400}?out\[key\]\s*=\s*blockId\s*;\s*\/\/\s*Preserve\s+BLOCK_AIR/.test(worldText)
+        || /exportGlobalState[\s\S]{0,200}?out\[key\]\s*=\s*blockId\s*;/.test(worldText)
+          && !/exportGlobalState[\s\S]*?blockId\s*!==\s*BLOCK_AIR/.test(worldText),
+    export_global_state_docstring_phase_2_4:
+      /\/\*\*[\s\S]*?exportGlobalState[\s\S]*?Phase 2\.4[\s\S]*?\*\//.test(worldText),
+    export_global_state_no_longer_filters_block_air:
+      !/exportGlobalState\s*\(\s*\)\s*\{[\s\S]*?blockId\s*!==\s*BLOCK_AIR/.test(worldText),
+    import_global_state_preserves_block_air:
+      /importGlobalState[\s\S]{0,400}?_globalStateMap\.set\(\s*key\s*,\s*blockId\s*\)/.test(worldText),
+    import_global_state_keeps_number_is_finite_guard:
+      /importGlobalState[\s\S]{0,400}?Number\.isFinite\s*\(\s*blockId\s*\)/.test(worldText),
+    import_global_state_no_longer_filters_block_air:
+      !/importGlobalState\s*\(\s*snapshot\s*\)\s*\{[\s\S]*?blockId\s*!==\s*BLOCK_AIR/.test(worldText),
+    coerce_world_state_accepts_block_air:
+      !/_coerceWorldState[\s\S]*?blockId\s*<=\s*0/.test(saveText),
+    coerce_world_state_still_rejects_non_finite:
+      /_coerceWorldState[\s\S]*?Number\.isFinite\s*\(\s*blockId\s*\)/.test(saveText),
+    coerce_world_state_still_rejects_fractional:
+      /_coerceWorldState[\s\S]*?Number\.isInteger\s*\(\s*blockId\s*\)/.test(saveText),
+    coerce_world_state_still_rejects_negative:
+      /_coerceWorldState[\s\S]*?blockId\s*<\s*0/.test(saveText),
+    load_chunk_still_applies_global_state:
+      /this\._globalStateMap\.has\s*\(\s*globalKey\s*\)/.test(worldText),
+  };
+  console.log('\n=== Phase 2.4 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase24, null, 2));
   const physicsSrc = path.resolve(__dirname, '..', '..', 'src', 'core', 'physics.js');
   const physicsText2 = fs2.existsSync(physicsSrc) ? fs2.readFileSync(physicsSrc, 'utf8') : '';
   const phase22 = {
@@ -392,8 +428,19 @@ const CHROMIUM_ARGS = [
     phase23_force_cycle_phase_hook_intact: phase23.force_cycle_phase_hook_intact,
     phase23_load_chunk_applies_air_from_global_state: phase23.load_chunk_applies_air_from_global_state,
     phase23_main_unvalidated_write_primitive_intact: phase23.main_unvalidated_write_primitive_intact,
+    phase24_export_global_state_preserves_block_air: phase24.export_global_state_preserves_block_air,
+    phase24_export_global_state_docstring_phase_2_4: phase24.export_global_state_docstring_phase_2_4,
+    phase24_export_global_state_no_longer_filters_block_air: phase24.export_global_state_no_longer_filters_block_air,
+    phase24_import_global_state_preserves_block_air: phase24.import_global_state_preserves_block_air,
+    phase24_import_global_state_keeps_number_is_finite_guard: phase24.import_global_state_keeps_number_is_finite_guard,
+    phase24_import_global_state_no_longer_filters_block_air: phase24.import_global_state_no_longer_filters_block_air,
+    phase24_coerce_world_state_accepts_block_air: phase24.coerce_world_state_accepts_block_air,
+    phase24_coerce_world_state_still_rejects_non_finite: phase24.coerce_world_state_still_rejects_non_finite,
+    phase24_coerce_world_state_still_rejects_fractional: phase24.coerce_world_state_still_rejects_fractional,
+    phase24_coerce_world_state_still_rejects_negative: phase24.coerce_world_state_still_rejects_negative,
+    phase24_load_chunk_still_applies_global_state: phase24.load_chunk_still_applies_global_state,
   };
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -415,6 +462,7 @@ const CHROMIUM_ARGS = [
   const phase21Ok = Object.values(phase21).every(Boolean);
   const phase22Ok = Object.values(phase22).every(Boolean);
   const phase23Ok = Object.values(phase23).every(Boolean);
+  const phase24Ok = Object.values(phase24).every(Boolean);
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -427,7 +475,8 @@ const CHROMIUM_ARGS = [
     phase17Ok &&
     phase21Ok &&
     phase22Ok &&
-    phase23Ok ? 0 : 1
+    phase23Ok &&
+    phase24Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

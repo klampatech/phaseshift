@@ -239,4 +239,67 @@ test('placeBlock debug hook writes Stone at (x, y, z) in the current phase (Phas
 
     expect(reloaded).toBe(1); // BLOCK_STONE survives reload
   });
+
+  test('break + hard reload preserves BLOCK_AIR in the global state (Phase 2.4)', async ({ page }) => {
+    // §2.4 acceptance (wider contract): a player break writes BLOCK_AIR
+    // to the global state map, the save → reload round-trip preserves it,
+    // and after a hard page reload the cell is still AIR (not the
+    // generator's resurrected value).
+    //
+    // Strategy:
+    //   1) Load a chunk area, place Stone at a known cell, then break it
+    //      (write BLOCK_AIR).
+    //   2) Take a snapshot via the SaveSystem API.
+    //   3) Hard reload the page.
+    //   4) Confirm the cell is still AIR via the global state map and
+    //      exportGlobalState() (which now includes AIR per Phase 2.4).
+    await page.waitForTimeout(500);
+
+    // Step 1+2: place, break, save.
+    const target = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const phase = ps.phase;
+      ps.world.onChunkUpdated = () => {};
+      ps.world.updateChunks(0, 0, 2);
+      const x = 20, y = 30, z = 20;
+      // Place Stone in Alpha, then break it (write BLOCK_AIR).
+      ps.world.setBlock(x, y, z, phase, 1 /* BLOCK_STONE */);
+      ps.world.setBlock(x, y, z, phase, 0 /* BLOCK_AIR */);
+      // Confirm the global state map has AIR (not the default fallback).
+      const gs = ps.world.getGlobalBlock(x, y, z, phase);
+      const exported = ps.world.exportGlobalState();
+      const exportedHasAir = exported[`${x},${y},${z},${phase}`] === 0;
+      // Save the snapshot — must include the AIR entry.
+      const pos = ps.playerPos;
+      ps.saveSnapshot(pos.x, pos.y + 5, pos.z, phase, exported);
+      return { x, y, z, phase, gs, exportedHasAir };
+    });
+    expect(target.gs).toBe(0);
+    expect(target.exportedHasAir).toBe(true);
+
+    // Step 3: hard reload.
+    await page.reload();
+    await page.waitForFunction(() => window.__phaseShifter__ !== undefined);
+
+    // Step 4: confirm the cell is still AIR after reload. The
+    // global state map should have the AIR entry (not the default
+    // fallback) and exportGlobalState should include it.
+    const restored = await page.evaluate(({ x, y, z, phase }) => {
+      const ps = window.__phaseShifter__;
+      return {
+        cell: ps.world.getBlock(x, y, z, phase),
+        global: ps.world.getGlobalBlock(x, y, z, phase),
+        exportedHasAir: ps.world.exportGlobalState()[`${x},${y},${z},${phase}`] === 0,
+        // The break must NOT be only the default fallback — Phase 2.3
+        // already proved chunk-reload preserves AIR; Phase 2.4 proves
+        // the round-trip (save → reload) preserves it.
+        snapshotHasAirKey: Object.values(ps.world.exportGlobalState())
+          .filter(v => v === 0).length >= 1,
+      };
+    }, target);
+    expect(restored.cell).toBe(0);  // BLOCK_AIR
+    expect(restored.global).toBe(0); // recorded in global state map
+    expect(restored.exportedHasAir).toBe(true);
+    expect(restored.snapshotHasAirKey).toBe(true);
+  });
 });

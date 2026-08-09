@@ -94,7 +94,11 @@ function check(label, ok, extra = '') {
       worldState: { 'a': 'oops', 'b': -1, 'c': 4, 'd': 2.5, 'e': 0 },
     }));
     const r = sys.loadGame();
-    return r && r.worldState.c === 4 && !('a' in r.worldState) && !('b' in r.worldState) && !('d' in r.worldState) && !('e' in r.worldState);
+    // Phase 2.4: BLOCK_AIR (id 0) is preserved — a player break is a
+    // real edit and must survive the round-trip. Garbage in the blob
+    // (strings, NaN, fractional, negative) is still rejected.
+    return r && r.worldState.c === 4 && r.worldState.e === 0 &&
+      !('a' in r.worldState) && !('b' in r.worldState) && !('d' in r.worldState);
   })());
 
   const passed = results.filter(Boolean).length;

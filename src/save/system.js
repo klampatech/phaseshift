@@ -240,8 +240,12 @@ export class SaveSystem {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
     const out = {};
     for (const [key, blockId] of Object.entries(value)) {
+      // Phase 2.4: BLOCK_AIR (id 0) is a valid value — a player break
+      // is a real edit and the snapshot is the canonical truth on load.
+      // We still reject NaN / Infinity / fractional / negative ids
+      // (those are tampered-blob garbage), and non-numbers.
       if (typeof blockId !== 'number' || !Number.isFinite(blockId)) continue;
-      if (!Number.isInteger(blockId) || blockId <= 0) continue;
+      if (!Number.isInteger(blockId) || blockId < 0) continue;
       out[key] = blockId;
     }
     return out;
