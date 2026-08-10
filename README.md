@@ -40,6 +40,16 @@ npm run build        # produces dist/ (~570 KB / 149 KB gzipped, 36 KB main entr
 npm run preview      # serves dist/ on http://localhost:4173
 ```
 
+### Live deployment (GitHub Pages)
+
+Every push to `main` automatically deploys the latest `dist/` to GitHub Pages via the `deploy` job in `.github/workflows/ci.yml`. The deploy runs **after** the `build-and-test` job passes (tests run first; a red CI blocks the deploy).
+
+**Live URL:** https://klampatech.github.io/phaseshift/
+
+One-time setup: in the repo's Settings → Pages, set the source to **"GitHub Actions"** (the workflow uses the official `actions/deploy-pages@v4` action, which requires this source).
+
+The Vite `base` is set to `'./'` in `vite.config.js` so the same build serves correctly at both `/` and `/phaseshift/` paths.
+
 ## Controls
 
 Mouse: click the blocker to start, then move the mouse to look. `Esc` releases the pointer (and shows the pause menu).
