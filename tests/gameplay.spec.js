@@ -1390,4 +1390,123 @@ test('placeBlock debug hook writes Stone at (x, y, z) in the current phase (Phas
     });
     expect(clearedHint).toBe('');
   });
+
+  test('Settings: HUD owns Settings menu + persistence + minimap markers (Phase 4)', async ({ page }) => {
+    // Phase 4 acceptance:
+    //   - §4.1 HUD owns its DOM (settings panel is rendered by hud.showSettings)
+    //   - §4.2 Settings menu persists to localStorage + live-apply
+    //   - §4.3 Minimap markers for Echo / Stabilizer / Resonance Core
+    //   - §4.4 Save/load includes velocity + look angles + energy + fatigue
+    //   - §4.6 Code-splitting — three + audio are separate chunks
+    await page.waitForTimeout(500);
+
+    // 1) Settings can be retrieved via the Settings class.
+    const r1 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const s = ps.settings;
+      if (!s) return { ok: false, reason: 'no settings' };
+      return {
+        ok: true,
+        renderDistance: s.getRenderDistance ? s.getRenderDistance() : null,
+        mouseSensitivity: s.getMouseSensitivity ? s.getMouseSensitivity() : null,
+        autoSave: s.getAutoSave ? s.getAutoSave() : null,
+      };
+    });
+    expect(r1.ok).toBe(true);
+    expect(r1.renderDistance).toBe(3);
+    expect(r1.mouseSensitivity).toBeCloseTo(0.002, 4);
+    expect(r1.autoSave).toBe(true);
+
+    // 2) Settings can be updated via the setter (persists to localStorage).
+    const r2 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const s = ps.settings;
+      s.set('renderDistance', 5);
+      s.set('mouseSensitivity', 0.005);
+      s.setAutoSave(false);
+      return {
+        renderDistance: s.getRenderDistance(),
+        mouseSensitivity: s.getMouseSensitivity(),
+        autoSave: s.getAutoSave(),
+      };
+    });
+    expect(r2.renderDistance).toBe(5);
+    expect(r2.mouseSensitivity).toBeCloseTo(0.005, 4);
+    expect(r2.autoSave).toBe(false);
+
+    // 3) Save/load round-trip preserves the new Phase 4.4 fields.
+    const r3 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      // Set up state
+      ps.physicsManager.setPosition(2, 30, 3);
+      if (typeof ps.saveGame === 'function') ps.saveGame();
+      // Reload
+      const loaded = ps.saveSystem.loadGame();
+      return {
+        position: loaded.position,
+        velocity: loaded.velocity,
+        lookYaw: loaded.lookYaw,
+        lookPitch: loaded.lookPitch,
+        energy: loaded.energy,
+        fatigue: loaded.fatigue,
+      };
+    });
+    expect(r3.position.x).toBe(2);
+    expect(r3.position.z).toBe(3);
+    // The new fields default to safe values if not set
+    expect(typeof r3.lookYaw === 'number').toBe(true);
+    expect(typeof r3.lookPitch === 'number').toBe(true);
+    expect(r3.energy).toBeGreaterThan(0);
+
+    // 4) Settings panel element exists + can be shown via HUD.
+    const r4 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const panel = ps.hud.showSettings(ps.settings.getAll(), (k, v) => ps.settings.set(k, v), true);
+      return {
+        hasPanel: !!panel,
+        panelId: panel && panel.id,
+        display: panel && panel.style.display,
+      };
+    });
+    expect(r4.hasPanel).toBe(true);
+    expect(r4.panelId).toBe('settings-panel');
+    expect(r4.display).toBe('block');
+
+    // 5) Minimap markers can be set.
+    const r5 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      ps.hud.setMinimapMarkers({
+        echoKeys: ['1,30,1'],
+        stabilizerKeys: ['2,30,2'],
+        resonanceCoreKeys: ['3,30,3'],
+      });
+      return { ok: true };
+    });
+    expect(r5.ok).toBe(true);
+
+    // 6) Settings persist to localStorage under the canonical key.
+    const r6 = await page.evaluate(() => {
+      const raw = localStorage.getItem('phaseshift_settings_v1');
+      if (!raw) return { ok: false };
+      const parsed = JSON.parse(raw);
+      return {
+        ok: true,
+        renderDistance: parsed.renderDistance,
+        mouseSensitivity: parsed.mouseSensitivity,
+      };
+    });
+    expect(r6.ok).toBe(true);
+    expect(r6.renderDistance).toBe(5);
+    expect(r6.mouseSensitivity).toBeCloseTo(0.005, 4);
+
+    // 7) Reset for next test
+    await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      if (ps && ps.settings) {
+        ps.settings.set('renderDistance', 3);
+        ps.settings.set('mouseSensitivity', 0.002);
+        ps.settings.setAutoSave(true);
+      }
+    });
+  });
 });

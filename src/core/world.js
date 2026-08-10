@@ -930,6 +930,17 @@ export class World {
   }
 
   /**
+   * Phase 4.3: export the stabilizer positions (used by the
+   * minimap to mark Stabilizers on the top-down view). Returns
+   * an array of `x,y,z` keys (the canonical map keys).
+   */
+  exportStabilizers() {
+    const positions = this._stabilizerPositions;
+    if (!positions || typeof positions.keys !== 'function') return [];
+    return Array.from(positions.keys());
+  }
+
+  /**
    * Apply a saved anchor list. Defensive — rejects non-finite /
    * non-integer / out-of-range ids so a tampered save can't
    * poison the world. Mirrors `_coerceWorldState` from

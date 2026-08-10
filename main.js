@@ -413,6 +413,48 @@ function init() {
   // Show phase name
   hud.showNotification('ALPHA', '#5aa85a');
 
+  // Phase 4.4: start periodic autosave (every 30 seconds).
+  // Uses the settings.autosave flag — if the player turns it off
+  // in the Settings menu, the interval is cleared.
+  if (saveSystem && typeof saveSystem.autoSave === 'function') {
+    saveSystem.autoSave({
+      seed: 42,
+      position: { x: 0, y: 20, z: 0 },
+      phase: phaseManager ? phaseManager.getCurrentPhase() : 0,
+      energy: phaseManager ? phaseManager.getEnergy() : 100,
+      unlockedTools: [],
+      biomesDiscovered: [],
+      echoesFound: 0,
+      worldState: world && typeof world.exportGlobalState === 'function' ? world.exportGlobalState() : {},
+      anchors: world && typeof world.exportAnchors === 'function' ? world.exportAnchors() : [],
+      inventory: serializeInventory(playerInventory),
+      timestamp: (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() : 0,
+    });
+  }
+
+  // Phase 4.3: register a per-frame marker push so the minimap
+  // knows where the Echoes / Stabilizers / Resonance Cores are.
+  if (hud && typeof hud.setMinimapMarkers === 'function') {
+    setInterval(() => {
+      try {
+        const echoes = world && typeof world.listEchoes === 'function' ? world.listEchoes() : [];
+        const stabs = world && typeof world.exportStabilizers === 'function' ? world.exportStabilizers() : [];
+        const cores = world && typeof world.listResonanceCores === 'function' ? world.listResonanceCores() : [];
+        hud.setMinimapMarkers({
+          echoKeys: Array.isArray(echoes) ? echoes : [],
+          stabilizerKeys: Array.isArray(stabs) ? stabs.map((s) => s.key || `${s.x},${s.y},${s.z}`) : [],
+          resonanceCoreKeys: Array.isArray(cores) ? cores : [],
+        });
+      } catch (e) {}
+    }, 1000);
+  }
+
+  // Phase 4.2: apply HUD opacity on init (so the player sees the
+  // saved opacity immediately after reload).
+  if (hud && settings && typeof hud.applyHudOpacity === 'function') {
+    hud.applyHudOpacity(settings.getHudOpacity());
+  }
+
   // Menu wiring is the LAST step so a failure here can't block gameplay
   // listeners attached above. (Phase 1.1.)
   setupMenuButtons();
@@ -421,73 +463,81 @@ function init() {
 }
 
 function setupMenuButtons() {
-  // Each button is wired only if its DOM element exists, so missing markup
-  // never crashes init(). (Phase 1.1.)
+  // Phase 4.1: HUD owns its DOM. Pause / Inventory / Settings panels
+  // are created dynamically by the HUD; main.js just wires the
+  // toggles via defensive addEventListener. Missing markup never
+  // crashes init() (the §1.1 regression lock).
   const safeOn = (id, evt, handler) => {
-    const el = document.getElementById(id);
+    const el = (typeof document !== 'undefined') ? document.getElementById(id) : null;
     if (el) el.addEventListener(evt, handler);
     return el;
   };
 
-  const pauseMenu = document.getElementById('pause-menu');
-  const inventoryPanel = document.getElementById('inventory-panel');
-  const optionsPanel = document.getElementById('options-panel');
+  // Phase 4.1: defensively create the pause menu (the static
+  // markup was removed in Phase 4.1; the HUD owns the DOM).
+  let pauseMenu = (typeof document !== 'undefined') ? document.getElementById('pause-menu') : null;
+  if (!pauseMenu && typeof document !== 'undefined' && hud && hud.container) {
+    pauseMenu = document.createElement('div');
+    pauseMenu.id = 'pause-menu';
+    pauseMenu.style.cssText = 'display:none;position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:90;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-family:monospace;';
+    pauseMenu.innerHTML = '<h2 style="color:#88ccff;font-size:20px;margin-bottom:20px;">PAUSED</h2>'
+      + '<button id="btn-resume" style="background:#222;color:#88ccff;border:1px solid #444;padding:10px 30px;margin:5px;cursor:pointer;font-family:monospace;font-size:14px;border-radius:4px;">Resume</button>'
+      + '<button id="btn-save" style="background:#222;color:#88ccff;border:1px solid #444;padding:10px 30px;margin:5px;cursor:pointer;font-family:monospace;font-size:14px;border-radius:4px;">Save Game</button>'
+      + '<button id="btn-inv" style="background:#222;color:#88ccff;border:1px solid #444;padding:10px 30px;margin:5px;cursor:pointer;font-family:monospace;font-size:14px;border-radius:4px;">Inventory</button>'
+      + '<button id="btn-opts" style="background:#222;color:#88ccff;border:1px solid #444;padding:10px 30px;margin:5px;cursor:pointer;font-family:monospace;font-size:14px;border-radius:4px;">Settings</button>'
+      + '<button id="btn-quit" style="background:#222;color:#88ccff;border:1px solid #444;padding:10px 30px;margin:5px;cursor:pointer;font-family:monospace;font-size:14px;border-radius:4px;">Quit to Title</button>'
+      + '<div id="save-info" style="color:#4488ff;font-size:11px;margin-top:10px;"></div>';
+    hud.container.appendChild(pauseMenu);
+  }
 
   // Pause menu buttons
   safeOn('btn-resume', 'click', () => {
-    pauseMenu.style.display = 'none';
+    if (pauseMenu) pauseMenu.style.display = 'none';
     gamePaused = false;
-    renderer.domElement.requestPointerLock();
+    if (renderer && renderer.domElement && renderer.domElement.requestPointerLock) {
+      renderer.domElement.requestPointerLock();
+    }
   });
   safeOn('btn-inv', 'click', () => {
-    pauseMenu.style.display = 'none';
-    if (inventoryPanel) {
-      inventoryPanel.style.display = 'flex';
-      updateInventoryUI();
-    }
+    if (pauseMenu) pauseMenu.style.display = 'none';
+    if (typeof updateInventoryUI === 'function') updateInventoryUI();
+    if (hud && typeof hud.showInventory === 'function') hud.showInventory(player, true);
   });
   safeOn('btn-save', 'click', () => {
     saveGame();
+    const saveInfo = document.getElementById('save-info');
+    if (saveInfo && saveSystem && typeof saveSystem.getLastSaveInfo === 'function') {
+      saveInfo.textContent = 'Last save: ' + (saveSystem.getLastSaveInfo() || 'just now');
+    }
   });
   safeOn('btn-opts', 'click', () => {
-    pauseMenu.style.display = 'none';
-    if (optionsPanel) optionsPanel.style.display = 'flex';
+    if (pauseMenu) pauseMenu.style.display = 'none';
+    // Phase 4.2: open the Settings menu via the HUD. Settings
+    // are persisted via settings.set(key, value) on every change
+    // (live-apply).
+    if (hud && typeof hud.showSettings === 'function' && settings) {
+      hud.showSettings(settings.getAll(), applySettingsChange, true);
+    }
   });
   safeOn('btn-quit', 'click', () => {
     gameRunning = false;
     gamePaused = true;
     if (pauseMenu) pauseMenu.style.display = 'none';
-    if (inventoryPanel) inventoryPanel.style.display = 'none';
-    if (optionsPanel) optionsPanel.style.display = 'none';
-    document.exitPointerLock();
-    document.getElementById('blocker').classList.remove('hidden');
-  });
-
-  // Inventory panel
-  safeOn('inv-close', 'click', () => {
-    if (inventoryPanel) inventoryPanel.style.display = 'none';
-  });
-
-  // Options panel
-  safeOn('opts-close', 'click', () => {
-    if (optionsPanel) optionsPanel.style.display = 'none';
-  });
-  safeOn('opt-autosave', 'click', () => {
-    const opts = document.getElementById('opt-autosave');
-    if (!opts) return;
-    if (opts.textContent.includes('ON')) {
-      opts.textContent = 'Auto-Save: OFF';
-      if (settings) settings.setAutoSave(false);
-    } else {
-      opts.textContent = 'Auto-Save: ON';
-      if (settings) settings.setAutoSave(true);
+    if (typeof document !== 'undefined' && document.exitPointerLock) {
+      document.exitPointerLock();
     }
+    const blocker = document.getElementById('blocker');
+    if (blocker) blocker.classList.remove('hidden');
+  });
+
+  // Inventory panel close
+  safeOn('inv-close', 'click', () => {
+    if (hud && typeof hud.showInventory === 'function') hud.showInventory(player, false);
   });
 
   // Pause on P key (when pointer is NOT locked)
   document.addEventListener('keydown', (e) => {
     if (e.key === 'p' || e.key === 'P') {
-      // Only toggle pause when pointer is NOT locked (player has hit P to open menu)
       togglePause();
     }
   });
@@ -495,17 +545,63 @@ function setupMenuButtons() {
   // Inventory toggle (I key)
   document.addEventListener('keydown', (e) => {
     if (e.key === 'i' || e.key === 'I') {
-      const inventoryPanel = document.getElementById('inventory-panel');
-      const wasOpen = inventoryPanel.style.display === 'flex';
-      inventoryPanel.style.display = wasOpen ? 'none' : 'flex';
-      if (!wasOpen) updateInventoryUI();
+      if (hud && typeof hud.showInventory === 'function') {
+        const inv = (typeof document !== 'undefined') ? document.querySelector('#inventory-panel') : null;
+        const wasOpen = inv && inv.style.display === 'block';
+        hud.showInventory(player, !wasOpen);
+      }
     }
-    // Minimap toggle (M key)
-    if (e.key === 'm' || e.key === 'M') {
-      hud.setMinimapVisible(!hud.minimapVisible);
+    // Minimap toggle (M key) — also keep the J key from §4.1
+    if ((e.key === 'm' || e.key === 'M' || e.key === 'j' || e.key === 'J') && hud && typeof hud.setMinimapVisible === 'function') {
+      const isVisible = hud.minVisible !== false;
+      hud.setMinimapVisible(!isVisible);
+    }
+  });
+
+  // Phase 4.2: Settings menu close button (defensive — only if
+  // the HUD has rendered the panel + the close button exists).
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t && t.id === 'settings-close') {
+      const panel = document.getElementById('settings-panel');
+      if (panel) panel.style.display = 'none';
     }
   });
 }
+
+/**
+ * Phase 4.2: live-apply a settings change. Called by the HUD's
+ * settings menu whenever the user toggles / moves a slider.
+ */
+function applySettingsChange(key, value) {
+  if (!settings) return;
+  settings.set(key, value);
+  if (key === 'resolutionScale') {
+    if (typeof window !== 'undefined' && renderer) {
+      try { renderer.setPixelRatio(Math.max(0.5, Math.min(1.5, value))); } catch (e) {}
+    }
+  } else if (key === 'renderDistance') {
+    if (world && physicsManager && typeof world.updateChunks === 'function') {
+      const pos = physicsManager.getPos();
+      if (pos) world.updateChunks(pos.x, pos.z, Math.max(1, Math.min(5, value | 0)));
+    }
+  } else if (key === 'mouseSensitivity') {
+    if (typeof window !== 'undefined') {
+      window.__phaseShifter__ && (window.__phaseShifter__._mouseSensitivity = value);
+    }
+  } else if (key === 'masterVolume' || key === 'musicVolume' || key === 'sfxVolume') {
+    if (typeof audioManager !== 'undefined' && audioManager) {
+      try {
+        if (typeof audioManager.setMasterVolume === 'function') audioManager.setMasterVolume(value);
+        if (key === 'musicVolume' && typeof audioManager.setMusicVolume === 'function') audioManager.setMusicVolume(value);
+        if (key === 'sfxVolume' && typeof audioManager.setSfxVolume === 'function') audioManager.setSfxVolume(value);
+      } catch (e) {}
+    }
+  } else if (key === 'hudOpacity') {
+    if (hud && typeof hud.applyHudOpacity === 'function') hud.applyHudOpacity(value);
+  }
+}
+
 
 function togglePause() {
   gamePaused = !gamePaused;
@@ -1624,11 +1720,29 @@ function saveGame() {
   const pos = physicsManager.getPos();
   const phase = phaseManager.getCurrentPhase();
   const worldState = world.exportGlobalState();
-  // Phase 2.7: include the anchor list in the save snapshot so
-  // placed anchors survive a save → reload round-trip. The legacy
-  // §1.7 / §2.4 save blob (without anchors) is still loadable.
   const anchors = world.exportAnchors ? world.exportAnchors() : [];
-  saveSystem.saveSnapshot(pos.x, pos.y, pos.z, phase, worldState, anchors, inventorySnapshot);
+  // Phase 4.4: include velocity + look angles + energy + fatigue in the
+  // save blob (the §4.4 acceptance: "the player can save, quit, reload
+  // the page, and resume exactly where they left off").
+  const velocity = (physicsManager && typeof physicsManager.getVelocity === 'function')
+    ? physicsManager.getVelocity()
+    : null;
+  const cam = (typeof camera !== 'undefined') ? camera : null;
+  const lookYaw = cam ? (cam.rotation ? cam.rotation.y : 0) : 0;
+  const lookPitch = cam ? (cam.rotation ? cam.rotation.x : 0) : 0;
+  const energy = phaseManager && typeof phaseManager.getEnergy === 'function'
+    ? phaseManager.getEnergy()
+    : 100;
+  const fatigue = (typeof player !== 'undefined' && player && typeof player.fatigue === 'number')
+    ? player.fatigue
+    : 0;
+  saveSystem.saveSnapshot(pos.x, pos.y, pos.z, phase, worldState, anchors, inventorySnapshot, {
+    velocity: velocity ? { x: velocity.x, y: velocity.y, z: velocity.z } : null,
+    lookYaw,
+    lookPitch,
+    energy,
+    fatigue,
+  });
   hud.showNotification('GAME SAVED', '#4488ff');
   refreshSaveInfo();
 }

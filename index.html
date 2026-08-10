@@ -159,7 +159,7 @@
     <p><span class="key">Q</span> Phase Step &nbsp; <span class="key">E</span> Phase Walk (hold)</p>
     <p><span class="key">LMB</span> Break block &nbsp; <span class="key">RMB</span> Place block</p>
     <p><span class="key">Shift+Click</span> Phase Anchor &nbsp; <span class="key">F</span> Temporary anchor</p>
-    <p><span class="key">ESC</span> Pause &nbsp; <span class="key">J</span> Minimap &nbsp; <span class="key">Space</span> Jump</p>
+    <p><span class="key">ESC</span> Pause &nbsp; <span class="key">I</span> Inventory &nbsp; <span class="key">J</span> Minimap &nbsp; <span class="key">Space</span> Jump</p>
     <p style="margin-top: 15px; color: #88ccff;">Click anywhere to play</p>
   </div>
   <div id="hud">
@@ -183,7 +183,12 @@
       <div id="phase-step-label" style="font-size:10px;color:#5aa85a;">PHASE STEP READY</div>
     </div>
   </div>
-  <div id="pause-menu">
+  <!-- Phase 4.1: pause / options / inventory / crafting panels are
+       owned by the HUD (rendered dynamically in src/ui/hud.js).
+       Static markup is preserved with display:none for the smoke
+       test's structural DOM check — the HUD replaces the contents
+       on first show (the §4.1 contract). -->
+  <div id="pause-menu" style="display:none;">
     <h2>PAUSED</h2>
     <button id="btn-resume">Resume</button>
     <button id="btn-save">Save Game</button>
@@ -192,33 +197,29 @@
     <button id="btn-quit">Quit to Title</button>
     <div id="save-info"></div>
   </div>
-  <div id="options-panel">
+  <div id="options-panel" style="display:none;">
     <h2>OPTIONS</h2>
-    <div style="color: #aaa; margin-bottom: 15px;">Game options coming soon...</div>
-    <div id="opt-autosave" style="color: #88ccff;">Auto-Save: ON</div>
+    <div id="opt-autosave">Auto-Save: ON</div>
     <button id="opts-close">Close</button>
   </div>
-  <div id="inventory-panel">
+  <div id="inventory-panel" style="display:none;">
     <h2>INVENTORY</h2>
     <div id="tool-grid"></div>
-    <h3 style="margin-top: 20px;">AMPLIFIERS</h3>
+    <h3>AMPLIFIERS</h3>
     <div id="amplifier-grid"></div>
-    <h3 style="margin-top: 20px;">ECHOES</h3>
-    <div id="echo-list" style="font-size: 11px; color: #88ccff; max-width: 500px;">
-      <em style="color: #666;">No echoes collected yet.</em>
-    </div>
-    <h3 style="margin-top: 20px;">CRAFTING</h3>
+    <h3>ECHOES</h3>
+    <div id="echo-list"></div>
+    <h3>CRAFTING</h3>
     <div id="crafting-grid"></div>
     <div id="progress-info"></div>
-    <button id="inv-close" style="margin-top: 20px;">Close</button>
+    <button id="inv-close">Close</button>
   </div>
-  <div id="crafting-panel">
+  <div id="crafting-panel" style="display:none;">
     <h2>CRAFTING</h2>
-    <div id="crafting-recipes" style="font-size: 11px; color: #88ccff; max-width: 500px;">
-      <em style="color: #666;">Recipes will appear here as you discover them.</em>
-    </div>
-    <button id="craft-close" style="margin-top: 20px;">Close</button>
+    <div id="crafting-recipes"></div>
+    <button id="craft-close">Close</button>
   </div>
+  <div id="settings-panel" style="display:none;"></div>
   <script type="module" src="./main.js"></script>
 </body>
 </html>

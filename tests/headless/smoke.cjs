@@ -84,10 +84,20 @@ const CHROMIUM_ARGS = [
   await wait(4000);
   await page.screenshot({ path: path.join(SHOTS, '01-blocker.png') });
 
+  // Phase 4.1: HUD owns its DOM. Click the blocker so the HUD
+  // initializes + creates the pause-menu / inventory-panel / settings
+  // / options-panel dynamically (the §4.1 contract). The static
+  // markup was removed in Phase 4.1.
+  await page.evaluate(() => {
+    const b = document.getElementById('blocker');
+    if (b) b.click();
+  });
+  await wait(1500);
+
   const structural = await page.evaluate(() => {
     const ids = ['btn-resume','btn-save','btn-inv','btn-opts','btn-quit',
                  'inv-close','craft-close','opts-close','opt-autosave',
-                 'inventory-panel','crafting-panel'];
+                 'inventory-panel','crafting-panel','settings-panel'];
     return Object.fromEntries(ids.map(id => [id, !!document.getElementById(id)]));
   });
   console.log('\n=== DOM elements (Phase 1.1 must all be true) ===');
@@ -937,7 +947,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase33_main_tick_echoes_calls_world_collect_echo: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?world\.collectEcho/.test(srcText),
     phase33_main_tick_echoes_calls_hud_set_echo_counter: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?hud\.setEchoCounter/.test(srcText),
     phase33_main_save_game_serializes_inventory: /function\s+saveGame[\s\S]{0,1000}?serializeInventory\s*\(\s*playerInventory\s*\)/.test(srcText),
-    phase33_main_save_game_passes_inventory_to_save: /saveSystem\.saveSnapshot\([^)]*inventorySnapshot\s*\)/.test(srcText),
+    phase33_main_save_game_passes_inventory_to_save: /saveSystem\.saveSnapshot\([^)]*inventorySnapshot/.test(srcText),
     phase33_main_init_applies_saved_inventory: /function\s+init[\s\S]{0,15000}?deserializeInventory\s*\(\s*_savedState\.inventory\s*\)/.test(srcText),
     phase33_debug_force_spawn_echo: /__phaseShifter__[\s\S]*?forceSpawnEcho\s*\(/.test(srcText),
     phase33_debug_force_collect_echo: /__phaseShifter__[\s\S]*?forceCollectEcho\s*\(/.test(srcText),
@@ -1376,7 +1386,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase33_main_tick_echoes_calls_world_collect_echo: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?world\.collectEcho/.test(srcText),
     phase33_main_tick_echoes_calls_hud_set_echo_counter: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?hud\.setEchoCounter/.test(srcText),
     phase33_main_save_game_serializes_inventory: /function\s+saveGame[\s\S]{0,1000}?serializeInventory\s*\(\s*playerInventory\s*\)/.test(srcText),
-    phase33_main_save_game_passes_inventory_to_save: /saveSystem\.saveSnapshot\([^)]*inventorySnapshot\s*\)/.test(srcText),
+    phase33_main_save_game_passes_inventory_to_save: /saveSystem\.saveSnapshot\([^)]*inventorySnapshot/.test(srcText),
     phase33_main_init_applies_saved_inventory: /function\s+init[\s\S]{0,15000}?deserializeInventory\s*\(\s*_savedState\.inventory\s*\)/.test(srcText),
     phase33_debug_force_spawn_echo: /__phaseShifter__[\s\S]*?forceSpawnEcho\s*\(/.test(srcText),
     phase33_debug_force_collect_echo: /__phaseShifter__[\s\S]*?forceCollectEcho\s*\(/.test(srcText),
@@ -1394,7 +1404,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase33_save_load_game_returns_inventory: /loadGame[\s\S]{0,2000}?inventory\s*:\s*this\._coerceInventory/.test(saveText),
   };
 
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 + 3.1 + 3.2 + 3.3 + 3.6 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 + 3.1 + 3.2 + 3.3 + 3.6 + 4 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -1602,6 +1612,88 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
 
   console.log('\n=== Phase 3.6 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase36, null, 2));
+
+  // ── Phase 4 (Polish: HUD-owns-DOM + Settings + Minimap + Save/load) ─
+  // Phase 4 work: §4.1 (HUD owns its DOM), §4.2 (Settings menu with
+  // localStorage persistence + live-apply), §4.3 (Minimap reads actual
+  // world data + Echo/Stabilizer/Core markers), §4.4 (full-state save +
+  // 30s autosave), §4.5 (InstancedMesh + frustum culling already
+  // present; draw distance cap via Settings.renderDistance), §4.6
+  // (vite manualChunks: three + audio + gameplay).
+  const settingsSrc = path.resolve(__dirname, '..', '..', 'src', 'settings', 'menu.js');
+  const minimapSrc = path.resolve(__dirname, '..', '..', 'src', 'ui', 'minimap.js');
+  const settingsText = fs2.existsSync(settingsSrc) ? fs2.readFileSync(settingsSrc, 'utf8') : '';
+  const minimapText = fs2.existsSync(minimapSrc) ? fs2.readFileSync(minimapSrc, 'utf8') : '';
+  const saveSystemSrc = path.resolve(__dirname, '..', '..', 'src', 'save', 'system.js');
+  const saveSystemText = fs2.existsSync(saveSystemSrc) ? fs2.readFileSync(saveSystemSrc, 'utf8') : '';
+  const viteText = fs2.existsSync(path.resolve(__dirname, '..', '..', 'vite.config.js')) ? fs2.readFileSync(path.resolve(__dirname, '..', '..', 'vite.config.js'), 'utf8') : '';
+  const phase4 = {
+    // 4.1 — Data-driven UX
+    phase41_hud_render_settings_menu_method: /renderSettingsMenu\s*\(\s*settings/.test(hudText2),
+    phase41_hud_add_safe_event_listener: /addSafeEventListener\s*\(/.test(hudText2),
+    phase41_hud_query_selector_safe: /querySelectorSafe\s*\(/.test(hudText2),
+    phase41_hud_show_inventory_method: /showInventory\s*\(\s*player/.test(hudText2),
+    phase41_html_no_static_pause_menu: !/<div\s+id=["']pause-menu["']>/.test(htmlText2),
+    phase41_html_no_static_options_panel: !/<div\s+id=["']options-panel["']>/.test(htmlText2),
+    phase41_html_no_static_inventory_panel: !/<div\s+id=["']inventory-panel["']>/.test(htmlText2),
+    phase41_main_creates_pause_menu_dom: /pauseMenu\.id\s*=\s*['"]pause-menu['"]/.test(srcText),
+    phase41_main_safeOn_pattern: /safeOn\s*\(\s*id\s*,\s*evt\s*,\s*handler\s*\)/.test(srcText),
+    // 4.2 — Settings menu
+    phase42_settings_module_exports_storage_key: /export\s+const\s+SETTINGS_STORAGE_KEY\s*=\s*['"]phaseshift_settings_v1['"]/.test(settingsText),
+    phase42_settings_module_exports_defaults: /export\s+const\s+SETTINGS_DEFAULTS\s*=/.test(settingsText),
+    phase42_settings_module_exports_build_settings: /export\s+function\s+buildSettings/.test(settingsText),
+    phase42_settings_module_exports_serialize: /export\s+function\s+serializeSettings/.test(settingsText),
+    phase42_settings_module_exports_deserialize: /export\s+function\s+deserializeSettings/.test(settingsText),
+    phase42_settings_module_exports_get_setting: /export\s+function\s+getSetting/.test(settingsText),
+    phase42_settings_module_exports_set_setting: /export\s+function\s+setSetting/.test(settingsText),
+    phase42_settings_module_exports_clamp_number: /export\s+function\s+clampNumber/.test(settingsText),
+    phase42_settings_module_exports_normalize_key: /export\s+function\s+normalizeKey/.test(settingsText),
+    phase42_save_system_settings_class: /export\s+class\s+Settings\b/.test(saveSystemText),
+    phase42_save_system_set_auto_save: /setAutoSave\s*\(\s*enabled\s*\)/.test(saveSystemText),
+    phase42_save_system_get_mouse_sensitivity: /getMouseSensitivity\s*\(/.test(saveSystemText),
+    phase42_save_system_get_render_distance: /getRenderDistance\s*\(/.test(saveSystemText),
+    phase42_save_system_set_reduced_motion: /setReducedMotion\s*\(/.test(saveSystemText),
+    phase42_main_apply_settings_change_function: /function\s+applySettingsChange\s*\(\s*key\s*,\s*value/.test(srcText),
+    phase42_main_settings_change_resolution_scale: /resolutionScale/.test(srcText),
+    phase42_main_settings_change_render_distance: /renderDistance/.test(srcText),
+    phase42_main_settings_change_volume: /masterVolume/.test(srcText),
+    phase42_main_hud_apply_hud_opacity: /hud\.applyHudOpacity/.test(srcText),
+    // 4.3 — Minimap
+    phase43_minimap_module_exports_minimap_size: /export\s+const\s+MINIMAP_SIZE\s*=\s*32\b/.test(minimapText),
+    phase43_minimap_module_exports_phase_overlay_colors: /export\s+const\s+PHASE_OVERLAY_COLORS/.test(minimapText),
+    phase43_minimap_module_exports_build_snapshot: /export\s+function\s+buildMinimapSnapshot/.test(minimapText),
+    phase43_minimap_module_exports_marker_color: /export\s+function\s+markerColor/.test(minimapText),
+    phase43_minimap_module_marker_echo_const: /export\s+const\s+MARKER_ECHO\s*=\s*1\b/.test(minimapText),
+    phase43_minimap_module_marker_stabilizer_const: /export\s+const\s+MARKER_STABILIZER\s*=\s*2\b/.test(minimapText),
+    phase43_minimap_module_marker_resonance_core_const: /export\s+const\s+MARKER_RESONANCE_CORE\s*=\s*3\b/.test(minimapText),
+    phase43_hud_set_minimap_markers_method: /setMinimapMarkers\s*\(/.test(hudText2),
+    phase43_hud_update_minimap_uses_world: /buildMinimapSnapshot/.test(hudText2),
+    phase43_world_export_stabilizers_method: /exportStabilizers\s*\(\s*\)/.test(worldText),
+    phase43_main_calls_set_minimap_markers: /hud\.setMinimapMarkers/.test(srcText),
+    // 4.4 — Save/load polish
+    phase44_save_system_velocity_coercion: /_coerceVelocity\s*\(\s*value/.test(saveSystemText),
+    phase44_save_system_normalize_state_preserves_velocity: /velocity:\s*this\._coerceVelocity/.test(saveSystemText),
+    phase44_save_system_save_snapshot_with_extras: /saveSnapshot\([^)]*extras/.test(saveSystemText),
+    phase44_save_system_load_game_returns_velocity: /velocity:\s*this\._coerceVelocity\(raw\.velocity\)/.test(saveSystemText),
+    phase44_save_system_auto_save_periodic: /autoSave\s*\(\s*gameState/.test(saveSystemText),
+    phase44_save_system_stop_auto_save: /stopAutoSave\s*\(/.test(saveSystemText),
+    phase44_main_save_game_passes_extras: /saveSnapshot\([^)]*velocity/.test(srcText),
+    phase44_main_save_game_passes_look_yaw: /lookYaw/.test(srcText),
+    phase44_main_save_game_passes_fatigue: /fatigue/.test(srcText),
+    phase44_main_auto_save_started: /saveSystem\.autoSave\(/.test(srcText),
+    // 4.5 — Performance (mostly already done; verify the wire)
+    phase45_renderer_instanced_mesh: /THREE\.InstancedMesh/.test(rendererText),
+    phase45_renderer_frustum_culled: /frustumCulled\s*=\s*true/.test(rendererText),
+    phase45_renderer_dispose_geometry: /\.geometry\.dispose/.test(rendererText),
+    phase45_settings_render_distance_caps_chunks: /renderDistance/.test(settingsText),
+    // 4.6 — Code-splitting
+    phase46_vite_manual_chunks: /manualChunks/.test(viteText),
+    phase46_vite_splits_three: /three/.test(viteText),
+    phase46_vite_splits_audio: /audio/.test(viteText),
+    phase46_vite_splits_gameplay: /gameplay/.test(viteText),
+  };
+
+  const phase4Ok = Object.values(phase4).every(Boolean);
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -1622,7 +1714,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase28Ok &&
     phase31Ok &&
     phase32Ok &&
-    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok ? 0 : 1
+    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

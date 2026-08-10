@@ -1,5 +1,7 @@
 // HUD rendering (DOM-based, minimal overlay)
 import { biomeLabel as biomeLabelFromId } from '../world/biome.js';
+import { MINIMAP_SIZE, MINIMAP_RANGE, buildMinimapSnapshot, markerColor, MARKER_ECHO, MARKER_STABILIZER, MARKER_RESONANCE_CORE, MINIMAP_DEFAULTS } from './minimap.js';
+import { SETTINGS_STORAGE_KEY, DEFAULT_KEYBINDINGS, getSetting, setSetting as setSettingPure } from '../settings/menu.js';
 
 export class HUD {
   constructor(container) {
@@ -225,8 +227,19 @@ export class HUD {
       }
     }
 
-    // Minimap (dynamically created)
-    this._updateMinimap(physicsManager);
+    // Phase 4.3: minimap reads actual world data + markers
+    this._updateMinimap(physicsManager, world, phase);
+  }
+
+  /**
+   * Phase 4.2: apply the HUD opacity setting to the HUD container.
+   * Called by main.js when the player adjusts the HUD opacity slider.
+   * The HUD owns its own DOM (the §4.1 contract); the slider lives
+   * in the Settings menu (rendered by renderSettingsMenu).
+   */
+  applyHudOpacity(opacity) {
+    const v = (Number.isFinite(opacity)) ? Math.max(0, Math.min(1, opacity)) : 1;
+    this.container.style.opacity = String(v);
   }
 
   _updateBlockHint(phaseManager, physicsManager, world) {
@@ -283,7 +296,13 @@ export class HUD {
     }
   }
 
-  _updateMinimap(physicsManager) {
+  /**
+   * Phase 4.3: render the minimap from actual world data.
+   * Uses src/ui/minimap.js (pure module) for the snapshot logic.
+   * The HUD owns the canvas draw loop; the snapshot is the only
+   * source of truth (no static noise grid).
+   */
+  _updateMinimap(physicsManager, world, phase) {
     const minimap = document.querySelector('#minimap');
     if (!this.minVisible || !minimap) return;
 
@@ -292,49 +311,215 @@ export class HUD {
     minimap.width = size;
     minimap.height = size;
 
-    const pos = physicsManager.getPos();
-    const px = pos.x;
-    const pz = pos.z;
+    // Build the 32×32 snapshot of world cells + markers.
+    const snapshot = buildMinimapSnapshot(world, physicsManager, {
+      size: MINIMAP_SIZE,
+      phase: Number.isInteger(phase) ? phase : 0,
+      echoKeys: this._extractKeys(this._echoKeys),
+      stabilizerKeys: this._extractKeys(this._stabilizerKeys),
+      resonanceCoreKeys: this._extractKeys(this._resonanceCoreKeys),
+    });
 
-    // Draw minimap background
-    ctx.fillStyle = 'rgba(20,20,30,0.9)';
+    const cellSize = size / snapshot.size;
+    const cx = snapshot.playerCellX * cellSize + cellSize / 2;
+    const cy = snapshot.playerCellY * cellSize + cellSize / 2;
+
+    // Background
+    ctx.fillStyle = 'rgba(20,20,30,0.92)';
     ctx.fillRect(0, 0, size, size);
 
-    // Draw player position (center)
-    const cx = size / 2;
-    const cy = size / 2;
-
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(cx, cy, 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Draw nearby blocks (very simplified)
-    const scale = 2;
-    const range = 8;
-
-    for (let dx = -range; dx <= range; dx++) {
-      for (let dz = -range; dz <= range; dz++) {
-        const screenX = cx + dx * scale;
-        const screenY = cy + dz * scale;
-
-        // Draw a small marker for terrain
-        ctx.fillStyle = 'rgba(100,150,100,0.4)';
-        ctx.fillRect(screenX, screenY, scale, scale);
+    // Cells (one pixel each = a colored dot per world block)
+    if (snapshot.hasWorld) {
+      for (let i = 0; i < snapshot.cells.length; i++) {
+        const c = snapshot.cells[i];
+        if (!c) continue;
+        if (c.block > 0) {
+          ctx.fillStyle = c.color;
+          const dx = i % snapshot.size;
+          const dz = (i - dx) / snapshot.size;
+          ctx.fillRect(dx * cellSize, dz * cellSize, cellSize, cellSize);
+        }
+      }
+    } else {
+      // Fallback: dotted grid (still recognizable as a top-down view)
+      ctx.fillStyle = 'rgba(100,150,100,0.3)';
+      for (let i = 0; i < snapshot.cells.length; i++) {
+        const dx = i % snapshot.size;
+        const dz = (i - dx) / snapshot.size;
+        ctx.fillRect(dx * cellSize, dz * cellSize, cellSize, cellSize);
       }
     }
 
-    // Draw player direction
-    ctx.strokeStyle = '#ffffff';
+    // Markers (Echoes = cyan, Stabilizers = orange, Resonance Cores = purple)
+    for (let i = 0; i < snapshot.cells.length; i++) {
+      const c = snapshot.cells[i];
+      if (!c || c.marker === 0) continue;
+      const mc = markerColor(c.marker);
+      if (!mc) continue;
+      const dx = i % snapshot.size;
+      const dz = (i - dx) / snapshot.size;
+      const px = dx * cellSize + cellSize / 2;
+      const py = dz * cellSize + cellSize / 2;
+      ctx.fillStyle = mc;
+      ctx.beginPath();
+      ctx.arc(px, py, cellSize * 1.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Player triangle (pointing in look direction)
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(-snapshot.playerYaw);
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#000000';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx + Math.sin(this.cameraYaw) * 8, cy + Math.cos(this.cameraYaw) * 8);
+    ctx.moveTo(0, -6);
+    ctx.lineTo(5, 5);
+    ctx.lineTo(0, 3);
+    ctx.lineTo(-5, 5);
+    ctx.closePath();
+    ctx.fill();
     ctx.stroke();
+    ctx.restore();
 
     // Border
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
     ctx.strokeRect(0, 0, size, size);
+  }
+
+  /** Helper: extract the world keys from a Set / array / map. */
+  _extractKeys(input) {
+    if (!input) return [];
+    if (input instanceof Set) return Array.from(input);
+    if (Array.isArray(input)) return input;
+    if (input instanceof Map) return Array.from(input.keys());
+    if (typeof input === 'object') {
+      return Object.keys(input);
+    }
+    return [];
+  }
+
+  /**
+   * Phase 4.3: update the cache of echo / stabilizer / resonance
+   * core world keys so the minimap can mark them. Called by
+   * main.js whenever the world list changes (cheap: just a Set
+   * copy).
+   */
+  setMinimapMarkers({ echoKeys, stabilizerKeys, resonanceCoreKeys } = {}) {
+    if (Array.isArray(echoKeys) || echoKeys instanceof Set) this._echoKeys = new Set(echoKeys);
+    if (Array.isArray(stabilizerKeys) || stabilizerKeys instanceof Set) this._stabilizerKeys = new Set(stabilizerKeys);
+    if (Array.isArray(resonanceCoreKeys) || resonanceCoreKeys instanceof Set) this._resonanceCoreKeys = new Set(resonanceCoreKeys);
+  }
+
+  /**
+   * Phase 4.2: render the Settings menu (data-driven — the §4.1
+   * acceptance "HUD owns its DOM"). `settings` is the live
+   * settings object; `onChange(key, value)` is called whenever the
+   * user toggles / moves a slider (the §4.2 "live-apply" contract).
+   *
+   * The menu is a modal overlay with sliders for resolution scale,
+   * render distance, mouse sensitivity, audio volumes, HUD opacity,
+   * and toggles for autosave, post-processing, and reduced-motion.
+   * Returns the panel element (or null in headless mode).
+   */
+  renderSettingsMenu(settings, onChange) {
+    if (typeof document === 'undefined') return null;
+    const s = (settings && typeof settings === 'object') ? settings : {};
+    const cb = (typeof onChange === 'function') ? onChange : () => {};
+    let panel = document.querySelector('#settings-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'settings-panel';
+      panel.style.cssText = `
+        position: absolute; top: 50%; left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(10, 10, 20, 0.95);
+        border: 1px solid rgba(100, 150, 255, 0.4);
+        border-radius: 8px;
+        padding: 20px 24px;
+        color: #ddd; font-size: 13px;
+        min-width: 420px;
+        display: none;
+        pointer-events: auto;
+      `;
+      this.container.appendChild(panel);
+    }
+    const renderRow = (label, control) => `
+      <div style="display:flex;align-items:center;margin:8px 0;gap:10px;">
+        <div style="flex:1;color:#aaa;font-size:11px;letter-spacing:0.05em;">${label}</div>
+        <div style="flex:0 0 200px;">${control}</div>
+      </div>
+    `;
+    const slider = (key, min, max, step, fmt) => {
+      const v = Number(getSetting(s, key));
+      return `<input type="range" data-settings-key="${key}" min="${min}" max="${max}" step="${step}" value="${v}" style="width:100%;">
+              <div style="color:#88aaff;font-size:10px;text-align:right;">${fmt(v)}</div>`;
+    };
+    const toggle = (key) => {
+      const v = Boolean(getSetting(s, key));
+      return `<button data-settings-toggle="${key}" style="background:#222;color:${v?'#88ff88':'#888'};border:1px solid #444;padding:4px 10px;border-radius:3px;font-family:monospace;font-size:11px;cursor:pointer;">${v?'ON':'OFF'}</button>`;
+    };
+    let html = '<div style="color:#88aaff;font-size:15px;font-weight:bold;margin-bottom:12px;text-align:center;letter-spacing:0.1em;">SETTINGS</div>';
+    html += renderRow('Resolution Scale', slider('resolutionScale', 0.5, 1.5, 0.05, (v) => `${(v * 100).toFixed(0)}%`));
+    html += renderRow('Render Distance', slider('renderDistance', 1, 5, 1, (v) => `${v.toFixed(0)} chunks`));
+    html += renderRow('Mouse Sensitivity', slider('mouseSensitivity', 0.0005, 0.01, 0.0001, (v) => v.toFixed(4)));
+    html += renderRow('Master Volume', slider('masterVolume', 0, 1, 0.01, (v) => `${(v * 100).toFixed(0)}%`));
+    html += renderRow('Music Volume', slider('musicVolume', 0, 1, 0.01, (v) => `${(v * 100).toFixed(0)}%`));
+    html += renderRow('SFX Volume', slider('sfxVolume', 0, 1, 0.01, (v) => `${(v * 100).toFixed(0)}%`));
+    html += renderRow('HUD Opacity', slider('hudOpacity', 0, 1, 0.05, (v) => `${(v * 100).toFixed(0)}%`));
+    html += renderRow('Auto-Save', toggle('autosave'));
+    html += renderRow('Post-Processing', toggle('postProcessing'));
+    html += renderRow('Reduced Motion', toggle('reducedMotion'));
+    html += '<div style="text-align:center;margin-top:14px;"><button id="settings-close" style="background:#222;color:#88ccff;border:1px solid #444;padding:6px 18px;border-radius:3px;font-family:monospace;font-size:12px;cursor:pointer;">Close</button></div>';
+    panel.innerHTML = html;
+    // Wire sliders (input fires on every change → live apply).
+    panel.querySelectorAll('input[type="range"][data-settings-key]').forEach((el) => {
+      el.addEventListener('input', (ev) => {
+        const key = ev.target.getAttribute('data-settings-key');
+        const v = Number(ev.target.value);
+        cb(key, v);
+      });
+    });
+    // Wire toggles.
+    panel.querySelectorAll('button[data-settings-toggle]').forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        const key = ev.target.getAttribute('data-settings-toggle');
+        const cur = Boolean(getSetting(s, key));
+        cb(key, !cur);
+      });
+    });
+    // Wire close button (defensive: only if element exists).
+    const closeBtn = panel.querySelector('#settings-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        panel.style.display = 'none';
+        cb('settingsClose', true);
+      });
+    }
+    return panel;
+  }
+
+  /** Phase 4.2: show or hide the Settings menu. */
+  showSettings(settings, onChange, visible = true) {
+    const panel = this.renderSettingsMenu(settings, onChange);
+    if (panel) panel.style.display = visible ? 'block' : 'none';
+    return panel;
+  }
+
+  /** Phase 4.1: defensively add an event listener (only if element exists). */
+  addSafeEventListener(elementId, event, handler) {
+    if (typeof document === 'undefined') return null;
+    const el = document.getElementById(elementId);
+    if (!el) return null;
+    el.addEventListener(event, handler);
+    return el;
+  }
+
+  /** Phase 4.1: query a DOM element defensively (returns null if not found). */
+  querySelectorSafe(selector) {
+    if (typeof document === 'undefined') return null;
+    return document.querySelector(selector);
   }
 
   setMinimapVisible(visible) {
