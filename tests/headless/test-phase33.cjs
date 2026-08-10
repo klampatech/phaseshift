@@ -235,7 +235,7 @@ function check(label, ok, extra = '') {
   check('main.js saveGame serializes the inventory',
     /function\s+saveGame[\s\S]{0,1000}?serializeInventory\s*\(\s*playerInventory\s*\)/.test(mainText));
   check('main.js saveGame passes inventory to saveSnapshot',
-    /saveSystem\.saveSnapshot\([^)]*inventorySnapshot\s*\)/.test(mainText));
+    /saveSystem\.saveSnapshot\([^]*?inventorySnapshot\b/.test(mainText));
   check('main.js init() applies saved inventory via deserializeInventory',
     /function\s+init[\s\S]{0,15000}?deserializeInventory\s*\(\s*_savedState\.inventory\s*\)/.test(mainText));
 
@@ -265,7 +265,7 @@ function check(label, ok, extra = '') {
   check('SaveSystem._coerceInventory is defined',
     /_coerceInventory\s*\(\s*value\s*\)/.test(saveText));
   check('SaveSystem.saveSnapshot accepts inventory arg',
-    /saveSnapshot\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*,\s*worldState\s*,\s*anchors\s*,\s*inventory\s*\)/.test(saveText));
+    /saveSnapshot\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*,\s*worldState\s*,\s*anchors\s*,\s*inventory\b/.test(saveText));
   check('SaveSystem._coerceInventory rejects non-objects',
     /_coerceInventory[\s\S]{0,500}?non-object/.test(saveText) || /_coerceInventory[\s\S]{0,500}?return\s+fresh/.test(saveText));
   check('SaveSystem._normalizeState passes inventory through',

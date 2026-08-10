@@ -422,7 +422,7 @@ function check(label, ok, extra = '') {
     world2.findNearestStabilizer(20.5, 20.5, 20.5, 100) !== null);
 
   const passed = results.filter(Boolean).length;
-  console.log(`\\n=== Phase 3.2 TOTAL: ${passed}/${results.length} passed ===`);
+  console.log(`\n=== Phase 3.2 TOTAL: ${passed}/${results.length} passed ===`);
   process.exit(passed === results.length ? 0 : 1);
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

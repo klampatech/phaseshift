@@ -248,7 +248,7 @@ export class PhysicsManager {
       } else {
         // Land on something
         // Snap to top of block below
-        this._pos.y = Math.floor(newY) + PLAYER_HEIGHT;
+        this._pos.y = Math.floor(newY - PLAYER_HEIGHT) + 1 + PLAYER_HEIGHT;
         this._vel.y = 0;
         this._isGrounded = true;
         this._groundedTimer = 0;

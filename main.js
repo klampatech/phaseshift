@@ -508,7 +508,7 @@ function setupMenuButtons() {
   safeOn('btn-inv', 'click', () => {
     if (pauseMenu) pauseMenu.style.display = 'none';
     if (typeof updateInventoryUI === 'function') updateInventoryUI();
-    if (hud && typeof hud.showInventory === 'function') hud.showInventory(player, true);
+    if (hud && typeof hud.showInventory === 'function') hud.showInventory(buildInventoryPlayerAdapter(), true);
   });
   safeOn('btn-save', 'click', () => {
     saveGame();
@@ -539,7 +539,7 @@ function setupMenuButtons() {
 
   // Inventory panel close
   safeOn('inv-close', 'click', () => {
-    if (hud && typeof hud.showInventory === 'function') hud.showInventory(player, false);
+    if (hud && typeof hud.showInventory === 'function') hud.showInventory(buildInventoryPlayerAdapter(), false);
   });
 
   // Pause on P key (when pointer is NOT locked)
@@ -555,7 +555,7 @@ function setupMenuButtons() {
       if (hud && typeof hud.showInventory === 'function') {
         const inv = (typeof document !== 'undefined') ? document.querySelector('#inventory-panel') : null;
         const wasOpen = inv && inv.style.display === 'block';
-        hud.showInventory(player, !wasOpen);
+        hud.showInventory(buildInventoryPlayerAdapter(), !wasOpen);
       }
     }
     // Minimap toggle (M key) — also keep the J key from §4.1
@@ -1736,6 +1736,22 @@ function updateInventoryUI() {
     
     progressInfo.textContent = `Chunks: ${chunks} | Blocks: ${blocks} | Current Phase: ${PHASE_NAMES[phase]}`;
   }
+}
+
+
+// Phase 7: build a player adapter for hud.showInventory. The hud API
+// expects getTools() / getAmplifiers() / getEchoes(); main.js's
+// playerInventory exposes echoes + amplifiers but not tools, so we
+// wrap it in an adapter. (Latent bug: hud.showInventory(player, ...)
+// referenced an undefined 'player' variable from the orphaned
+// GameEngine port — pressing I to toggle the inventory threw a
+// ReferenceError.)
+function buildInventoryPlayerAdapter() {
+  return {
+    getTools: () => [],
+    getAmplifiers: () => Object.entries(playerInventory.amplifiers || {}).map(([toolId, owned]) => ({ toolId, owned })),
+    getEchoes: () => (playerInventory.echoes || []).map(e => ({ type: 'echo', lore: e.lore || 'Unknown resonance echo', ...e })),
+  };
 }
 
 function saveGame() {
