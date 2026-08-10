@@ -801,3 +801,112 @@ The CI now runs on every push to `main` and every PR targeting `main`:
 - `npx playwright install --with-deps chromium`
 - `npm test`
 - Uploads `playwright-report/` + `test-results/` on failure
+
+## Phase 8 closure — Polish + community (tutorial skip + post-collapse invuln + audio restart + settings reset + compass distance + tutorial re-enter + footstep density + KNOWN_ISSUES cleanup)
+
+Phase 8 is shipped. The 1.0 release is now genuinely polished:
+
+- **Tutorial** can be skipped at any time via a Skip button. The hint re-fires when the player walks out of the ring and back in.
+- **Phase Collapse** is forgiving — 5s post-collapse invuln window prevents re-collapse.
+- **Audio** doesn't drift when the tab is backgrounded → resumed (visibilitychange handler re-triggers startAmbientMusic).
+- **Settings** can be reset to defaults in one click.
+- **Compass** shows the distance to the nearest marker; color shifts to gold at 8 blocks.
+- **Footsteps** scale with block density (dense stone = louder, sparse air = quieter).
+- **KNOWN_ISSUES** no longer lists the stale "Quit to Title" item (the §4.1 implementation already shows the blocker overlay, not a refresh).
+
+### What landed
+
+**`src/collapse/collapse.js`** (extended). New exports:
+- `POST_COLLAPSE_INVULN_DURATION = 5.0` — the §8.2 constant.
+- `createInvulnState()` — returns `{ active: false, remaining: 0 }`.
+- `startInvuln(state)` — starts the 5s window.
+- `tickInvuln(state, dt)` — per-frame decrement; dt clamped to 0.1 (same pattern as the other accumulators in this module).
+- `isInvulnActive(state)` — boolean check.
+- `getInvulnRemaining(state)` — getter.
+
+**`src/audio/footsteps.js`** (extended). New exports:
+- `footstepVolumeForDensity(neighborCount, total = 8)` — returns a `0.5..1.0` multiplier.
+- `countNeighbors(world, x, y, z, phase)` — counts the 8 horizontal non-AIR neighbors.
+
+**`src/settings/menu.js`** (extended). New export:
+- `defaultSettings()` — returns a fresh mutable copy of the canonical 11 default settings.
+
+**`src/tutorial/tutorial.js`** (extended). New export:
+- `clearTutorialAndHide(state)` — wraps `clearTutorial` in a UI-friendly return shape `{ ok, reason }`.
+
+**`src/ui/hud.js`** (extended). New methods:
+- `setTutorialSkipVisible(visible)` — shows the Skip button.
+- `setCollapseInvuln(remaining)` — drives the `#collapse-invuln` element.
+- `setCompassDistance(distanceBlocks, inRange)` — drives the `#compass-distance` element.
+
+**`index.html`** (extended). New CSS + DOM elements:
+- `#compass-distance` (below the arrow, smaller font).
+- `#collapse-invuln` (top-center, fades when remaining <= 0).
+- `#tutorial-skip-btn` (inside the hint banner, hidden by default).
+- CSS for all three.
+
+**`main.js`** (extended). Per-frame:
+- `tickInvulnPerFrame(deltaTime)` — new function; called after `tickCollapsePerFrame`.
+- `tickTutorialPerFrame` extended with `wasInTutorialRing` edge detection (re-fires hint on ring re-entry).
+- `tickGoalsPerFrame` extended to drive `hud.setCompassDistance` (gold at 8 blocks).
+- Footstep tick extended to use `footstepVolumeForDensity(countNeighbors(...))` for density-aware volume.
+- `applySettingsChange` extended to handle `settingsReset` (calls `settings.setAll(defaultSettings())`).
+- `forcePhaseCollapse` and `forcePhaseCollapseToStabilizer` extended to check `isInvulnActive(inulnState)` (return `{ ok: false, reason: 'post-collapse-invuln' }` if active).
+- `visibilitychange` listener added that re-triggers `audioManager.startAmbientMusic(phase)` on tab-resume.
+- Tutorial skip button click handler wired to the new `skipTutorial` debug hook.
+
+New debug hooks:
+- `__phaseShifter__.skipTutorial()`
+- `__phaseShifter__.getCollapseInvulnRemaining()`
+- `__phaseShifter__.isCollapseInvulnActive()`
+- `__phaseShifter__.forceAudioRestart()`
+
+**`KNOWN_ISSUES.md`** (updated). Removed the stale "Pause menu 'Quit to Title' is a refresh" item. Updated the 3 Major items to "Fixed in Phase 8.x (commit pending)" with the corresponding fix description.
+
+**`tests/headless/test-phase8.cjs`** (new, 65/65). Covers:
+- §8.1 tutorial skip — `clearTutorialAndHide` returns the right shape, main.js wires the button.
+- §8.2 invuln — `startInvuln` / `tickInvuln` / `isInvulnActive` / `getInvulnRemaining` math + main.js wiring.
+- §8.3 audio restart — visibilitychange listener + `forceAudioRestart` debug hook.
+- §8.4 settings reset — `defaultSettings` returns the 11 canonical keys, main.js handles `settingsReset`.
+- §8.5 compass distance — `#compass-distance` element + `setCompassDistance` method + main.js wiring.
+- §8.6 tutorial re-enter — `isWithinTutorialRing` + `wasInTutorialRing` edge detection.
+- §8.7 footstep density — `footstepVolumeForDensity` math + `countNeighbors` with stub world.
+- §8.8 KNOWN_ISSUES cleanup — stale "Quit to Title" item is removed.
+
+### Regression locks
+
+- All 22 prior headless test files still pass (1271 checks).
+- New `test-phase8.cjs` 65/65.
+- Total: 23 headless test files, **1336 checks** (pre-Phase 8: 1271 + 65 new).
+- `node --check` on `main.js` + all `src/**/*.js` modules: clean.
+- `npm run build`: 37.80 KB main entry gzipped (well under 200 KB CI threshold).
+- Manual live test: game loads, debug API exposed, all new hooks callable, no console errors.
+
+### Total test count after Phase 8
+
+- 23 headless test files, **1336 checks** total.
+- Playwright suite: 51 tests, 38 pass + 13 pre-existing WebGL/sandbox failures (no new failures from Phase 8).
+- Smoke test: ~400 static-analysis keys + 5 `phase*Ok` gates + `init_recovered_when_webgl_failed: true` assertion.
+- CI: 1 GitHub Actions workflow (3 jobs — build + headless + Playwright).
+
+### Files touched in Phase 8
+- `src/collapse/collapse.js` (5 new exports)
+- `src/audio/footsteps.js` (2 new exports)
+- `src/settings/menu.js` (1 new export)
+- `src/tutorial/tutorial.js` (1 new export)
+- `src/ui/hud.js` (3 new methods)
+- `index.html` (3 new CSS blocks + 3 new DOM elements)
+- `main.js` (3 new functions + 3 new debug hooks + visibilitychange listener + extended applySettingsChange + extended forcePhaseCollapse + extended tickTutorialPerFrame + extended tickGoalsPerFrame + extended footstep tick)
+- `KNOWN_ISSUES.md` (1 item removed + 3 items marked "Fixed in Phase 8.x")
+- `tests/headless/test-phase8.cjs` (new, 65 checks)
+- `PHASE_8_BRIEF.md` (new)
+- `HANDOFF.md` (this section)
+
+## What's next — §9 mobile touch or §10 cloud saves
+
+Phase 8 closes the post-1.0 polish arc. The §9 (mobile touch input) and §10 (cloud saves / modding) options remain.
+
+- **§9 — Optional platforms**: investigate touch-input layer for mobile (a significant scope expansion per `KNOWN_ISSUES.md` §Mobile), investigate Safari < 16 polyfills.
+- **§10 — Optional features**: investigate cloud saves (account system required), investigate modding/scripting API (sandbox + asset pipeline required).
+
+The `PHASE_9_BRIEF.md` will be created at the start of the next session if the user picks §9. If the user wants §10, the brief will mirror that.

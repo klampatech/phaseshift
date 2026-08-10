@@ -193,3 +193,52 @@ export {
   BLOCK_PROPERTIES,
   FOOTSTEP_INTERVAL,
 };
+
+// ── Phase 8.7: Density-aware footstep volume ────────────────────
+
+/**
+ * Phase 8.7: compute a volume multiplier in `[0.5, 1.0]` based on
+ * the count of solid neighbors around the player's feet cell.
+ *
+ *   - `neighborCount` — how many of the 8 horizontal neighbor cells
+ *                        are non-AIR.
+ *   - `total`         — total neighbor cells considered (default 8).
+ *
+ * The formula is a linear lerp: `0.5 + 0.5 * (neighborCount / total)`.
+ * Defensive: clamps `neighborCount` to `[0, total]` and clamps the
+ * result to `[0.5, 1.0]` so a malformed call can't produce a >1.0
+ * multiplier (the audio engine would clip).
+ */
+export function footstepVolumeForDensity(neighborCount, total = 8) {
+  const t = Math.max(0, Number(total) || 8);
+  const n = Math.max(0, Math.min(t, Number(neighborCount) || 0));
+  const ratio = t > 0 ? (n / t) : 0;
+  return Math.max(0.5, Math.min(1.0, 0.5 + 0.5 * ratio));
+}
+
+/**
+ * Phase 8.7: count the 8 horizontal neighbors of the cell at
+ * `(x, y, z)` that are non-AIR in the given phase. Vertical
+ * neighbors are excluded (the player is on top of a block; the
+ * 8 horizontal cells are the "around" cells).
+ *
+ * `world` is anything exposing `getBlock(x, y, z, phase)`. Returns
+ * an integer in `[0, 8]`. Defensive: invalid input returns 0.
+ */
+export function countNeighbors(world, x, y, z, phase) {
+  if (!world || typeof world.getBlock !== 'function') return 0;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return 0;
+  const p = (typeof phase === 'number' && Number.isFinite(phase)) ? phase : 0;
+  const offsets = [
+    [-1, 0], [1, 0], [0, -1], [0, 1],
+    [-1, -1], [-1, 1], [1, -1], [1, 1],
+  ];
+  let count = 0;
+  for (let i = 0; i < offsets.length; i++) {
+    const dx = offsets[i][0];
+    const dz = offsets[i][1];
+    const block = world.getBlock(Math.floor(x) + dx, Math.floor(y), Math.floor(z) + dz, p);
+    if (block && block !== BLOCK_AIR) count++;
+  }
+  return count;
+}

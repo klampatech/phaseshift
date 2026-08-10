@@ -16,15 +16,15 @@ _None currently tracked._
 
 ### Tutorial is verbose but skippable
 
-The Phase 3.6 tutorial walks the player through 8 hints over 64 seconds (WASD → Q-shift → Break Stone → Place block → Shift through Obsidian + Void → Collect Echo → Place Stabilizer → Tutorial complete). Players familiar with the controls can dismiss it by breaking the first stone or collecting the first echo. There's no explicit "skip" button — TODO.
+_Fixed in Phase 8.1 (commit pending)._ The Phase 3.6 tutorial now has an explicit "Skip" button on the `#tutorial-hint` banner. Clicking it calls `__phaseShifter__.skipTutorial()`, which clears the state + emits a "Tutorial skipped" notification. The hint also re-fires when the player walks out of the tutorial ring and back in (`wasInTutorialRing` edge detection).
 
 ### Phase Collapse cooldown is 30s
 
-After a Phase Collapse, the player respawns with `MINIMUM_RESPAWN_ENERGY` (30). There's no cooldown — the player can immediately shift again and risk another collapse. Adding a 5s post-collapse invulnerability window would improve UX.
+_Fixed in Phase 8.2 (commit pending)._ After a Phase Collapse, the player respawns with `MINIMUM_RESPAWN_ENERGY` (30) and enters a 5s post-collapse invuln window (`POST_COLLAPSE_INVULN_DURATION`). During the window, `setEnergy(0)` and `consumeEnergy()` are no-ops so the player can't re-collapse immediately. The HUD shows the remaining seconds via `#collapse-invuln`.
 
 ### Audio doesn't restart if the tab is backgrounded for >5 minutes
 
-Chrome's autoplay policy can suspend the AudioContext when the tab is backgrounded. When the tab regains focus, `audioManager.resume()` is called but the ambient music loop may have drifted out of sync. The fix is to detect the suspend → resume cycle and re-trigger `startAmbientMusic(phase)` instead of `resume()`. Logged but not blocking.
+_Fixed in Phase 8.3 (commit pending)._ A `visibilitychange` listener now detects the `hidden → visible` transition and re-triggers `audioManager.startAmbientMusic(phase)` instead of just `resume()`. The fresh `startAmbientMusic` call resets the music loop so it doesn't drift out of sync.
 
 ## 🟨 Minor
 
@@ -43,10 +43,6 @@ If the player walks out of the tutorial ring during a hint and back in, the same
 ### Footstep volume doesn't scale with block density
 
 `FOOTSTEP_MATERIALS` defines the four materials (stone/wood/crystal/void) but the volume is constant. Walking through dense vegetation (Forest biome) should sound different from walking across bare stone.
-
-### Pause menu "Quit to Title" is a refresh
-
-Pressing "Quit to Title" in the pause menu (Phase 4.1) reloads the page (`window.location.reload()`). This works but is jarring. A real "back to title" screen with the blocker overlay would be cleaner.
 
 ## 🟦 Platform
 

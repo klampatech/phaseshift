@@ -850,4 +850,78 @@ export class HUD {
       this._tutorialHintTimer = null;
     }
   }
+
+  // ── Phase 8.1: tutorial skip button + click handler ─────────
+  /**
+   * Phase 8.1: show the tutorial skip button. The click handler
+   * is wired once (in the constructor); this method just toggles
+   * the button's display.
+   * @param {boolean} visible
+   */
+  setTutorialSkipVisible(visible) {
+    if (typeof document === 'undefined') return;
+    if (!this._tutorialSkipEl) {
+      this._tutorialSkipEl = document.querySelector('#tutorial-skip-btn');
+    }
+    if (!this._tutorialSkipEl) return;
+    this._tutorialSkipEl.style.display = visible ? 'block' : 'none';
+  }
+
+  /**
+   * Phase 8.1: set the tutorial skip click handler. Called by
+   * main.js to wire the button to the skipTutorial() debug hook.
+   * The handler is invoked once per click; multiple calls replace
+   * the previous handler.
+   * @param {Function} handler
+   */
+  setTutorialSkipHandler(handler) {
+    if (typeof document === 'undefined') return;
+    if (!this._tutorialSkipEl) {
+      this._tutorialSkipEl = document.querySelector('#tutorial-skip-btn');
+    }
+    if (!this._tutorialSkipEl) return;
+    this._tutorialSkipHandler = (typeof handler === 'function') ? handler : null;
+  }
+
+  // ── Phase 8.2: post-collapse invuln indicator ──────────────
+  /**
+   * Phase 8.2: show the post-collapse invuln timer. The element
+   * fades in when `remaining > 0` and fades out when `remaining <= 0`.
+   * @param {number} remaining
+   */
+  setCollapseInvuln(remaining) {
+    if (typeof document === 'undefined') return;
+    if (!this._collapseInvulnEl) {
+      this._collapseInvulnEl = document.querySelector('#collapse-invuln');
+    }
+    if (!this._collapseInvulnEl) return;
+    const r = (typeof remaining === 'number' && Number.isFinite(remaining)) ? remaining : 0;
+    if (r > 0) {
+      this._collapseInvulnEl.textContent = `INVULNERABLE: ${r.toFixed(1)}s`;
+      this._collapseInvulnEl.style.opacity = '1';
+    } else {
+      this._collapseInvulnEl.style.opacity = '0';
+    }
+  }
+
+  // ── Phase 8.5: compass distance indicator ──────────────────
+  /**
+   * Phase 8.5: show the distance to the nearest compass target.
+   * @param {number|null} distanceBlocks - null hides the indicator.
+   * @param {boolean} inRange - true when within 8 blocks (gold).
+   */
+  setCompassDistance(distanceBlocks, inRange) {
+    if (typeof document === 'undefined') return;
+    if (!this._compassDistanceEl) {
+      this._compassDistanceEl = document.querySelector('#compass-distance');
+    }
+    if (!this._compassDistanceEl) return;
+    if (distanceBlocks === null || distanceBlocks === undefined || !Number.isFinite(distanceBlocks)) {
+      this._compassDistanceEl.style.opacity = '0';
+      return;
+    }
+    this._compassDistanceEl.textContent = `${distanceBlocks}m`;
+    this._compassDistanceEl.style.color = inRange ? '#ffcc00' : '#888';
+    this._compassDistanceEl.style.opacity = '1';
+  }
 }

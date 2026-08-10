@@ -101,3 +101,60 @@ export function collapseProgress(state) {
   if (t > 1) return 1;
   return t;
 }
+
+// ── Phase 8.2: Post-collapse invuln window ─────────────────────
+
+/** §8.2: 5-second invuln window after a collapse resolves. */
+export const POST_COLLAPSE_INVULN_DURATION = 5.0;
+
+/**
+ * Phase 8.2: factory for the post-collapse invuln state.
+ * Returns `{ active: false, remaining: 0 }`. The game loop owns
+ * the singleton; the helper just gives a fresh shape.
+ */
+export function createInvulnState() {
+  return { active: false, remaining: 0 };
+}
+
+/**
+ * Phase 8.2: start the post-collapse invuln window. Sets
+ * `active = true, remaining = POST_COLLAPSE_INVULN_DURATION`.
+ * Pure state mutation; no side effects.
+ */
+export function startInvuln(state) {
+  const s = (state && typeof state === 'object') ? state : createInvulnState();
+  s.active = true;
+  s.remaining = POST_COLLAPSE_INVULN_DURATION;
+  return s;
+}
+
+/**
+ * Phase 8.2: per-frame tick. Decrements `remaining` by `dt`
+ * (clamped to `[0, 0.1]` like the other accumulators in this
+ * module). Sets `active = false` when `remaining <= 0`.
+ */
+export function tickInvuln(state, dt) {
+  const s = (state && typeof state === 'object') ? state : createInvulnState();
+  const rawDt = (typeof dt === 'number' && Number.isFinite(dt)) ? dt : 0;
+  const clampedDt = Math.max(0, Math.min(0.1, rawDt));
+  if (s.active) {
+    s.remaining -= clampedDt;
+    if (s.remaining <= 0) {
+      s.active = false;
+      s.remaining = 0;
+    }
+  }
+  return s;
+}
+
+/** §8.2: boolean check for the invuln window. */
+export function isInvulnActive(state) {
+  if (!state || typeof state !== 'object') return false;
+  return Boolean(state.active);
+}
+
+/** §8.2: remaining seconds (0 if inactive). */
+export function getInvulnRemaining(state) {
+  if (!state || typeof state !== 'object') return 0;
+  return Number.isFinite(state.remaining) ? state.remaining : 0;
+}

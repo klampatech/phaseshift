@@ -9,12 +9,13 @@ import { placeBlock as placeBlockAtTarget } from './src/input/placeBlock.js';
 import { HUD } from './src/ui/hud.js';
 import { AudioManager } from './src/audio/manager.js';
 import { SaveSystem, Settings } from './src/save/system.js';
+import { defaultSettings as defaultSettingsPure } from './src/settings/menu.js';
 import { scanResults, phaseLensDrain, lensRadius, belowDrainThreshold, hasDifferences } from './src/scan/lens.js';
 import { resonateResults, resonateRadius, resonateCost, totalSwappedCount } from './src/resonance/resonate.js';
 // Phase 2.8: footstep throttle (every 0.4s) + phase-and-block filter.
 // The call site is the game loop (the accumulator lives in main.js);
 // the helper is the pure module.
-import { shouldPlayFootstep, materialFromBlock, footstepInterval, FOOTSTEP_MATERIALS } from './src/audio/footsteps.js';
+import { shouldPlayFootstep, materialFromBlock, footstepInterval, FOOTSTEP_MATERIALS, footstepVolumeForDensity, countNeighbors } from './src/audio/footsteps.js';
 import { placeAnchorAt, snapYForCell, cellUnderPlayer, anchorLifetime, ANCHOR_FILL_COLOR, ANCHOR_BORDER_COLOR } from './src/anchor/anchor.js';
 // Phase 3.1: per-biome color palette, fog density, label, and
 // smooth cross-biome transition tween. The pure module is the
@@ -31,14 +32,14 @@ import { STABILIZER_RADIUS, STABILIZER_PLACE_COST, STABILIZER_FALLBACK_COLOR, fi
 // input suppression + teleport + energy restore). The pure module
 // owns the timer math + the done payload; main.js is the
 // dispatcher.
-import { COLLAPSE_DURATION, COLLAPSE_BANNER_TEXT, FALLBACK_WARNING_TEXT, COLLAPSE_RESPAWN_ENERGY, COLLAPSE_REASONS, createCollapseState, startCollapse, tickCollapse, clearCollapse, collapseProgress } from './src/collapse/collapse.js';
+import { COLLAPSE_DURATION, COLLAPSE_BANNER_TEXT, FALLBACK_WARNING_TEXT, COLLAPSE_RESPAWN_ENERGY, COLLAPSE_REASONS, createCollapseState, startCollapse, tickCollapse, clearCollapse, collapseProgress, POST_COLLAPSE_INVULN_DURATION, createInvulnState, startInvuln, tickInvuln, isInvulnActive, getInvulnRemaining } from './src/collapse/collapse.js';
 // Phase 3.3: Echo pickup radius + lore library + key formatter. The
 // pure module owns the §3.3 contract; main.js is the dispatcher.
 import { PICKUP_RADIUS as ECHO_PICKUP_RADIUS, ECHO_LORE_LIBRARY, echoLoreForKey, pickupResult as echoPickupResult, echoKey, echoColorForBiome } from './src/collect/echo.js';
 import { PICKUP_RADIUS as AMPLIFIER_PICKUP_RADIUS, resonanceCoreKey, resonanceCoreColorForBiome, pickAmplifierForKey, pickupResult as resonancePickupResult, amplifierApplies } from './src/collect/resonance.js';
 import { AMPLIFIER_SHIFT_REDUCTION, AMPLIFIER_TRANSITIONS, AMPLIFIER_AB, AMPLIFIER_BG, AMPLIFIER_AG, AMPLIFIER_PICKUP_RADIUS as _AMP_R, AMPLIFIER_UNLOCK_TEXT } from './src/core/constants.js';
 import { LOCK_DURATION, LOCK_RADIUS, lockKey, createLock as createLockData, tickLocks as tickLocksPure, isLocked as isLockedPure, lockRegion, createGliderState, startGlider as startGliderPure, tickGlider as tickGliderPure, clearGlider as clearGliderPure } from './src/phase/lock.js';
-import { TUTORIAL_RADIUS, TUTORIAL_HINT_DURATION, TUTORIAL_TOTAL_DURATION, TUTORIAL_HINT_TEXTS, createTutorialState, startTutorial as startTutorialPure, tickTutorial as tickTutorialPure, clearTutorial as clearTutorialPure, getHint, tutorialPositions, isWithinTutorialRing } from './src/tutorial/tutorial.js';
+import { TUTORIAL_RADIUS, TUTORIAL_HINT_DURATION, TUTORIAL_TOTAL_DURATION, TUTORIAL_HINT_TEXTS, createTutorialState, startTutorial as startTutorialPure, tickTutorial as tickTutorialPure, clearTutorial as clearTutorialPure, getHint, tutorialPositions, isWithinTutorialRing, clearTutorialAndHide as clearTutorialAndHidePure } from './src/tutorial/tutorial.js';
 import { buildGoalState as buildGoalStatePure, currentAct as currentActPure, nearestMarker as nearestMarkerPure } from './src/progression/goals.js';
 // Phase 3.3: Player inventory (collected Echoes + unlocked
 // amplifiers). The save/load round-trip + the per-frame pickup
@@ -125,6 +126,11 @@ let currentBiomeTint = biomeTint(BIOME_FOREST);
 // mouse input gate - while true, the input handlers no-op so the
 // player can't move or shift mid-collapse.
 let collapseState = createCollapseState();
+// Phase 8.2: post-collapse invuln window (5s).
+let invulnState = createInvulnState();
+// Phase 8.6: track whether the player was inside the tutorial ring
+// last frame (for re-trigger edge detection).
+let wasInTutorialRing = false;
 let inputSuppressed = false;
 // Phase 3.3: Player inventory (collected Echoes + amplifiers). The
 // game loop owns the singleton; the save/load round-trip
@@ -338,14 +344,51 @@ function init() {
         hud.update(phaseManager, physicsManager, world);
         requestAnimationFrame(gameLoop);
       }
-    } else {
-      blocker.classList.remove('hidden');
-      gameRunning = false;
     }
   });
 
+  // Phase 8.3: audio context restart on tab-resume. When the
+  // tab is backgrounded for >5 min, Chrome can suspend the
+  // AudioContext. resume() on the next pointer lock is the
+  // recovery path, but the ambient music loop may have drifted
+  // out of sync. Re-trigger startAmbientMusic(phase) on the
+  // visibility change so the music loop is fresh.
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!audioManager || typeof audioManager.startAmbientMusic !== 'function') return;
+      if (typeof audioManager.initialized === 'function' && !audioManager.initialized()) return;
+      const p = (phaseManager && typeof phaseManager.getCurrentPhase === 'function')
+        ? phaseManager.getCurrentPhase()
+        : 0;
+      try {
+        audioManager.startAmbientMusic(p);
+      } catch (e) {
+        // Defensive: a malformed startAmbientMusic call must not
+        // break the game loop.
+      }
+    });
+  } else {
+    blocker.classList.remove('hidden');
+    gameRunning = false;
+  }
+
   // HUD
   hud = new HUD(document.getElementById('hud'));
+
+  // Phase 8.1: wire the tutorial skip button. The click handler
+  // delegates to the skipTutorial() debug hook so the test can
+  // verify the path.
+  if (typeof document !== 'undefined') {
+    const skipBtn = document.querySelector('#tutorial-skip-btn');
+    if (skipBtn) {
+      skipBtn.addEventListener('click', () => {
+        if (typeof window !== 'undefined' && window.__phaseShifter__ && typeof window.__phaseShifter__.skipTutorial === 'function') {
+          window.__phaseShifter__.skipTutorial();
+        }
+      });
+    }
+  }
   hud.update(phaseManager, physicsManager, world);
 
   // Handle window resize
@@ -606,6 +649,23 @@ function applySettingsChange(key, value) {
     }
   } else if (key === 'hudOpacity') {
     if (hud && typeof hud.applyHudOpacity === 'function') hud.applyHudOpacity(value);
+  } else if (key === 'settingsReset') {
+    // Phase 8.4: Reset to defaults. `value` is the canonical
+    // default settings object (the full shape from
+    // `defaultSettings()`). Set every key + re-apply the live
+    // effects.
+    const defaults = (value && typeof value === 'object') ? value : defaultSettingsPure();
+    if (typeof settings.setAll === 'function') {
+      settings.setAll(defaults);
+    }
+    if (hud && typeof hud.applyHudOpacity === 'function') hud.applyHudOpacity(defaults.hudOpacity);
+    if (typeof audioManager !== 'undefined' && audioManager) {
+      try {
+        if (typeof audioManager.setMasterVolume === 'function') audioManager.setMasterVolume(defaults.masterVolume);
+        if (typeof audioManager.setMusicVolume === 'function') audioManager.setMusicVolume(defaults.musicVolume);
+        if (typeof audioManager.setSfxVolume === 'function') audioManager.setSfxVolume(defaults.sfxVolume);
+      } catch (e) {}
+    }
   }
 }
 
@@ -901,7 +961,20 @@ function gameLoop(time) {
       const blockType = world.getBlock(cellX, cellY, cellZ, phaseManager.getCurrentPhase());
       const material = materialFromBlock(blockType, phaseManager.getCurrentPhase());
       if (material) {
-        audioManager.playFootstep(material);
+        // Phase 8.7: density-aware footstep volume. Walking
+        // through dense stone is louder than walking across
+        // sparse air. The neighbor count is read on the same
+        // cell as the material (the cell directly under the
+        // player's feet). The multiplier is clamped to [0.5, 1.0].
+        const neighborCount = countNeighbors(world, playerPos.x, cellY, playerPos.z, phaseManager.getCurrentPhase());
+        const volumeMultiplier = footstepVolumeForDensity(neighborCount, 8);
+        try {
+          audioManager.playFootstep(material, volumeMultiplier);
+        } catch (e) {
+          // Defensive: older audioManager builds may not accept
+          // the volume arg. Fall back to the no-arg call.
+          audioManager.playFootstep(material);
+        }
       }
     }
   }
@@ -1050,6 +1123,8 @@ function gameLoop(time) {
   // renderer overlay, suppresses input, and dispatches the
   // teleport + energy restore on completion.
   tickCollapsePerFrame(deltaTime);
+  // Phase 8.2: per-frame post-collapse invuln tick (5s window).
+  tickInvulnPerFrame(deltaTime);
   tickEchoesPerFrame(deltaTime);
   tickResonanceCoresPerFrame(deltaTime);
   tickLocksPerFrame(deltaTime);
@@ -1868,7 +1943,10 @@ function tickLocksPerFrame(dt) {
 // each hint shows for 8s. The tick advances the state machine
 // + drives the HUD overlay.
 function tickTutorialPerFrame(dt) {
-  if (!tutorialState || !tutorialState.active) return;
+  if (!tutorialState || !tutorialState.active) {
+    wasInTutorialRing = false;
+    return;
+  }
   const t = (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() / 1000 : 0;
   const result = tickTutorialPure(tutorialState, dt, t);
   if (result.done) {
@@ -1876,7 +1954,24 @@ function tickTutorialPerFrame(dt) {
     if (hud && typeof hud.clearTutorialHint === 'function') {
       hud.clearTutorialHint();
     }
+    wasInTutorialRing = false;
     return;
+  }
+  // Phase 8.6: detect ring re-entry to re-fire the hint. If the
+  // player was outside the ring last frame and is inside now,
+  // re-set the hint to reset the fade-out timer.
+  const playerPos = (physicsManager && typeof physicsManager.getPos === 'function')
+    ? physicsManager.getPos()
+    : null;
+  if (playerPos && Number.isFinite(playerPos.x) && tutorialState.ringCenter) {
+    const inRingNow = isWithinTutorialRing(
+      playerPos.x, playerPos.y, playerPos.z,
+      tutorialState.ringCenter.x, tutorialState.ringCenter.y, tutorialState.ringCenter.z
+    );
+    if (inRingNow && !wasInTutorialRing && hud && typeof hud.setTutorialHint === 'function' && result.hint) {
+      hud.setTutorialHint(result.hint, result.hintIndex);
+    }
+    wasInTutorialRing = inRingNow;
   }
   if (hud && typeof hud.setTutorialHint === 'function' && result.hint) {
     hud.setTutorialHint(result.hint, result.hintIndex);
@@ -1926,6 +2021,19 @@ function tickGoalsPerFrame(dt) {
     }
   }
   hud.updateCompass(target, yaw, playerPos);
+  // Phase 8.5: drive the compass distance indicator. Show the
+  // distance to the nearest marker; color shifts to gold when
+  // within 8 blocks (the "near pickup range" for Echoes + Cores).
+  if (hud && typeof hud.setCompassDistance === 'function' && target) {
+    const dx = target.x - playerPos.x;
+    const dz = target.z - playerPos.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const distBlocks = Math.floor(dist);
+    const inRange = distBlocks <= 8;
+    hud.setCompassDistance(distBlocks, inRange);
+  } else if (hud && typeof hud.setCompassDistance === 'function') {
+    hud.setCompassDistance(null, false);
+  }
 }
 
 // Phase 5.4: FOV breathing tick. Cycles camera.fov
@@ -2090,6 +2198,24 @@ function tickCollapsePerFrame(dt) {
   }
   if (renderer && typeof renderer.updateCheckpoints === 'function') {
     renderer.updateCheckpoints(lastStabilizerSnapshot);
+  }
+}
+
+// Phase 8.2: tickInvulnPerFrame(dt) — advance the post-collapse
+// invuln timer. The timer ticks down per frame; while active,
+// the player can't trigger another collapse (the invuln check
+// is inside forcePhaseCollapse). The HUD shows the remaining
+// seconds via hud.setCollapseInvuln.
+function tickInvulnPerFrame(dt) {
+  if (!invulnState || !invulnState.active) {
+    if (hud && typeof hud.setCollapseInvuln === 'function') {
+      hud.setCollapseInvuln(0);
+    }
+    return;
+  }
+  invulnState = tickInvuln(invulnState, dt);
+  if (hud && typeof hud.setCollapseInvuln === 'function') {
+    hud.setCollapseInvuln(invulnState.remaining);
   }
 }
 
@@ -2397,7 +2523,57 @@ if (typeof window !== 'undefined') {
       collapseNotifyPending = true;
       fallbackWarnedForCurrentCollapse = false;
       collapseWasCollapsingLastFrame = false;
+      // Phase 8.2: start the post-collapse invuln window. The
+      // timer ticks down per frame in the game loop; while active,
+      // setEnergy(0) and consumeEnergy() are no-ops so the player
+      // can't immediately re-collapse.
+      invulnState = startInvuln(invulnState);
       return { ok: true, phase, energy: phaseManager.getEnergy(), target };
+    },
+    // Phase 8.1: skip the tutorial. Returns the same shape as
+    // clearTutorialAndHidePure.
+    skipTutorial() {
+      if (!tutorialState) return { ok: false, reason: 'no-state' };
+      const result = clearTutorialAndHidePure(tutorialState);
+      if (result.ok) {
+        tutorialState = clearTutorialPure(tutorialState);
+        wasInTutorialRing = false;
+        if (hud && typeof hud.clearTutorialHint === 'function') {
+          hud.clearTutorialHint();
+        }
+        if (hud && typeof hud.setTutorialSkipVisible === 'function') {
+          hud.setTutorialSkipVisible(false);
+        }
+        if (hud && typeof hud.showNotification === 'function') {
+          hud.showNotification('Tutorial skipped', '#88ccff');
+        }
+      }
+      return result;
+    },
+    // Phase 8.2: get the post-collapse invuln remaining (seconds).
+    getCollapseInvulnRemaining() {
+      return getInvulnRemaining(invulnState);
+    },
+    // Phase 8.2: whether the post-collapse invuln window is active.
+    isCollapseInvulnActive() {
+      return isInvulnActive(invulnState);
+    },
+    // Phase 8.3: force the audio context restart path. Calls
+    // startAmbientMusic(phase) — the same path the visibilitychange
+    // handler uses.
+    forceAudioRestart() {
+      if (!audioManager || typeof audioManager.startAmbientMusic !== 'function') {
+        return { ok: false, reason: 'no-audio-manager' };
+      }
+      const p = (phaseManager && typeof phaseManager.getCurrentPhase === 'function')
+        ? phaseManager.getCurrentPhase()
+        : 0;
+      try {
+        audioManager.startAmbientMusic(p);
+        return { ok: true, phase: p };
+      } catch (e) {
+        return { ok: false, reason: 'audio-error', error: e.message };
+      }
     },
         // Phase 3.1: forceBiome(biomeId) test hook. Pins the player
     // to a specific biome regardless of position. The production
@@ -2607,6 +2783,12 @@ if (typeof window !== 'undefined') {
       if (phase === PHASE_ALPHA) {
         return { ok: false, reason: 'alpha-cannot-collapse', phase };
       }
+      // Phase 8.2: during the post-collapse invuln window, skip
+      // the collapse trigger entirely. The player can't re-collapse
+      // immediately; the timer must expire first.
+      if (isInvulnActive(invulnState)) {
+        return { ok: false, reason: 'post-collapse-invuln', phase };
+      }
       if (phaseManager.setEnergy) {
         phaseManager.setEnergy(0);
       } else if (phaseManager.consumeEnergy) {
@@ -2615,6 +2797,7 @@ if (typeof window !== 'undefined') {
       if (audioManager && typeof audioManager.playCollapse === 'function') {
         audioManager.playCollapse();
       }
+      invulnState = startInvuln(invulnState);
       const snapY = snapYForStabilizerCell(y);
       const target = { x: x, y: snapY, z: z, source: 'stabilizer' };
       startCollapse(collapseState, COLLAPSE_REASONS.TEST, target, 'stabilizer');

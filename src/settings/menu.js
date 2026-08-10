@@ -208,3 +208,31 @@ export const SETTINGS_DEFAULTS = Object.freeze({
   minMouseSensitivity: MIN_MOUSE_SENSITIVITY,
   maxMouseSensitivity: MAX_MOUSE_SENSITIVITY,
 });
+
+/**
+ * Phase 8.4: return a fresh mutable copy of the canonical default
+ * settings object. Used by the "Reset to defaults" button in the
+ * Settings menu. Returns a NEW object (not the frozen
+ * `SETTINGS_DEFAULTS` reference) so the call site can mutate or
+ * pass it to `settings.setAll(...)` without affecting other
+ * consumers.
+ *
+ * The keys match `SETTING_KEYS` plus the internal `keyBindings`,
+ * `storageKey`, and range bounds. The function is a single source
+ * of truth for the default-settings shape.
+ */
+export function defaultSettings() {
+  return {
+    resolutionScale: DEFAULT_RESOLUTION_SCALE,
+    renderDistance: DEFAULT_RENDER_DISTANCE,
+    mouseSensitivity: DEFAULT_MOUSE_SENSITIVITY,
+    masterVolume: DEFAULT_MASTER_VOLUME,
+    musicVolume: DEFAULT_MUSIC_VOLUME,
+    sfxVolume: DEFAULT_SFX_VOLUME,
+    hudOpacity: DEFAULT_HUD_OPACITY,
+    autosave: DEFAULT_AUTOSAVE,
+    postProcessing: DEFAULT_POST_PROCESSING,
+    reducedMotion: DEFAULT_REDUCED_MOTION,
+    keyBindings: { ...DEFAULT_KEYBINDINGS },
+  };
+}

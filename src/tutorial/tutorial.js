@@ -173,3 +173,21 @@ export const TUTORIAL_DEFAULTS = Object.freeze({
   totalDuration: TUTORIAL_TOTAL_DURATION,
   hintCount: TUTORIAL_HINT_TEXTS.length,
 });
+
+/**
+ * Phase 8.1: skip the tutorial. Calls `clearTutorial(state)` and
+ * returns a one-shot result `{ ok: true, reason: 'skipped' }` for
+ * the UI button + the debug hook. If the tutorial is not active
+ * (already done or already skipped), returns
+ * `{ ok: false, reason: 'inactive' }`.
+ *
+ * The state mutation is the same as `clearTutorial` — this helper
+ * just wraps it in a UI-friendly return shape.
+ */
+export function clearTutorialAndHide(state) {
+  if (!state || !state.active) {
+    return { ok: false, reason: 'inactive' };
+  }
+  clearTutorial(state);
+  return { ok: true, reason: 'skipped' };
+}
