@@ -1,7 +1,43 @@
 # Phase Shifter — Hand-off
 
-> **Last completed:** **Phase 2.8 — Audio integration — click blocker → chime on shift, crunch on break, soft click on place, bass pulse on resonance, vacuum sweep on collapse, footsteps every 0.4s while moving and grounded. The `audioManager.init()` fires on the blocker click (the user gesture), not in the subsequent `pointerlockchange` listener (risk register row #12).** The §2.8 acceptance is now covered end-to-end. The plan's §2.8 acceptance: "moving across Stone in Alpha produces footstep clicks. Breaking a block plays the crunch. Shifting plays the chime. Resonance plays the bass pulse." New pure module `src/audio/footsteps.js` exports `footstepInterval`, `shouldPlayFootstep`, `materialFromBlock`, `FOOTSTEP_MATERIALS` (the canonical four: stone/wood/crystal/void, with the "everything else → stone" collapse + `BLOCK_AIR → null` for empty cells). New constant `FOOTSTEP_INTERVAL = 0.4` (the §2.8 "every 0.4s" spec). `audioManager.init()` now fires on the blocker click (the user gesture); the `pointerlockchange` listener still calls `resume()` for the suspended-context recovery path. The per-frame game loop calls `shouldPlayFootstep(footstepTimer, deltaTime, isMoving, isGrounded)` → `world.getBlock(floor(x), floor(y) - 1, floor(z), currentPhase)` → `materialFromBlock(...)` → `audioManager.playFootstep(material)` (the phase-and-block filter). The `footstepTimer` accumulator lives in `main.js` (the game loop owns it). `playBlockBreak()` is wired into `breakBlock()`; `playBlockPlace()` is wired into `tryPlaceStoneOnFace()` and `__phaseShifter__.placeBlock()`. `playCollapse()` is wired through a new `forcePhaseCollapse()` debug hook (the §2.8 deliverable is the audio call site; the §3.2 stabilizer/collapse state machine is a separate session). `onPhaseChanged` calls `stopAmbientMusic()` BEFORE `startAmbientMusic(phase)` (the §2.8 ordering contract). New debug hooks: `__phaseShifter__.forcePlayFootstep(material)`, `.tickFootsteps(dt, ctx)`, `.getFootstepTimer()`, `.forcePhaseCollapse()`, plus pass-through wrappers `playBlockBreakDebug`, `playBlockPlaceDebug`, `playShiftDebug(phase)`, `playResonanceDebug(phase)`, `playCollapseDebug`, `playFootstepDebug(material)`, `startAmbientMusicDebug(phase)`, `stopAmbientMusicDebug`. `tests/headless/test-phase28.cjs` 87/87 (53 static + 34 behavioral: pure module helpers, World API phase-and-block filter, accumulator chains across the float-precision boundary, AudioEngine stub no-op friendliness) + `smoke.cjs` 41 Phase 2.8 static-analysis checks + 1 new Phase 2.8 Playwright test. All earlier phase tests still pass: 1.2 17/17, 1.3 7/7, 1.4 22/22, 1.5 12/12, 1.6 21/21, 1.7 26/26, 2.1 26/26, 2.2 35/35, 2.3 51/51, 2.4 46/46, 2.5 70/70, 2.6 71/71, 2.7 107/107, 2.8 87/87.
-> **Session goal:** Begin **Phase 3 — Make the world feel like a world** (the §3 sub-phase: biomes, echoes, stabilizers, resources, hazards, tutorial).
+> **🚀 1.0 RELEASED.** All planned phases 0 → 8 are shipped. Live deployment: https://klampatech.github.io/phaseshift/. The "What's next" sections further down are **historical** — each was current at the time the phase shipped but has since been completed (see "Status" below and the per-phase closures below for details).
+>
+> **Status (2026-08-10):**
+> - **Tip:** `70e894a` — "CI: split into test-gate + deploy so Playwright WebGL failures don't block deploy".
+> - **Latest meaningful phase:** Phase 8 — Polish + community (commits `6495145` + `1706a94`). Closes the post-1.0 polish arc.
+> - **CI:** 3-job workflow (`build-and-test`, `test-gate`, `deploy`) — `test-gate` blocks deploys; Playwright's WebGL failures don't block.
+> - **GitHub Pages:** live at https://klampatech.github.io/phaseshift/ (auto-publishes on every push to `main`).
+> - **Tests:** 23 headless files, 1336 checks (Phase 8 added 65 new checks on top of Phase 7's 1271).
+> - **Build:** `npm run build` produces a 37.80 KB gzipped main entry (well under the 200 KB CI threshold).
+> - **Session goal:** Documentation cleanup — sync `HANDOFF.md` / `KNOWN_ISSUES.md` / `PROJECT_REMEDIATION_PLAN.md` to the actual 1.0-shipped state. Post-1.0 direction TBD with the user.
+> - **Last completed (summary):** Phase 8 — added tutorial skip button (§8.1), 5s post-collapse invuln window (§8.2), audio context restart on tab-resume (§8.3), Settings "Reset to defaults" button (§8.4), compass distance indicator (§8.5), tutorial hint re-trigger on ring re-enter (§8.6), footstep volume scaling with block density (§8.7). The §8.8 "cleanup KNOWN_ISSUES.md" deliverable was started but not fully completed (stale "(commit pending)" notes remained); this session finishes it.
+
+## Current state (snapshot)
+
+| Area | Status |
+|---|---|
+| Phase 0 — Architectural decision | ✅ Done (`ebfcd07`) |
+| Phase 1.1–1.7 — Stop the bleeding | ✅ Done (single-engine, save/load, save→reload preserves player block memory) |
+| Phase 2.1–2.8 — Core mechanics | ✅ Done (phase shift, collision, place/break, lens, resonance, anchor, audio) |
+| Phase 3.1–3.6 — World feel | ✅ Done (biomes, stabilizers, echoes, resonance cores, phase lock/glider, tutorial) |
+| Phase 4 — Make it feel good | ✅ Done (`434846b` — HUD owns DOM, Settings, minimap, autosave, code-splitting) |
+| Phase 5 — Make it enjoyable | ✅ Done (`57c6d68` — 3-Act goals, compass, FOV, reduced-motion) |
+| Phase 6 — Focused test suite | ✅ Done |
+| Phase 7 — Release prep | ✅ Done (README, KNOWN_ISSUES, CI workflow) |
+| Phase 8 — Polish + community | ✅ Done (`6495145` + `1706a94` — 7 polish items + KNOWN_ISSUES cleanup) |
+| Phase 9–10 — Optional platforms/features | ⏳ Pending direction from user (see "Post-1.0 roadmap" section below) |
+
+> The journal-style "What's next" sections further down were written **at the time each phase shipped** and have all been overtaken by later phases. They're kept for historical context but should NOT be read as current guidance — see the Status / Current state sections above.
+
+## Post-1.0 roadmap (pending)
+
+Phase 8 closed the planned polish arc. The user has not yet chosen a direction for post-1.0 work. Candidates (from `KNOWN_ISSUES.md` Platform + Out of scope buckets, plus ideas from `GAME_SPEC.md`):
+
+- **§9 — Optional platforms:** touch-input layer for mobile (significant scope expansion), Safari < 16 polyfills.
+- **§10 — Optional features:** cloud saves (account system required), modding/scripting API (sandbox + asset pipeline required), achievements/leaderboards (Steam integration), creative mode / level editor (in-game block editor + world export).
+- **§11 — Content expansion:** more biomes, more echoes / lore, enemy AI / hazards (none currently in the spec), expanded soundtrack, weather / day-night cycle.
+- **§12 — Polish & quality-of-life:** accessibility pass (colorblind modes, captions), localization, performance optimization (draw-distance scaling, LOD, occlusion culling), community features (seed sharing, screenshots).
+
 > See [`PROJECT_REMEDIATION_PLAN.md`](./PROJECT_REMEDIATION_PLAN.md) for the full plan.
 
 ---
@@ -9,8 +45,8 @@
 ## TL;DR
 
 - **Repo:** `/home/kyle/Development/phaseshift` (local) ⇄ `klampatech/phaseshift` (remote, public).
-- **Branch:** `main`. **Tip:** `c4c9cd3` — "Phase 1.2: camera follow + quaternion-derived movement basis".
-- **Phases 0 + 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1.7 + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 done.** Save/load round-trip includes player block memory, including breaks (BLOCK_AIR is now a first-class player edit). Phase shift is fully wired (HUD + shader tint + audio + spam guard). Phase-relative collision reads `phaseSolid[phase]`. Per-phase place/break with RMB disambiguation. Breaks survive both chunk unload + reload AND save → reload. Phase Lens (hold E) shows colored wireframes per OTHER phase + a beam from the camera; energy drains at 0.5/sec. Resonance (Q) swaps phase presence on the blocks around the player with a phase-colored sphere pulse + audio chord + 15-energy debit. Next: **Phase 2.7 — Phase Anchor (Shift+LMB) — port the lockManager from the orphan `GameEngine` reference (the §2.7 acceptance).**
+- **Branch:** `main`. **Tip:** `70e894a` — "CI: split into test-gate + deploy so Playwright WebGL failures don't block deploy".
+- **Phases 0 through 8 done. 1.0 released.** All §1–§8 of the remediation plan is shipped. The post-1.0 polish arc (Phase 8) closed with the seven user-facing polish items. Live deployment is auto-published to GitHub Pages on every push to `main`. Post-1.0 direction (Phase 9+) is pending user input — see the "Post-1.0 roadmap" section above.
 - **Active code path:** `index.html` → `main.js` (root) → `src/core/{world,phase,physics}.js` + `src/{render,ui,input,audio,save}/*`.
 - **Quarantined reference implementation:** orphan `GameEngine` modules — see "Architectural state" below. **Do not import them.**
 - **Headless test infra** at `tests/headless/` (`smoke.cjs`, `test-safeon.cjs`, `test-camera-basis.cjs`, `test-phase12.cjs`, `test-phase13.cjs`, `safeon-unit.html`, `static-server.cjs`, `screenshots/`).
@@ -745,19 +781,6 @@ Phase 7 is shipped. The repo is now presentable to a newcomer:
 - `HANDOFF.md` (this section)
 - `PROJECT_REMEDIATION_PLAN.md` (Phase 7 row ✅ Done; §7 row updated)
 
-## What's next — post-1.0
-
-Phases 0–7 are all shipped. The §1.1–7 plan is fully complete. The repo is now production-ready: presentable to newcomers (README + KNOWN_ISSUES), CI catches regressions on every PR (`.github/workflows/ci.yml`), the 3D voxel phase-shifting prototype is playable end-to-end with audio cues + per-biome visual layer + full-state save + 30s autosave + Settings menu + data-driven minimap + 3-Act Goals + compass + FOV breathing + reduced-motion accessibility + Tutorial Zone + 22-test regression suite.
-
-The next session is **post-1.0 hardening**, not "build the next feature":
-
-- **§8 — Polish + community**: address the 🟧 Major + 🟨 Minor items in `KNOWN_ISSUES.md` (tutorial skip button, post-collapse invuln window, audio desync on tab-resume, settings "Reset to defaults", compass distance, tutorial hint repeat on re-enter, footstep volume scaling, "Quit to Title" screen).
-- **§9 — Optional platforms**: investigate touch-input layer for mobile (a significant scope expansion per `KNOWN_ISSUES.md` §Mobile), investigate Safari < 16 polyfills.
-- **§10 — Optional features**: investigate cloud saves (account system required), investigate modding/scripting API (sandbox + asset pipeline required).
-
-The `PHASE_8_BRIEF.md` will be created at the start of the next session if the user picks §8 (Polish + community). If the user wants a different direction (e.g., §9 Mobile or §10 Cloud Saves), the brief will mirror that.
-
-
 ## Phase 7 follow-up — physics landing-snap fix (post-merge)
 
 After the Phase 7 push, manual testing surfaced a player position bug. The player spawned at `y=65.7` but the per-frame physics step pushed them up by 1 block on the first frame.
@@ -902,11 +925,4 @@ New debug hooks:
 - `PHASE_8_BRIEF.md` (new)
 - `HANDOFF.md` (this section)
 
-## What's next — §9 mobile touch or §10 cloud saves
 
-Phase 8 closes the post-1.0 polish arc. The §9 (mobile touch input) and §10 (cloud saves / modding) options remain.
-
-- **§9 — Optional platforms**: investigate touch-input layer for mobile (a significant scope expansion per `KNOWN_ISSUES.md` §Mobile), investigate Safari < 16 polyfills.
-- **§10 — Optional features**: investigate cloud saves (account system required), investigate modding/scripting API (sandbox + asset pipeline required).
-
-The `PHASE_9_BRIEF.md` will be created at the start of the next session if the user picks §9. If the user wants §10, the brief will mirror that.
