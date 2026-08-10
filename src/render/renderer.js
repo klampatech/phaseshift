@@ -132,20 +132,31 @@ export class ChunkVisual {
       }
 
       const count = positions.length / 3;
-      const geom = new THREE.BufferGeometry();
-      const posArray = new Float32Array(positions);
-      const colArray = new Float32Array(colors);
-
-      geom.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-      geom.setAttribute('color', new THREE.BufferAttribute(colArray, 3));
-
-      const material = new THREE.MeshBasicMaterial({
+      // One cube instance per visible voxel. The previous implementation put
+      // one vertex per block into a regular Mesh; THREE interpreted every
+      // three blocks as a single triangle, leaving terrain effectively
+      // invisible. Instancing renders actual voxel cubes while sharing one
+      // geometry and material per phase/chunk.
+      const geom = new THREE.BoxGeometry(1, 1, 1);
+      const material = new THREE.MeshLambertMaterial({
         vertexColors: true,
         transparent: true,
         opacity: 0.95,
       });
-
-      const mesh = new THREE.Mesh(geom, material);
+      const mesh = new THREE.InstancedMesh(geom, material, count);
+      const matrix = new THREE.Matrix4();
+      const color = new THREE.Color();
+      for (let instance = 0; instance < count; instance++) {
+        const offset = instance * 3;
+        matrix.makeTranslation(
+          positions[offset], positions[offset + 1], positions[offset + 2]
+        );
+        mesh.setMatrixAt(instance, matrix);
+        color.setRGB(colors[offset], colors[offset + 1], colors[offset + 2]);
+        mesh.setColorAt(instance, color);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       mesh.frustumCulled = true;
       mesh.userData.phase = p;
       this.meshGroup.add(mesh);
@@ -222,9 +233,9 @@ export function setupPostProcessing(renderer, scene, camera) {
   // Bloom pass
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.8, // strength
-    0.4, // radius
-    0.1  // threshold
+    0.2, // strength — subtle glow without washing out the whole scene
+    0.25, // radius
+    0.8  // threshold — only genuinely bright highlights bloom
   );
   bloomPass.name = 'bloom';
   composer.addPass(bloomPass);

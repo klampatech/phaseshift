@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL } from './src/core/constants.js';
+import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL } from './src/core/constants.js';
 import { World } from './src/core/world.js';
 import { PhaseManager } from './src/core/phase.js';
 import { PhysicsManager } from './src/core/physics.js';
@@ -623,8 +623,8 @@ function gameLoop(time) {
     if (!chunkVisuals.has(key)) {
       const visual = new ChunkVisual(scene, chunk);
       chunkVisuals.set(key, visual);
+      visual.updateMeshes(world);
     }
-    chunkVisuals.get(key).updateMeshes(world);
   });
   
   // Physics update
@@ -1278,6 +1278,17 @@ function placeBlockAt(x, y, z, blockType) {
   world.setBlock(x, y, z, phaseManager.getCurrentPhase(), blockType);
 }
 
+function updateChunkVisual(chunk) {
+  if (!chunk || !world) return;
+  const key = world.getChunkKey(chunk.cx, chunk.cz);
+  let visual = chunkVisuals.get(key);
+  if (!visual) {
+    visual = new ChunkVisual(scene, chunk);
+    chunkVisuals.set(key, visual);
+  }
+  visual.updateMeshes(world);
+}
+
 function updateChunkVisuals() {
   const pos = physicsManager.getPos();
   world.updateChunks(pos.x, pos.z);
@@ -1502,7 +1513,7 @@ function updateInventoryUI() {
   
   if (progressInfo) {
     const chunks = world ? world.getChunks().size : 0;
-    const blocks = world ? world.getChunks().reduce((sum, c) => {
+    const blocks = world ? Array.from(world.getChunks().values()).reduce((sum, c) => {
       return sum + (c.alphaData ? c.alphaData.filter(b => b !== BLOCK_AIR).length : 0);
     }, 0) : 0;
     const phase = phaseManager ? phaseManager.getCurrentPhase() : 0;
