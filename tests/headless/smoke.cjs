@@ -1394,7 +1394,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase33_save_load_game_returns_inventory: /loadGame[\s\S]{0,2000}?inventory\s*:\s*this\._coerceInventory/.test(saveText),
   };
 
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 + 3.1 + 3.2 + 3.3 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 + 3.1 + 3.2 + 3.3 + 3.6 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -1549,11 +1549,59 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase35_main_get_glider_state: /__phaseShifter__[\s\S]*?getGliderState\s*\(\s*\)/.test(srcText),
   };
 
+  // ── Phase 3.6 (Tutorial Zone: safe ring + HUD hint walkthrough) ─
+  // The §3.6 work builds a small "tutorial ring" of safe-to-walk
+  // terrain at the spawn point (Stone, Obsidian+Void row, Echo,
+  // Stabilizer) and walks the player through 8 hints over 64s.
+  // The pure module src/tutorial/tutorial.js owns the constants +
+  // helpers; main.js wires the per-frame tick + debug hooks;
+  // hud.js owns the DOM hint overlay.
+  const tutorialSrc = path.resolve(__dirname, '..', '..', 'src', 'tutorial', 'tutorial.js');
+  const tutorialText = fs2.existsSync(tutorialSrc) ? fs2.readFileSync(tutorialSrc, 'utf8') : '';
+  const phase36 = {
+    // src/tutorial/tutorial.js exports
+    phase36_tutorial_module_exports_tutorial_radius: /export\s+const\s+TUTORIAL_RADIUS\s*=\s*4\b/.test(tutorialText),
+    phase36_tutorial_module_exports_tutorial_hint_duration: /export\s+const\s+TUTORIAL_HINT_DURATION\s*=\s*8\b/.test(tutorialText),
+    phase36_tutorial_module_exports_tutorial_total_duration: /export\s+const\s+TUTORIAL_TOTAL_DURATION\s*=/.test(tutorialText),
+    phase36_tutorial_module_exports_hint_texts: /export\s+const\s+TUTORIAL_HINT_TEXTS\s*=/.test(tutorialText),
+    phase36_tutorial_module_exports_tutorial_positions: /export\s+function\s+tutorialPositions/.test(tutorialText),
+    phase36_tutorial_module_exports_hint_index_for: /export\s+function\s+hintIndexFor/.test(tutorialText),
+    phase36_tutorial_module_exports_create_tutorial_state: /export\s+function\s+createTutorialState/.test(tutorialText),
+    phase36_tutorial_module_exports_start_tutorial: /export\s+function\s+startTutorial/.test(tutorialText),
+    phase36_tutorial_module_exports_tick_tutorial: /export\s+function\s+tickTutorial/.test(tutorialText),
+    phase36_tutorial_module_exports_clear_tutorial: /export\s+function\s+clearTutorial/.test(tutorialText),
+    phase36_tutorial_module_exports_get_hint: /export\s+function\s+getHint/.test(tutorialText),
+    phase36_tutorial_module_exports_is_within_tutorial_ring: /export\s+function\s+isWithinTutorialRing/.test(tutorialText),
+    phase36_tutorial_module_exports_tutorial_defaults: /export\s+const\s+TUTORIAL_DEFAULTS\s*=/.test(tutorialText),
+    // src/ui/hud.js
+    phase36_hud_constructor_queries_tutorial_hint: /querySelector\(['"]#tutorial-hint['"]\)/.test(hudText2),
+    phase36_hud_set_tutorial_hint_method: /setTutorialHint\s*\(\s*text/.test(hudText2),
+    phase36_hud_clear_tutorial_hint_method: /clearTutorialHint\s*\(/.test(hudText2),
+    // index.html
+    phase36_html_tutorial_hint_element: /id\s*=\s*["']tutorial-hint["']/.test(htmlText2),
+    phase36_html_tutorial_hint_css: /#tutorial-hint\s*\{/.test(htmlText2),
+    // main.js
+    phase36_main_imports_tutorial: /import\s*\{[^}]*tutorial[^}]*\}\s*from\s*['"]\.\/src\/tutorial\/tutorial\.js['"]/.test(srcText),
+    phase36_main_tutorial_state_module_level: /let\s+tutorialState\s*=\s*createTutorialState/.test(srcText),
+    phase36_main_tick_tutorial_per_frame: /function\s+tickTutorialPerFrame\s*\(\s*dt\s*\)/.test(srcText),
+    phase36_main_tick_tutorial_per_frame_called: /tickTutorialPerFrame\s*\(\s*deltaTime\s*\)/.test(srcText),
+    phase36_main_force_generate_tutorial_hook: /__phaseShifter__[\s\S]*?forceGenerateTutorial\s*\(/.test(srcText),
+    phase36_main_get_tutorial_hint_hook: /__phaseShifter__[\s\S]*?getTutorialHint\s*\(/.test(srcText),
+    phase36_main_get_tutorial_state_hook: /__phaseShifter__[\s\S]*?getTutorialState\s*\(/.test(srcText),
+    phase36_main_clear_tutorial_hook: /__phaseShifter__[\s\S]*?clearTutorial\s*\(/.test(srcText),
+    phase36_main_hud_set_tutorial_hint_wired: /hud\.setTutorialHint\s*\(/.test(srcText),
+    phase36_main_hud_clear_tutorial_hint_wired: /hud\.clearTutorialHint\s*\(/.test(srcText),
+  };
+
   const phase35Ok = Object.values(phase35).every(Boolean);
   const phase34Ok = Object.values(phase34).every(Boolean);
   const phase33Ok = Object.values(phase33).every(Boolean);
   const phase34Ok_ = phase34Ok;
   const phase35Ok_ = phase35Ok;
+  const phase36Ok = Object.values(phase36).every(Boolean);
+
+  console.log('\n=== Phase 3.6 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase36, null, 2));
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -1574,7 +1622,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase28Ok &&
     phase31Ok &&
     phase32Ok &&
-    phase33Ok && phase34Ok_ && phase35Ok_ ? 0 : 1
+    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

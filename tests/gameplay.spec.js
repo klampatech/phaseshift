@@ -1290,4 +1290,104 @@ test('placeBlock debug hook writes Stone at (x, y, z) in the current phase (Phas
     expect(r4.isLocked).toBe(false);
   });
 
+
+  test('Tutorial Zone: forceGenerateTutorial + hint advance + HUD wiring (Phase 3.6)', async ({ page }) => {
+    // Phase 3.6 acceptance:
+    //   - A small "tutorial ring" of safe-to-walk terrain at the
+    //     spawn point. The ring contains 1 Stone (break/place),
+    //     1 row of Obsidian + Void (phase-shifting), 1 Echo
+    //     (collect), 1 Stabilizer (checkpoint).
+    //   - A HUD hint walks the player through the first 60 seconds.
+    // The Playwright test asserts non-visual invariants: the
+    // tutorial state machine + the world placement + the HUD
+    // element wiring.
+
+    // 1) forceGenerateTutorial creates the ring + starts the state.
+    const r1 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const playerPos = ps.physicsManager.getPos();
+      const x = Math.floor(playerPos.x);
+      const y = Math.floor(playerPos.y);
+      const z = Math.floor(playerPos.z);
+      const r = ps.forceGenerateTutorial();
+      return {
+        ok: r && r.ok,
+        stone: r && r.stone,
+        echo: r && r.echo,
+        stabilizer: r && r.stabilizer,
+        phaseRowCount: r && r.phaseRow ? r.phaseRow.length : 0,
+        stateActive: ps.getTutorialState().active,
+        firstHint: ps.getTutorialHint(),
+      };
+    });
+    expect(r1.ok).toBe(true);
+    expect(r1.stone).toBeTruthy();
+    expect(r1.echo).toBeTruthy();
+    expect(r1.stabilizer).toBeTruthy();
+    expect(r1.phaseRowCount).toBe(5);
+    expect(r1.stateActive).toBe(true);
+    expect(r1.firstHint).toBeTruthy();
+    expect(r1.firstHint.hintIndex).toBe(0);
+
+    // 2) The blocks are actually placed in the world.
+    const r2 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const r = ps.forceGenerateTutorial();
+      const stone = r.stone;
+      const echo = r.echo;
+      const stabilizer = r.stabilizer;
+      return {
+        stoneBlock: ps.world.getBlock(stone.x, stone.y, stone.z, 0),
+        stabilizerBlock: ps.world.getBlock(stabilizer.x, stabilizer.y, stabilizer.z, 0),
+        echoAt: ps.isEchoAt(echo.x + ',' + echo.y + ',' + echo.z),
+      };
+    });
+    expect(r2.stoneBlock).toBeGreaterThan(0);
+    expect(r2.stabilizerBlock).toBeGreaterThan(0);
+    expect(r2.echoAt).toBe(true);
+
+    // 3) Ticking the tutorial advances the hint index after 8s.
+    //    dt clamped to 0.1 per call, so we loop 90 ticks to pass
+    //    the 8s mark and reach hintIndex=1.
+    const r3 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      let lastIdx = 0;
+      for (let i = 0; i < 100 && lastIdx < 1; i++) {
+        ps.tickTutorialPerFrame(0.1);
+        lastIdx = ps.getTutorialHint().hintIndex;
+      }
+      const h = ps.getTutorialHint();
+      return {
+        afterTick: ps.getTutorialState(),
+        hint: h.hint,
+        hintIndex: h.hintIndex,
+        hintText: ps.getTutorialHint().hint,
+      };
+    });
+    expect(r3.hintIndex).toBe(1);
+    expect(r3.hintText).toBeTruthy();
+
+    // 4) The HUD `#tutorial-hint` element exists + has text.
+    const hintText = await page.evaluate(() => {
+      const el = document.querySelector('#tutorial-hint');
+      return el ? el.textContent : null;
+    });
+    expect(hintText).toBeTruthy();
+
+    // 5) Clear tutorial resets the state + clears the HUD.
+    const r4 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      ps.clearTutorial();
+      return {
+        stateActive: ps.getTutorialState().active,
+      };
+    });
+    expect(r4.stateActive).toBe(false);
+
+    const clearedHint = await page.evaluate(() => {
+      const el = document.querySelector('#tutorial-hint');
+      return el ? el.textContent : '';
+    });
+    expect(clearedHint).toBe('');
+  });
 });

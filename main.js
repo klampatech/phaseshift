@@ -38,6 +38,7 @@ import { PICKUP_RADIUS as ECHO_PICKUP_RADIUS, ECHO_LORE_LIBRARY, echoLoreForKey,
 import { PICKUP_RADIUS as AMPLIFIER_PICKUP_RADIUS, resonanceCoreKey, resonanceCoreColorForBiome, pickAmplifierForKey, pickupResult as resonancePickupResult, amplifierApplies } from './src/collect/resonance.js';
 import { AMPLIFIER_SHIFT_REDUCTION, AMPLIFIER_TRANSITIONS, AMPLIFIER_AB, AMPLIFIER_BG, AMPLIFIER_AG, AMPLIFIER_PICKUP_RADIUS as _AMP_R, AMPLIFIER_UNLOCK_TEXT } from './src/core/constants.js';
 import { LOCK_DURATION, LOCK_RADIUS, lockKey, createLock as createLockData, tickLocks as tickLocksPure, isLocked as isLockedPure, lockRegion, createGliderState, startGlider as startGliderPure, tickGlider as tickGliderPure, clearGlider as clearGliderPure } from './src/phase/lock.js';
+import { TUTORIAL_RADIUS, TUTORIAL_HINT_DURATION, TUTORIAL_TOTAL_DURATION, TUTORIAL_HINT_TEXTS, createTutorialState, startTutorial as startTutorialPure, tickTutorial as tickTutorialPure, clearTutorial as clearTutorialPure, getHint, tutorialPositions, isWithinTutorialRing } from './src/tutorial/tutorial.js';
 // Phase 3.3: Player inventory (collected Echoes + unlocked
 // amplifiers). The save/load round-trip + the per-frame pickup
 // tick both delegate to this module.
@@ -131,6 +132,9 @@ let playerInventory = createInventory();
 
 // Phase 3.5: Phase Glider state machine (Space held in Beta = brief fly)
 let gliderState = createGliderState();
+
+// Phase 3.6: Tutorial state machine (60s hint walkthrough at spawn)
+let tutorialState = createTutorialState();
 let collapseNotifyPending = false;
 let fallbackWarnedForCurrentCollapse = false;
 // Phase 3.2: original spawn point. Captured from physicsManager
@@ -933,6 +937,7 @@ function gameLoop(time) {
   tickResonanceCoresPerFrame(deltaTime);
   tickLocksPerFrame(deltaTime);
   tickGliderPerFrame(deltaTime);
+  tickTutorialPerFrame(deltaTime);
 
   // Handle Block Interaction (Mouse)
   // Already handled by event listeners
@@ -1697,6 +1702,26 @@ function tickLocksPerFrame(dt) {
   if (renderer && typeof renderer.updateLocks === 'function') {
     const snap = (typeof world.listLocks === 'function') ? world.listLocks() : [];
     renderer.updateLocks(snap);
+  }
+}
+
+// Phase 3.6: tickTutorialPerFrame(dt) - advance the tutorial
+// hint walkthrough. The tutorial is a 60s sequence of 8 hints;
+// each hint shows for 8s. The tick advances the state machine
+// + drives the HUD overlay.
+function tickTutorialPerFrame(dt) {
+  if (!tutorialState || !tutorialState.active) return;
+  const t = (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() / 1000 : 0;
+  const result = tickTutorialPure(tutorialState, dt, t);
+  if (result.done) {
+    tutorialState = clearTutorialPure(tutorialState);
+    if (hud && typeof hud.clearTutorialHint === 'function') {
+      hud.clearTutorialHint();
+    }
+    return;
+  }
+  if (hud && typeof hud.setTutorialHint === 'function' && result.hint) {
+    hud.setTutorialHint(result.hint, result.hintIndex);
   }
 }
 
@@ -2605,6 +2630,64 @@ if (typeof window !== 'undefined') {
     // Phase 3.5: clearGlider() debug hook.
     clearGlider() {
       gliderState = clearGliderPure(gliderState);
+      return { ok: true };
+    },
+    // Phase 3.6: forceGenerateTutorial() debug hook.
+    forceGenerateTutorial() {
+      if (!physicsManager || typeof physicsManager.getPos !== 'function') return null;
+      const pos = physicsManager.getPos();
+      if (!pos) return null;
+      const p = tutorialPositions(pos.x, pos.y, pos.z);
+      // Place the stone at chest height
+      if (world && typeof world.setBlock === 'function') {
+        world.setBlock(p.stone.x, p.stone.y, p.stone.z, 0, BLOCK_STONE);
+        for (const cell of p.phaseRow) {
+          world.setBlock(cell.x, cell.y, cell.z, 0, cell.blockId);
+        }
+        world.setBlock(p.stabilizer.x, p.stabilizer.y, p.stabilizer.z, 0, BLOCK_STABILIZER);
+      }
+      // Spawn the Echo (Phase 3.3)
+      if (world && typeof world.spawnEcho === 'function') {
+        world.spawnEcho(p.echo.x, p.echo.y + 1, p.echo.z, 'tutorial.echo', 0);
+      }
+      // Start the tutorial state machine
+      const t = (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() / 1000 : 0;
+      tutorialState = startTutorialPure(tutorialState, pos, t);
+      return {
+        ok: true,
+        stone: p.stone,
+        phaseRow: p.phaseRow,
+        echo: p.echo,
+        stabilizer: p.stabilizer,
+      };
+    },
+    // Phase 3.6: tickTutorialPerFrame(dt) debug hook.
+    tickTutorialPerFrame(dt) {
+      const d = (typeof dt === 'number' && Number.isFinite(dt)) ? dt : 0;
+      tickTutorialPerFrame(d);
+      return { ok: true, active: tutorialState.active };
+    },
+    // Phase 3.6: getTutorialHint() debug hook.
+    getTutorialHint() {
+      if (!tutorialState || !tutorialState.active) return null;
+      const idx = tutorialState.currentHint;
+      return { hint: TUTORIAL_HINT_TEXTS[idx], hintIndex: idx, elapsed: tutorialState.elapsed };
+    },
+    // Phase 3.6: getTutorialState() debug hook.
+    getTutorialState() {
+      return {
+        active: tutorialState.active,
+        elapsed: tutorialState.elapsed,
+        currentHint: tutorialState.currentHint,
+        hintCount: TUTORIAL_HINT_TEXTS.length,
+      };
+    },
+    // Phase 3.6: clearTutorial() debug hook.
+    clearTutorial() {
+      tutorialState = clearTutorialPure(tutorialState);
+      if (hud && typeof hud.clearTutorialHint === 'function') {
+        hud.clearTutorialHint();
+      }
       return { ok: true };
     },
     // Phase 3.3: isEchoAt(key) debug hook.

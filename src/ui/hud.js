@@ -36,6 +36,15 @@ export class HUD {
       ? document.querySelector('#amplifier-status')
       : null;
     this._lastAmpString = null;
+    // Phase 3.6: tutorial hint element (bottom-of-screen
+    // 8-second-rotating hint walkthrough). Element lives in
+    // index.html; HUD just queries it here so the per-hint
+    // update is a one-line DOM write.
+    this._tutorialHintEl = (typeof document !== 'undefined')
+      ? document.querySelector('#tutorial-hint')
+      : null;
+    this._tutorialHintTimer = null;
+    this._lastTutorialHintText = null;
     this._createElements();
   }
 
@@ -563,5 +572,47 @@ export class HUD {
 
   setCameraYaw(yaw) {
     this.cameraYaw = yaw;
+  }
+
+  /**
+   * Phase 3.6: show the current tutorial hint text in the
+   * `#tutorial-hint` element. The text persists until the next
+   * call (or until clearTutorialHint is called). The DOM write
+   * only fires when the element exists + the text actually
+   * changes (cheap: one DOM write per hint advance).
+   *
+   * @param {string} text - the hint text to display
+   * @param {number} hintIndex - the 0-based hint index (for the
+   *   optional index badge; falls back to no badge if absent)
+   */
+  setTutorialHint(text, hintIndex) {
+    if (!this._tutorialHintEl) return;
+    if (typeof text !== 'string' || text.length === 0) return;
+    const idx = (typeof hintIndex === 'number' && Number.isFinite(hintIndex))
+      ? (hintIndex + 1) : 0;
+    const formatted = idx > 0 ? `[${idx}] ${text}` : text;
+    if (this._lastTutorialHintText === formatted) return;
+    this._lastTutorialHintText = formatted;
+    this._tutorialHintEl.textContent = formatted;
+    this._tutorialHintEl.style.opacity = '1';
+    if (this._tutorialHintTimer) clearTimeout(this._tutorialHintTimer);
+    this._tutorialHintTimer = setTimeout(() => {
+      if (this._tutorialHintEl) this._tutorialHintEl.style.opacity = '0';
+    }, 8000);
+  }
+
+  /**
+   * Phase 3.6: clear the tutorial hint text (fade-out).
+   * Called when the tutorial completes or is dismissed.
+   */
+  clearTutorialHint() {
+    if (!this._tutorialHintEl) return;
+    this._tutorialHintEl.textContent = '';
+    this._tutorialHintEl.style.opacity = '0';
+    this._lastTutorialHintText = null;
+    if (this._tutorialHintTimer) {
+      clearTimeout(this._tutorialHintTimer);
+      this._tutorialHintTimer = null;
+    }
   }
 }

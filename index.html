@@ -103,6 +103,17 @@
       position: absolute; top: 15px; right: 20px; color: #888;
       font-family: monospace; font-size: 11px; z-index: 50; pointer-events: none;
     }
+    /* Phase 3.6: tutorial hint banner (rotating 8s walkthrough).
+       Positioned above the phase-step bar so the player sees the
+       hint while playing. Driven by main.js via hud.setTutorialHint. */
+    #tutorial-hint {
+      position: absolute; bottom: 75px; left: 50%; transform: translateX(-50%);
+      color: #ffee88; font-family: monospace; font-size: 12px;
+      z-index: 51; pointer-events: none; opacity: 0;
+      transition: opacity 0.5s;
+      text-shadow: 0 0 8px rgba(255,238,136,0.6);
+      text-align: center; max-width: 70%;
+    }
     #phase-step-container {
       position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
       text-align: center; pointer-events: none; z-index: 50;
@@ -166,6 +177,7 @@
     <div id="echo-counter">ECHOES: 0 / 0</div>
     <div id="amplifier-status">AMPS: ○ AB  ○ BG  ○ AG</div>
     <div id="lore-toast"></div>
+    <div id="tutorial-hint"></div>
     <div id="phase-step-container">
       <div id="phase-step-bar" style="width:100%;height:3px;background:#5aa85a;"></div>
       <div id="phase-step-label" style="font-size:10px;color:#5aa85a;">PHASE STEP READY</div>
