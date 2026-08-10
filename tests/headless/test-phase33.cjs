@@ -281,7 +281,8 @@ function check(label, ok, extra = '') {
     echoKey, floatingOffset, echoColorForBiome,
   } = echoModule;
   check('PICKUP_RADIUS === 1.5', PICKUP_RADIUS === 1.5);
-  check('ECHO_LORE_LIBRARY has 12 entries', ECHO_LORE_LIBRARY.length === 12);
+  // Phase 10.4: 12 random flavor strings -> 36 sequenced narrative (5 per biome x 7 + 1 final Nexus)
+  check('ECHO_LORE_LIBRARY has 36 entries (Phase 10.4 sequenced)', ECHO_LORE_LIBRARY.length === 36);
   check('echoLoreForKey("foo") returns a non-empty string',
     typeof echoLoreForKey('foo') === 'string' && echoLoreForKey('foo').length > 0);
   check('echoLoreForKey("") returns first library entry',
