@@ -2503,6 +2503,12 @@ if (typeof window !== 'undefined') {
         // "safe" phase.
         return { ok: false, reason: 'alpha-cannot-collapse', phase };
       }
+      // Phase 8.2: during the post-collapse invuln window, skip
+      // the collapse trigger entirely. The player can't re-collapse
+      // immediately; the timer must expire first.
+      if (isInvulnActive(invulnState)) {
+        return { ok: false, reason: 'post-collapse-invuln', phase };
+      }
       if (phaseManager.setEnergy) {
         phaseManager.setEnergy(0);
       } else if (phaseManager.consumeEnergy) {
