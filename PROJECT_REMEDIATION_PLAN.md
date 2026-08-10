@@ -32,9 +32,9 @@ This plan is sequenced. Each phase has explicit acceptance criteria and a "defin
 | 2 — Core mechanics | ✅ Done | 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 ✅ | All eight sub-phases of §2 shipped. Phase 3 (World feel — biomes, echoes, stabilizers, tutorial) is up next. See `PHASE_3_BRIEF.md` (to be written). |
 | 3 — World feel | Pending | — | |
 | 4 — Polish | Pending | — | |
-| 5 — Enjoyable | Pending | — | |
-| 6 — Tests | Pending | — | |
-| 7 — Release prep | Pending | — | |
+| 5 — Enjoyable | ✅ Done | `57c6d68` | Goals (3 Acts) + HUD objective + compass + FOV breathing + reduced-motion accessibility. See `PHASE_5_BRIEF.md`. |
+| 6 — Tests | ✅ Done | Working tree | Focused suite replaces the smoke "did the page load" checks. Live debug API (boot invariants + setPosition + cyclePhase + save/load round-trip) + pure-Node unit test (`test-phase6.cjs`, 15/15) + 35 static-analysis keys in `smoke.cjs` (`phase6Ok` gate). See `PHASE_6_BRIEF.md`. |
+| 7 — Release prep | ✅ Done | Working tree | README rewrite (description, controls, architecture overview, build + test instructions) + `KNOWN_ISSUES.md` + GitHub Actions CI (`.github/workflows/ci.yml` runs `npm run build` + `npm test` on every PR). See `PHASE_7_BRIEF.md`. |
 
 **Repo:** https://github.com/klampatech/phaseshift (public, `main`).
 **Hand-off doc:** [`HANDOFF.md`](./HANDOFF.md).

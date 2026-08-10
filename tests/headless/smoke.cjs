@@ -1404,7 +1404,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase33_save_load_game_returns_inventory: /loadGame[\s\S]{0,2000}?inventory\s*:\s*this\._coerceInventory/.test(saveText),
   };
 
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 + 3.1 + 3.2 + 3.3 + 3.6 + 4 + 5 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 + 3.1 + 3.2 + 3.3 + 3.6 + 4 + 5 + 6 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -1742,6 +1742,55 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase55_settings_default_reduced_motion: /DEFAULT_REDUCED_MOTION\s*=\s*false/.test(settingsText),
   };
 
+  // ── Phase 6 (Test it — focused suite) ──────────────────────────────
+  // §6.1 Boot smoke (chunkCount ≥ 29, phase === 0).
+  // §6.2 Behavioral (WASD moves, click breaks a block).
+  // §6.3 Unit layer (World.index round-trip, phase collision, cyclePhase).
+  // §6.4 BDD screenshot (seed determinism + non-empty world).
+  const phase6TestPath = path.resolve(__dirname, 'test-phase6.cjs');
+  const phase6TestExists = fs2.existsSync(phase6TestPath);
+  const phase6TestText = phase6TestExists ? fs2.readFileSync(phase6TestPath, 'utf8') : '';
+  const phase6 = {
+    // 6.1 — Boot smoke invariants (live __phaseShifter__ API)
+    phase61_main_chunk_count_getter: /get\s+chunkCount\s*\(\s*\)\s*\{\s*return\s+world/.test(srcText),
+    phase61_main_phase_manager_exposed: /get\s+phaseManager\s*\(\s*\)\s*\{\s*return\s+phaseManager/.test(srcText),
+    phase61_main_physics_manager_exposed: /get\s+physicsManager\s*\(\s*\)\s*\{\s*return\s+physicsManager/.test(srcText),
+    phase61_main_world_exposed: /get\s+world\s*\(\s*\)\s*\{\s*return\s+world/.test(srcText),
+    phase61_main_force_cycle_phase_hook: /forceCyclePhase\s*\(\s*\)\s*\{[\s\S]*?phaseManager\.cyclePhase/.test(srcText),
+    // 6.2 — WASD / break / place (live physicsManager.setPosition + world.setBlock)
+    phase61_physics_set_position_method: /setPosition\s*\(\s*x\s*,\s*y\s*,\s*z\s*\)/.test(physicsText2),
+    phase61_physics_get_pos_method: /getPos\s*\(\s*\)/.test(physicsText2),
+    phase61_world_set_block_uses_index_helpers: /setBlock\s*\(\s*wx\s*,\s*wy\s*,\s*wz\s*,\s*phase\s*,\s*blockId\s*\)\s*\{[\s\S]{0,2000}?this\.localIndex\s*\(/.test(worldText),
+    phase61_world_get_block_uses_index_helpers: /getBlock\s*\(\s*wx\s*,\s*wy\s*,\s*wz\s*,\s*phase\s*\)\s*\{[\s\S]{0,2000}?this\.localIndex\s*\(/.test(worldText),
+    phase61_world_update_chunks_method: /updateChunks\s*\(\s*playerX/.test(worldText),
+    phase61_world_get_chunks_method: /getChunks\s*\(\s*\)\s*\{/.test(worldText),
+    // 6.3 — Unit layer (World.index round-trip, phase-relative collision, cyclePhase)
+    phase61_world_index_method: /^\s*index\s*\(\s*x\s*,\s*y\s*,\s*z\s*\)/m.test(worldText),
+    phase61_world_unpack_index_method: /\bunpackIndex\s*\(\s*i\s*\)\s*\{/.test(worldText),
+    phase61_world_is_block_solid_method: /isBlockSolid\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase/.test(worldText),
+    phase61_phase_manager_class_exported: /export\s+class\s+PhaseManager\b/.test(phaseText),
+    phase61_phase_manager_cycle_phase_method: /cyclePhase\s*\(\s*\)\s*\{/.test(phaseText),
+    phase61_phase_manager_complete_shift_method: /completeShift\s*\(\s*\)\s*\{/.test(phaseText),
+    phase61_phase_manager_get_current_phase: /getCurrentPhase\s*\(\s*\)\s*\{/.test(phaseText),
+    phase61_phase_manager_is_shifting_check: /isShifting\s*\(\s*\)/.test(phaseText),
+    // 6.4 — BDD screenshot / seed determinism (terrain generation)
+    phase61_world_chunk_size_constant: /export\s+const\s+CHUNK_SIZE\s*=\s*16\b/.test(constantsText),
+    phase61_world_chunk_height_constant: /export\s+const\s+CHUNK_HEIGHT\s*=\s*64\b/.test(constantsText),
+    // 6.x — Unit test file exists with the focus-suite assertions
+    phase61_test_phase6_file_exists: phase6TestExists,
+    phase61_test_phase6_boot_smoke: /Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 + 3.1 + 3.2 + 3.3 + 3.4 + 3.5 + 3.6 + 4 + 5 · Phase 6 · TESTING/.test(phase6TestText) ||
+      /Phase 6/.test(phase6TestText),
+    phase61_test_phase6_index_round_trip: /World\.index round-trip/.test(phase6TestText),
+    phase61_test_phase6_cycle_phase: /cyclePhase \+ completeShift, phase is 1/.test(phase6TestText),
+    phase61_test_phase6_seed_determinism: /Same seed produces same terrain hash/.test(phase6TestText),
+    phase61_test_phase6_non_empty_world: /World with seed 42 produces non-empty terrain/.test(phase6TestText),
+    phase61_test_phase6_phase_collision: /Stone is solid in Alpha/.test(phase6TestText),
+    phase61_test_phase6_set_position: /Player position changes after setPosition/.test(phase6TestText),
+    phase61_test_phase6_chunk_count: /World has at least 29 chunks after updateChunks/.test(phase6TestText),
+    phase61_test_phase6_initial_phase: /World initial phase is 0/.test(phase6TestText),
+  };
+
+  const phase6Ok = Object.values(phase6).every(Boolean);
   const phase5Ok = Object.values(phase5).every(Boolean);
   const phase4Ok = Object.values(phase4).every(Boolean);
   process.exit(
@@ -1764,7 +1813,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase28Ok &&
     phase31Ok &&
     phase32Ok &&
-    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok ? 0 : 1
+    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok && phase6Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

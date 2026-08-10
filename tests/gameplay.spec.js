@@ -1509,4 +1509,101 @@ test('placeBlock debug hook writes Stone at (x, y, z) in the current phase (Phas
       }
     });
   });
+
+  test('Phase 6 boot smoke: chunkCount, phase, setPosition, block break, cyclePhase, save/load (Phase 6)', async ({ page }) => {
+    // §6.1 Boot smoke + §6.2 behavioral + §6.3 unit layer via the
+    // live game. The Playwright test asserts the live invariants:
+    //   - window.__phaseShifter__ exists
+    //   - chunkCount >= 29
+    //   - initial phase === 0
+    //   - physicsManager.setPosition changes the player position
+    //   - world.setBlock + world.getBlock round-trip
+    //   - cyclePhase + completeShift cycle ALPHA → BETA → GAMMA → ALPHA
+    //   - saveSystem.saveSnapshot + saveSystem.loadGame round-trip
+
+    // 1) Boot invariants
+    const r1 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      if (!ps) return { ok: false, reason: 'no __phaseShifter__' };
+      const pm = ps.phaseManager;
+      const phase = pm && typeof pm.getCurrentPhase === 'function' ? pm.getCurrentPhase() : -1;
+      return {
+        ok: true,
+        chunkCount: ps.chunkCount,
+        phase,
+        phaseManagerPhase: phase,
+      };
+    });
+    expect(r1.ok).toBe(true);
+    expect(r1.chunkCount).toBeGreaterThanOrEqual(29);
+    expect(r1.phase).toBe(0);
+
+    // 2) Behavioral: setPosition changes the player position.
+    const r2 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const pos1 = ps.physicsManager.getPos();
+      const x1 = pos1.x, y1 = pos1.y, z1 = pos1.z;
+      ps.physicsManager.setPosition(x1 + 5, y1, z1 + 5);
+      const pos2 = ps.physicsManager.getPos();
+      const moved = Math.abs(pos2.x - (x1 + 5)) < 1e-6 && Math.abs(pos2.z - (z1 + 5)) < 1e-6;
+      ps.physicsManager.setPosition(x1, y1, z1);
+      return moved;
+    });
+    expect(r2).toBe(true);
+
+    // 3) Block break: place a stone block, force-break it, assert block id === 0
+    const r3 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const x = 10, y = 30, z = 10;
+      ps.world.setBlock(x, y, z, 0, 1); // Stone in Alpha
+      const before = ps.world.getBlock(x, y, z, 0);
+      ps.world.setBlock(x, y, z, 0, 0); // Break to air
+      const after = ps.world.getBlock(x, y, z, 0);
+      return { before, after, broken: before === 1 && after === 0 };
+    });
+    expect(r3.broken).toBe(true);
+
+    // 4) cyclePhase: cycle through ALPHA → BETA → GAMMA → ALPHA
+    const r4 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const pm = ps.phaseManager;
+      const p0 = pm.getCurrentPhase();
+      pm.cyclePhase();
+      if (typeof pm.completeShift === 'function') pm.completeShift();
+      const p1 = pm.getCurrentPhase();
+      pm.cyclePhase();
+      if (typeof pm.completeShift === 'function') pm.completeShift();
+      const p2 = pm.getCurrentPhase();
+      pm.cyclePhase();
+      if (typeof pm.completeShift === 'function') pm.completeShift();
+      const p3 = pm.getCurrentPhase();
+      return { p0, p1, p2, p3 };
+    });
+    expect(r4.p0).toBe(0);
+    expect(r4.p1).toBe(1);
+    expect(r4.p2).toBe(2);
+    expect(r4.p3).toBe(0);
+
+    // 5) Save/load round-trip preserves position (Phase 4.4 extras).
+    const r5 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const ss = ps.gameState && ps.gameState.saveSystem ? ps.gameState.saveSystem : null;
+      if (!ss || typeof ss.saveSnapshot !== 'function' || typeof ss.loadGame !== 'function') {
+        return { ok: false, reason: 'no saveSystem' };
+      }
+      const pm = ps.phaseManager;
+      const w = ps.world;
+      const worldState = typeof w.exportGlobalState === 'function' ? w.exportGlobalState() : {};
+      ss.saveSnapshot(7, 30, 7, pm.getCurrentPhase(), worldState);
+      const loaded = ss.loadGame();
+      return {
+        ok: true,
+        x: loaded.position.x,
+        z: loaded.position.z,
+      };
+    });
+    expect(r5.ok).toBe(true);
+    expect(r5.x).toBe(7);
+    expect(r5.z).toBe(7);
+  });
 });
