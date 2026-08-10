@@ -31,12 +31,11 @@
 
 ## Post-1.0 roadmap (pending)
 
-Phase 8 closed the planned polish arc. The user has not yet chosen a direction for post-1.0 work. Candidates (from `KNOWN_ISSUES.md` Platform + Out of scope buckets, plus ideas from `GAME_SPEC.md`):
-
-- **§9 — Optional platforms:** touch-input layer for mobile (significant scope expansion), Safari < 16 polyfills.
-- **§10 — Optional features:** cloud saves (account system required), modding/scripting API (sandbox + asset pipeline required), achievements/leaderboards (Steam integration), creative mode / level editor (in-game block editor + world export).
-- **§11 — Content expansion:** more biomes, more echoes / lore, enemy AI / hazards (none currently in the spec), expanded soundtrack, weather / day-night cycle.
-- **§12 — Polish & quality-of-life:** accessibility pass (colorblind modes, captions), localization, performance optimization (draw-distance scaling, LOD, occlusion culling), community features (seed sharing, screenshots).
+- **§9 — Bug bash + hardening** (next session): see [`PHASE_9_BRIEF.md`](./PHASE_9_BRIEF.md). Manual browser testing across Chrome / Firefox / Safari, Firefox pointer-lock audio fix, edge case hardening, docs updates.
+- **§10 — Optional platforms:** touch-input layer for mobile (significant scope expansion), Safari < 16 polyfills.
+- **§11 — Optional features:** cloud saves (account system required), modding/scripting API (sandbox + asset pipeline required), achievements/leaderboards (Steam integration), creative mode / level editor (in-game block editor + world export).
+- **§12 — Content expansion:** more biomes, more echoes / lore, enemy AI / hazards (none currently in the spec), expanded soundtrack, weather / day-night cycle.
+- **§13 — Polish & quality-of-life:** accessibility pass (colorblind modes, captions), localization, performance optimization (draw-distance scaling, LOD, occlusion culling), community features (seed sharing, screenshots).
 
 > See [`PROJECT_REMEDIATION_PLAN.md`](./PROJECT_REMEDIATION_PLAN.md) for the full plan.
 

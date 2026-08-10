@@ -39,6 +39,7 @@ All earlier phase tests still pass: 1.2 17/17, 1.3 7/7, 1.4 22/22, 1.5 12/12, 1.
 | 6 — Tests | ✅ Done | Working tree | Focused suite replaces the smoke "did the page load" checks. Live debug API (boot invariants + setPosition + cyclePhase + save/load round-trip) + pure-Node unit test (`test-phase6.cjs`, 15/15) + 35 static-analysis keys in `smoke.cjs` (`phase6Ok` gate). See `PHASE_6_BRIEF.md`. |
 | 7 — Release prep | ✅ Done | Working tree | README rewrite (description, controls, architecture overview, build + test instructions) + `KNOWN_ISSUES.md` + GitHub Actions CI (`.github/workflows/ci.yml` runs `npm run build` + `npm test` on every PR). See `PHASE_7_BRIEF.md`. |
 | 8 — Polish + community | ✅ Done | `6495145` + `1706a94` | Tutorial skip button (§8.1) + 5s post-collapse invuln window (§8.2) + audio context restart on tab-resume (§8.3) + Settings "Reset to defaults" button (§8.4) + compass distance indicator (§8.5) + tutorial hint re-trigger on ring re-enter (§8.6) + footstep volume scaling with block density (§8.7) + KNOWN_ISSUES cleanup (§8.8). Closes the post-1.0 polish arc. See `PHASE_8_BRIEF.md`. |
+| 9 — Bug bash + hardening | Pending | — | Next session. Manual browser matrix + Firefox pointer-lock audio fix + edge case hardening + (optional) perf audit + docs updates. See `PHASE_9_BRIEF.md`. |
 
 **Repo:** https://github.com/klampatech/phaseshift (public, `main`).
 **Hand-off doc:** [`HANDOFF.md`](./HANDOFF.md).
