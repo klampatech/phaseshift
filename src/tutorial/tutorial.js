@@ -39,15 +39,14 @@ export const TUTORIAL_ECHO_OFFSET = { x: -2, y: 0, z: -2 };
 /** The §3.6 Stabilizer position (NE of the player). */
 export const TUTORIAL_STABILIZER_OFFSET = { x: 2, y: 0, z: -2 };
 
-/** The §3.6 hint text array (one per hint, in display order). */
+/** The §3.6 + §10.7 hint text array (one per hint, in display order). */
 export const TUTORIAL_HINT_TEXTS = Object.freeze([
   'WASD to move, Space to jump',
   'Q to shift phases (Alpha <-> Beta <-> Gamma)',
-  'Break the Stone block with Left Click',
-  'Place a block with Right Click (RMB)',
   'Shift through the Obsidian + Void row (E to scan first)',
   'Collect the Echo (walk close)',
-  'Place a Stabilizer (Right Click) to set a checkpoint',
+  'F to fuse a block permanently (hold 3s, 30 energy)',
+  'Place a Stabilizer (R) to set a checkpoint',
   'Tutorial complete! Explore the world.',
 ]);
 

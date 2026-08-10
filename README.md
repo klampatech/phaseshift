@@ -81,11 +81,12 @@ Mouse: click the blocker to start, then move the mouse to look. `Esc` releases t
 | **Shift + Space** | Phase Shift (costs 15 energy; auto-respawns at nearest Stabilizer) |
 | **Q** | Resonance — swap phase presence in a 3×3×3 around you |
 | **E** (hold) | Phase Lens — highlights blocks that differ from the current phase (drains 0.5 energy / sec) |
-| **LMB** | Break block (current phase only) |
+| **F** (hold 3s) | Phase Fuse — permanently swap a block's phase presence (costs 30 energy; persists across save/load) |
 | **Shift + LMB** | Place Phase Anchor (yellow outline, 10s lifetime, auto-snaps player on shift) |
-| **RMB** | Place Stone on a face, or cycle phase in open air |
-| **F** | Place Phase Anchor (alt to Shift+LMB) |
+| **T** | Cycle phase (Alpha → Beta → Gamma → Alpha) |
+| **R** | Place Stabilizer (free, in-phase) |
 | **1 / 2 / 3** | Jump directly to Alpha / Beta / Gamma |
+| **RMB** | Cycle phase (legacy alias for T) |
 | **Ctrl** | Crouch |
 | **M** | Toggle minimap |
 | **I** | Toggle inventory |

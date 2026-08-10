@@ -484,18 +484,12 @@ function init() {
 
   // Menu button wiring is at the end of init() (see below).
 
-  // Phase 2.3 RMB disambiguation. Right-click fires the `contextmenu`
-  // event before the `click` event, so the disambiguation logic lives here
-  // (it must run before any phase cycle starts). RMB on a face places
-  // Stone; RMB in open air cycles the phase (existing §2.1 behavior).
-  // The actual placement is delegated to tryPlaceStoneOnFace() so the
-  // §2.1 PhaseManager.cyclePhase() call stays reachable within the §2.1
-  // static-analysis regex distance.
+  // Phase 10.7 (Path A): RMB no longer places blocks. It just cycles
+  // the phase (the original §2.1 behavior). Phase 10.2 introduces the
+  // Phase Fuse mechanic (F key) for the player-driven world changes.
   document.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     if (!document.pointerLockElement || inputSuppressed) return;
-    const hit = raycastBlock(physicsManager.getPos(), getCameraDirection());
-    if (tryPlaceStoneOnFace(hit)) return;
     phaseManager.cyclePhase();
   });
 
@@ -524,19 +518,17 @@ function init() {
   // fires first). The spam guard in PhaseManager.cyclePhase would prevent
   // a double-cycle here anyway, but we don't call cyclePhase at all from
   // this handler so the §2.3 place-on-face path is unambiguous.
+  // Phase 10.7 (Path A): LMB no longer breaks blocks. Only Shift+LMB
+  // still places a Phase Anchor. The intentional verb set is now:
+  //   WASD+Shift (move), Space (jump), Shift+Space (phase shift),
+  //   Q (Resonance), F (Phase Fuse, §10.2), Shift+LMB (Anchor),
+  //   E (Phase Lens), T (cycle phase), R (Stabilizer), 1/2/3
+  //   (direct phase), I (inventory), M (minimap).
   document.addEventListener('click', (e) => {
     if (!document.pointerLockElement || gamePaused || inputSuppressed) return;
-
     if (e.button === 0 && shiftKeyHeld) {
-      // Shift+click: place anchor (Phase 2.7 will replace this body
-      // with the lockManager path). For Phase 2.3, placeAnchor is a
-      // no-op + notification so the world doesn't get a stray BLOCK_15.
       placeAnchor();
-    } else if (e.button === 0) {
-      // Left-click: break block
-      breakBlock();
     }
-    // e.button === 2 (RMB) is handled by the contextmenu listener.
   });
 
   // Mouse movement for raycasting (block hint display)

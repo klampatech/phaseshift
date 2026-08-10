@@ -42,12 +42,16 @@ async function main() {
   // Constants
   check('TUTORIAL_RADIUS === 4', tutorial.TUTORIAL_RADIUS === 4);
   check('TUTORIAL_HINT_DURATION === 8', tutorial.TUTORIAL_HINT_DURATION === 8);
-  check('TUTORIAL_HINT_TEXTS has 8 entries', tutorial.TUTORIAL_HINT_TEXTS.length === 8);
-  check('TUTORIAL_TOTAL_DURATION === 64', tutorial.TUTORIAL_TOTAL_DURATION === 64);
+  check('TUTORIAL_HINT_TEXTS has 7 entries (Phase 10.7: drop LMB/RMB)', tutorial.TUTORIAL_HINT_TEXTS.length === 7);
+  // Phase 10.7: 8 hints -> 7 hints (drop LMB/RMB). 7*8 = 56s.
+  check('TUTORIAL_TOTAL_DURATION === 56', tutorial.TUTORIAL_TOTAL_DURATION === 56);
   check('TUTORIAL_HINT_TEXTS first is WASD', tutorial.TUTORIAL_HINT_TEXTS[0].includes('WASD'));
   check('TUTORIAL_HINT_TEXTS includes Q shift', tutorial.TUTORIAL_HINT_TEXTS.some(t => t.includes('Q')));
-  check('TUTORIAL_HINT_TEXTS includes break', tutorial.TUTORIAL_HINT_TEXTS.some(t => t.toLowerCase().includes('break')));
-  check('TUTORIAL_HINT_TEXTS includes place', tutorial.TUTORIAL_HINT_TEXTS.some(t => t.toLowerCase().includes('place')));
+  // Phase 10.7: break/place steps were removed (Path A: drop LMB/RMB)
+  check('TUTORIAL_HINT_TEXTS no longer teaches break', !tutorial.TUTORIAL_HINT_TEXTS.some(t => t.toLowerCase().includes('break')));
+  check('TUTORIAL_HINT_TEXTS no longer teaches place block', !tutorial.TUTORIAL_HINT_TEXTS.some(t => t.toLowerCase().includes('place a block') || t.toLowerCase().includes('place block')));
+  // Phase 10.2: new fuse step is taught
+  check('TUTORIAL_HINT_TEXTS teaches fuse', tutorial.TUTORIAL_HINT_TEXTS.some(t => t.toLowerCase().includes('fuse')));
   check('TUTORIAL_HINT_TEXTS includes echo', tutorial.TUTORIAL_HINT_TEXTS.some(t => t.toLowerCase().includes('echo')));
   check('TUTORIAL_HINT_TEXTS includes stabilizer', tutorial.TUTORIAL_HINT_TEXTS.some(t => t.toLowerCase().includes('stabilizer')));
 
@@ -67,7 +71,7 @@ async function main() {
   check('hintIndexFor 4 returns 0', tutorial.hintIndexFor(4) === 0);
   check('hintIndexFor 8 returns 1', tutorial.hintIndexFor(8) === 1);
   check('hintIndexFor 16 returns 2', tutorial.hintIndexFor(16) === 2);
-  check('hintIndexFor 100 returns 7 (last)', tutorial.hintIndexFor(100) === 7);
+  check('hintIndexFor 100 returns 6 (last of 7)', tutorial.hintIndexFor(100) === 6);
   check('hintIndexFor NaN returns 0', tutorial.hintIndexFor(NaN) === 0);
   check('hintIndexFor negative returns 0', tutorial.hintIndexFor(-5) === 0);
 
@@ -116,9 +120,9 @@ async function main() {
   check('getHint(0) returns first hint',
     tutorial.getHint(0).hint === tutorial.TUTORIAL_HINT_TEXTS[0]);
   check('getHint(8) returns second hint',
-    tutorial.getHint(8).hint === tutorial.TUTORIAL_HINT_TEXTS[1]);
+    tutorial.getHint(8).hint === tutorial.TUTORIAL_HINT_TEXTS[1]);  // backward-compat: 7-entry array still maps to index 1 at t=8
   check('getHint(100) returns last hint',
-    tutorial.getHint(100).hint === tutorial.TUTORIAL_HINT_TEXTS[7]);
+    tutorial.getHint(100).hint === tutorial.TUTORIAL_HINT_TEXTS[6]);  // 7-entry array, last index is 6
 
   // isWithinTutorialRing
   check('isWithinTutorialRing true for player at center', tutorial.isWithinTutorialRing(0, 30, 0, 0, 30, 0) === true);
@@ -130,7 +134,7 @@ async function main() {
   check('TUTORIAL_DEFAULTS has expected keys',
     tutorial.TUTORIAL_DEFAULTS.radius === 4 &&
     tutorial.TUTORIAL_DEFAULTS.hintDuration === 8 &&
-    tutorial.TUTORIAL_DEFAULTS.hintCount === 8);
+    tutorial.TUTORIAL_DEFAULTS.hintCount === 7);
 
   // ── 3) Behavior - World integration ────────────────────────
   console.log('\n=== Phase 3.6 behavior - World integration ===');

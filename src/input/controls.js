@@ -17,9 +17,11 @@ export class Controls {
       shifting: false,
       scanning: false,
       resonating: false,
+      fusing: false,           // Phase 10.2: F held (Phase Fuse)
+      placeAnchor: false,      // Phase 10.7: B is the alt-anchor key (F was)
       phaseDirect: null,
       toggleMinimap: false,
-      toggleAnchor: false,
+      toggleAnchor: false,     // legacy — kept for back-compat
       saveGame: false,
       loadGame: false,
       toggleEcho: false,
@@ -126,7 +128,9 @@ export class Controls {
       case 'KeyI': this.state.toggleInventory = true; break;
       case 'F5': this.state.saveGame = true; break;
       case 'F9': this.state.loadGame = true; break;
-      case 'KeyF': this.state.toggleAnchor = true; break;
+      case 'KeyF': this.state.fusing = true; break;
+      case 'KeyB': this.state.placeAnchor = true; break; // Phase 10.7: alt-anchor
+      case 'KeyR': this.state.toggleStabilizer = true; break; // Phase 10.5: Stabilizer
       case 'Escape': this.state.paused = true; break;
     }
   }
@@ -159,7 +163,9 @@ export class Controls {
       case 'KeyI': this.state.toggleInventory = false; break;
       case 'F5': this.state.saveGame = false; break;
       case 'F9': this.state.loadGame = false; break;
-      case 'KeyF': this.state.toggleAnchor = false; break;
+      case 'KeyF': this.state.fusing = false; break;
+      case 'KeyB': this.state.placeAnchor = false; break;
+      case 'KeyR': this.state.toggleStabilizer = false; break;
       case 'Escape': this.state.paused = false; break;
     }
   }
@@ -225,9 +231,11 @@ export class Controls {
     this.state = {
       moveX: 0, moveZ: 0, jump: false, sprint: false,
       crouching: false, shifting: false, scanning: false,
-      resonating: false, phaseDirect: null, toggleMinimap: false,
+      resonating: false, fusing: false, placeAnchor: false,
+      phaseDirect: null, toggleMinimap: false,
       toggleEcho: false,
-      toggleAnchor: false, saveGame: false, loadGame: false,
+      toggleAnchor: false, toggleStabilizer: false,
+      saveGame: false, loadGame: false,
       toggleInventory: false,
       mouseDownLeft: false, mouseDownRight: false,
       paused: false,
