@@ -39,6 +39,7 @@ import { PICKUP_RADIUS as AMPLIFIER_PICKUP_RADIUS, resonanceCoreKey, resonanceCo
 import { AMPLIFIER_SHIFT_REDUCTION, AMPLIFIER_TRANSITIONS, AMPLIFIER_AB, AMPLIFIER_BG, AMPLIFIER_AG, AMPLIFIER_PICKUP_RADIUS as _AMP_R, AMPLIFIER_UNLOCK_TEXT } from './src/core/constants.js';
 import { LOCK_DURATION, LOCK_RADIUS, lockKey, createLock as createLockData, tickLocks as tickLocksPure, isLocked as isLockedPure, lockRegion, createGliderState, startGlider as startGliderPure, tickGlider as tickGliderPure, clearGlider as clearGliderPure } from './src/phase/lock.js';
 import { TUTORIAL_RADIUS, TUTORIAL_HINT_DURATION, TUTORIAL_TOTAL_DURATION, TUTORIAL_HINT_TEXTS, createTutorialState, startTutorial as startTutorialPure, tickTutorial as tickTutorialPure, clearTutorial as clearTutorialPure, getHint, tutorialPositions, isWithinTutorialRing } from './src/tutorial/tutorial.js';
+import { buildGoalState as buildGoalStatePure, currentAct as currentActPure, nearestMarker as nearestMarkerPure } from './src/progression/goals.js';
 // Phase 3.3: Player inventory (collected Echoes + unlocked
 // amplifiers). The save/load round-trip + the per-frame pickup
 // tick both delegate to this module.
@@ -132,6 +133,12 @@ let playerInventory = createInventory();
 
 // Phase 3.5: Phase Glider state machine (Space held in Beta = brief fly)
 let gliderState = createGliderState();
+let fovBreathingActive = false;
+let fovBreathingTimer = 0;
+let fovBreathingStartFov = 75;
+const FOV_BREATHING_DURATION = 1.5;
+const FOV_BREATHING_PEAK = 80;
+const FOV_BREATHING_BASE = 75;
 
 // Phase 3.6: Tutorial state machine (60s hint walkthrough at spawn)
 let tutorialState = createTutorialState();
@@ -769,6 +776,20 @@ function onPhaseChanged(phaseManager) {
       }
     }
   }
+
+  // Phase 5.4: FOV breathing — start the camera.fov cycle
+  // (75 → 80 → 75 over 1.5s) when the player shifts phases. The
+  // tick is a module-level state machine (the §5.4 "FOV breathing
+  // during shift" acceptance). The reduced-motion setting
+  // disables the breathing.
+  if (settings && settings.getReducedMotion && settings.getReducedMotion()) {
+    return; // §5.5: reduced-motion mode disables FOV breathing
+  }
+  fovBreathingTimer = 0;
+  fovBreathingActive = true;
+  if (camera) {
+    fovBreathingStartFov = camera.fov || 75;
+  }
 }
 
 function gameLoop(time) {
@@ -1033,6 +1054,13 @@ function gameLoop(time) {
   tickResonanceCoresPerFrame(deltaTime);
   tickLocksPerFrame(deltaTime);
   tickGliderPerFrame(deltaTime);
+  // Phase 5.4: FOV breathing tick (the §5.4 acceptance).
+  tickFovBreathingPerFrame(deltaTime);
+  // Phase 5.1: update the HUD objective + compass (the §5.1
+  // acceptance: a persistent HUD objective shown above the
+  // crosshair + compass direction to the nearest Echo / Stabilizer
+  // / Core).
+  tickGoalsPerFrame(deltaTime);
   tickTutorialPerFrame(deltaTime);
 
   // Handle Block Interaction (Mouse)
@@ -1843,6 +1871,70 @@ function tickTutorialPerFrame(dt) {
 // state machine (Space held in Beta = brief fly). The glider
 // state was started by `startGlider(...)` (e.g. on Space press);
 // the tick applies the per-frame delta to the player position.
+// Phase 5.1: update the HUD objective + compass (the §5.1
+// acceptance). Cheap: 1 DOM write per act transition (the
+// `updateObjective` edge detector) + 1 transform write per
+// frame for the compass arrow.
+function tickGoalsPerFrame(dt) {
+  if (!hud) return;
+  const goalState = buildGoalStatePure(playerInventory, world, { phaseNexus: false });
+  hud.updateObjective(goalState);
+  // Compass: pick the nearest unfinished marker for the current act.
+  const playerPos = (physicsManager && typeof physicsManager.getPos === 'function')
+    ? physicsManager.getPos()
+    : null;
+  if (!playerPos) return;
+  const yaw = (camera && camera.rotation) ? camera.rotation.y : 0;
+  let target = null;
+  if (world) {
+    if (typeof world.listEchoes === 'function') {
+      const echoes = world.listEchoes().map((k) => {
+        const parts = String(k).split(',').map(Number);
+        return { x: parts[0], y: parts[1], z: parts[2], key: k };
+      });
+      target = nearestMarkerPure(playerPos, echoes);
+    }
+    if (!target && typeof world.exportStabilizers === 'function') {
+      const stabs = world.exportStabilizers().map((k) => {
+        const parts = String(k).split(',').map(Number);
+        return { x: parts[0], y: parts[1], z: parts[2], key: k };
+      });
+      target = nearestMarkerPure(playerPos, stabs);
+    }
+    if (!target && typeof world.listResonanceCores === 'function') {
+      const cores = world.listResonanceCores().map((k) => {
+        const parts = String(k).split(',').map(Number);
+        return { x: parts[0], y: parts[1], z: parts[2], key: k };
+      });
+      target = nearestMarkerPure(playerPos, cores);
+    }
+  }
+  hud.updateCompass(target, yaw, playerPos);
+}
+
+// Phase 5.4: FOV breathing tick. Cycles camera.fov
+// (base → peak → base) over 1.5s when fovBreathingActive is true.
+function tickFovBreathingPerFrame(dt) {
+  if (!fovBreathingActive) return;
+  const d = (typeof dt === 'number' && Number.isFinite(dt)) ? Math.max(0, Math.min(0.1, dt)) : 0;
+  fovBreathingTimer += d;
+  if (fovBreathingTimer >= FOV_BREATHING_DURATION) {
+    fovBreathingActive = false;
+    if (camera) {
+      camera.fov = FOV_BREATHING_BASE;
+      if (typeof camera.updateProjectionMatrix === 'function') camera.updateProjectionMatrix();
+    }
+    return;
+  }
+  if (!camera) return;
+  const t = fovBreathingTimer / FOV_BREATHING_DURATION;
+  // Sin curve: peaks at t=0.5
+  const phase = Math.sin(t * Math.PI);
+  const fov = FOV_BREATHING_BASE + (FOV_BREATHING_PEAK - FOV_BREATHING_BASE) * phase;
+  camera.fov = fov;
+  if (typeof camera.updateProjectionMatrix === 'function') camera.updateProjectionMatrix();
+}
+
 function tickGliderPerFrame(dt) {
   if (!gliderState || !gliderState.gliding) return;
   const t = tickGliderPure(gliderState, dt);
@@ -2780,6 +2872,20 @@ if (typeof window !== 'undefined') {
       const d = (typeof dt === 'number' && Number.isFinite(dt)) ? dt : 0;
       tickTutorialPerFrame(d);
       return { ok: true, active: tutorialState.active };
+    },
+    // Phase 5.1: buildGoalState() debug hook — returns the current
+    // goal state snapshot (echoes + amplifiers + Nexus visited +
+    // stabilizer count) so the HUD can render the objective.
+    buildGoalState() {
+      return buildGoalStatePure(playerInventory, world, { phaseNexus: false });
+    },
+    // Phase 5.1: getCurrentAct debug hook.
+    getCurrentAct() {
+      return currentActPure(buildGoalStatePure(playerInventory, world, { phaseNexus: false }));
+    },
+    // Phase 5.1: listStabilizers debug hook (returns x,y,z keys).
+    listStabilizers() {
+      return world && typeof world.exportStabilizers === 'function' ? world.exportStabilizers() : [];
     },
     // Phase 3.6: getTutorialHint() debug hook.
     getTutorialHint() {

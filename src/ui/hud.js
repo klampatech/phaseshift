@@ -2,6 +2,7 @@
 import { biomeLabel as biomeLabelFromId } from '../world/biome.js';
 import { MINIMAP_SIZE, MINIMAP_RANGE, buildMinimapSnapshot, markerColor, MARKER_ECHO, MARKER_STABILIZER, MARKER_RESONANCE_CORE, MINIMAP_DEFAULTS } from './minimap.js';
 import { SETTINGS_STORAGE_KEY, DEFAULT_KEYBINDINGS, getSetting, setSetting as setSettingPure } from '../settings/menu.js';
+import { currentObjective, objectiveColor, compassBearing, TARGET_NEAREST_ECHO, TARGET_NEAREST_STABILIZER, TARGET_NEAREST_CORE, TARGET_PHASE_NEXUS, nearestMarker } from '../progression/goals.js';
 
 export class HUD {
   constructor(container) {
@@ -507,7 +508,56 @@ export class HUD {
     return panel;
   }
 
-  /** Phase 4.1: defensively add an event listener (only if element exists). */
+  /**
+   * Phase 5.1: update the HUD objective (the §5.1 acceptance: a
+   * persistent objective shown above the crosshair). Reads the
+   * current act's objective string + color from the goals module.
+   * The DOM write only fires on text/color change (cheap: one DOM
+   * write per act transition).
+   */
+  updateObjective(goalState) {
+    const obj = (typeof document !== 'undefined') ? document.querySelector('#objective') : null;
+    if (!obj) return;
+    const text = currentObjective(goalState);
+    const color = objectiveColor(goalState);
+    if (this._lastObjectiveText === text && this._lastObjectiveColor === color) return;
+    this._lastObjectiveText = text;
+    this._lastObjectiveColor = color;
+    obj.textContent = text;
+    obj.style.color = color;
+    obj.style.display = 'block';
+    obj.style.textShadow = `0 0 10px ${color}`;
+  }
+
+  /**
+   * Phase 5.1: update the HUD compass (the §5.1 acceptance:
+   * "compass direction to the nearest Echo / Stabilizer / Core").
+   * `targetPos` is `{ x, y, z }` of the target marker; `playerYaw`
+   * is the player's look direction in radians. Returns the
+   * bearing in radians (or null if no target).
+   *
+   * The HUD renders an arrow that rotates to point at the target.
+   */
+  updateCompass(targetPos, playerYaw, playerPos) {
+    const arrow = (typeof document !== 'undefined') ? document.querySelector('#compass-arrow') : null;
+    if (!arrow) return null;
+    if (!targetPos || !Number.isFinite(targetPos.x)) {
+      arrow.style.opacity = '0';
+      return null;
+    }
+    const rel = compassBearing(playerPos, targetPos, playerYaw);
+    if (rel === null) {
+      arrow.style.opacity = '0';
+      return null;
+    }
+    // Convert radians → degrees; CSS rotate is clockwise from up.
+    const deg = -rel * 180 / Math.PI;
+    arrow.style.opacity = '1';
+    arrow.style.transform = `translateX(-50%) rotate(${deg.toFixed(1)}deg)`;
+    return rel;
+  }
+
+  /** Phase 5.1: defensively add an event listener (only if element exists). */
   addSafeEventListener(elementId, event, handler) {
     if (typeof document === 'undefined') return null;
     const el = document.getElementById(elementId);

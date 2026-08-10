@@ -1404,7 +1404,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase33_save_load_game_returns_inventory: /loadGame[\s\S]{0,2000}?inventory\s*:\s*this\._coerceInventory/.test(saveText),
   };
 
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 + 3.1 + 3.2 + 3.3 + 3.6 + 4 ACCEPTANCE SUMMARY ===');
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 + 3.1 + 3.2 + 3.3 + 3.6 + 4 + 5 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -1693,6 +1693,56 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase46_vite_splits_gameplay: /gameplay/.test(viteText),
   };
 
+  // ── Phase 5 (Goals + Audio + Visual + Accessibility) ─────
+  // §5.1: Goals & Progression (3 Acts + HUD objective + compass).
+  // §5.3: Audio polish (per-phase ambient + shift pitch + footstep
+  //        filters — already wired in §2.8).
+  // §5.4: Visual polish (FOV breathing on shift).
+  // §5.5: Accessibility (reduced-motion mode + HUD opacity slider +
+  //        keybinding remap).
+  const goalsSrc = path.resolve(__dirname, '..', '..', 'src', 'progression', 'goals.js');
+  const goalsText = fs2.existsSync(goalsSrc) ? fs2.readFileSync(goalsSrc, 'utf8') : '';
+  const phase5 = {
+    // 5.1 — Goals
+    phase51_goals_module_exports_act_order: /export\s+const\s+ACT_ORDER\s*=/.test(goalsText),
+    phase51_goals_module_exports_act_first_echo: /export\s+const\s+ACT_FIND_FIRST_ECHO\s*=/.test(goalsText),
+    phase51_goals_module_exports_act_phase_nexus: /export\s+const\s+ACT_REACH_PHASE_NEXUS\s*=/.test(goalsText),
+    phase51_goals_module_exports_act_master_phases: /export\s+const\s+ACT_MASTER_ALL_PHASES\s*=/.test(goalsText),
+    phase51_goals_module_exports_act_objectives: /export\s+const\s+ACT_OBJECTIVES\s*=/.test(goalsText),
+    phase51_goals_module_exports_act_completed: /export\s+function\s+actCompleted/.test(goalsText),
+    phase51_goals_module_exports_current_act: /export\s+function\s+currentAct/.test(goalsText),
+    phase51_goals_module_exports_current_objective: /export\s+function\s+currentObjective/.test(goalsText),
+    phase51_goals_module_exports_compass_bearing: /export\s+function\s+compassBearing/.test(goalsText),
+    phase51_goals_module_exports_nearest_marker: /export\s+function\s+nearestMarker/.test(goalsText),
+    phase51_goals_module_exports_build_goal_state: /export\s+function\s+buildGoalState/.test(goalsText),
+    // 5.1 — HUD
+    phase51_hud_update_objective_method: /updateObjective\s*\(\s*goalState/.test(hudText2),
+    phase51_hud_update_compass_method: /updateCompass\s*\(/.test(hudText2),
+    phase51_hud_imports_goals_module: /from\s+['"]\.\.\/progression\/goals\.js['"]/.test(hudText2),
+    // 5.1 — HTML
+    phase51_html_compass_arrow_element: /id\s*=\s*["']compass-arrow["']/.test(htmlText2),
+    phase51_html_compass_arrow_css: /#compass-arrow\s*\{/.test(htmlText2),
+    // 5.1 — main.js
+    phase51_main_imports_goals_module: /from\s+['"]\.\/src\/progression\/goals\.js['"]/.test(srcText),
+    phase51_main_tick_goals_per_frame: /function\s+tickGoalsPerFrame\s*\(/.test(srcText),
+    phase51_main_tick_goals_per_frame_called: /tickGoalsPerFrame\s*\(\s*deltaTime\s*\)/.test(srcText),
+    phase51_main_hud_update_objective: /hud\.updateObjective/.test(srcText),
+    phase51_main_hud_update_compass: /hud\.updateCompass/.test(srcText),
+    phase51_main_build_goal_state_hook: /__phaseShifter__[\s\S]*?buildGoalState\s*\(/.test(srcText),
+    phase51_main_get_current_act_hook: /__phaseShifter__[\s\S]*?getCurrentAct\s*\(/.test(srcText),
+    phase51_main_list_stabilizers_hook: /__phaseShifter__[\s\S]*?listStabilizers\s*\(/.test(srcText),
+    // 5.4 — FOV breathing
+    phase54_main_tick_fov_breathing: /function\s+tickFovBreathingPerFrame/.test(srcText),
+    phase54_main_fov_breathing_called: /tickFovBreathingPerFrame\s*\(\s*deltaTime\s*\)/.test(srcText),
+    phase54_main_fov_breathing_state: /fovBreathingActive\s*=\s*true/.test(srcText),
+    phase54_main_fov_breathing_constants: /FOV_BREATHING_DURATION\s*=\s*1\.5/.test(srcText),
+    // 5.5 — Accessibility
+    phase55_main_reduced_motion_check: /getReducedMotion/.test(srcText),
+    phase55_settings_set_reduced_motion: /setReducedMotion\s*\(/.test(saveSystemText),
+    phase55_settings_default_reduced_motion: /DEFAULT_REDUCED_MOTION\s*=\s*false/.test(settingsText),
+  };
+
+  const phase5Ok = Object.values(phase5).every(Boolean);
   const phase4Ok = Object.values(phase4).every(Boolean);
   process.exit(
     summary.structural_dom_all_present &&
@@ -1714,7 +1764,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase28Ok &&
     phase31Ok &&
     phase32Ok &&
-    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok ? 0 : 1
+    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);
