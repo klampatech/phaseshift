@@ -178,6 +178,7 @@ const CHROMIUM_ARGS = [
   // Phase 1.4: indexing is centralized on World and consumers use helpers.
   const rendererSrc = path.resolve(__dirname, '..', '..', 'src', 'render', 'renderer.js');
   const rendererText = fs2.existsSync(rendererSrc) ? fs2.readFileSync(rendererSrc, 'utf8') : '';
+  const rendererText2 = rendererText;
   const constantsSrc = path.resolve(__dirname, '..', '..', 'src', 'core', 'constants.js');
   const constantsText = fs2.existsSync(constantsSrc) ? fs2.readFileSync(constantsSrc, 'utf8') : '';
   const getSetText = worldText.slice(worldText.indexOf('getBlock('), worldText.indexOf('// Build/update chunk meshes'));
@@ -778,8 +779,180 @@ const CHROMIUM_ARGS = [
     // World.getBiome exists (the per-region deterministic read)
     world_get_biome_method_present: /getBiome\s*\(\s*x\s*,\s*z\s*\)/.test(worldText),
   };
-  console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
+
+  // Phase 3.2: Stabilizers (3.2 section 3.2 in PHASE_3_2_BRIEF.md)
+  // - per-Stabilizer checkpoint graphic (warm-orange ring +
+  //   crosshair above the placed block)
+  // - Phase Collapse state machine (1.5s animation + input
+  //   suppression + teleport to nearest Stabilizer or fallback to
+  //   spawn)
+  // - pure modules src/world/stabilizer.js + src/collapse/collapse.js
+  const stabilizerSrc = path.resolve(__dirname, '..', '..', 'src', 'world', 'stabilizer.js');
+  const stabilizerText = fs2.existsSync(stabilizerSrc) ? fs2.readFileSync(stabilizerSrc, 'utf8') : '';
+  const collapseSrc = path.resolve(__dirname, '..', '..', 'src', 'collapse', 'collapse.js');
+  const collapseText = fs2.existsSync(collapseSrc) ? fs2.readFileSync(collapseSrc, 'utf8') : '';
+  const echoSrc = path.resolve(__dirname, '..', '..', 'src', 'collect', 'echo.js');
+  const echoText2 = fs2.existsSync(echoSrc) ? fs2.readFileSync(echoSrc, 'utf8') : '';
+  const inventorySrc = path.resolve(__dirname, '..', '..', 'src', 'inventory', 'inventory.js');
+  const inventoryText = fs2.existsSync(inventorySrc) ? fs2.readFileSync(inventorySrc, 'utf8') : '';
+  const phase32 = {
+    // src/world/stabilizer.js exports
+    stabilizer_module_exports_stabilizer_radius: /export\s+const\s+STABILIZER_RADIUS\s*=\s*16\b/.test(stabilizerText),
+    stabilizer_module_exports_stabilizer_place_cost: /export\s+const\s+STABILIZER_PLACE_COST\s*=\s*0\b/.test(stabilizerText),
+    stabilizer_module_exports_stabilizer_fallback_color: /export\s+const\s+STABILIZER_FALLBACK_COLOR\s*=\s*0xff8844\b/.test(stabilizerText),
+    stabilizer_module_exports_find_respawn_target: /export\s+function\s+findRespawnTarget\s*\(/.test(stabilizerText),
+    stabilizer_module_exports_is_within_radius: /export\s+function\s+isWithinRadius\s*\(/.test(stabilizerText),
+    stabilizer_module_exports_stabilizer_key: /export\s+function\s+stabilizerKey\s*\(/.test(stabilizerText),
+    stabilizer_module_exports_snap_y_for_stabilizer_cell: /export\s+function\s+snapYForStabilizerCell\s*\(/.test(stabilizerText),
+    // src/collapse/collapse.js exports
+    collapse_module_exports_collapse_duration: /export\s+const\s+COLLAPSE_DURATION\s*=\s*1\.5\b/.test(collapseText),
+    collapse_module_exports_collapse_banner_text: /export\s+const\s+COLLAPSE_BANNER_TEXT\s*=\s*['"]PHASE COLLAPSE['"]/.test(collapseText),
+    collapse_module_exports_fallback_warning_text: /export\s+const\s+FALLBACK_WARNING_TEXT\s*=/.test(collapseText),
+    collapse_module_exports_collapse_reasons: /export\s+const\s+COLLAPSE_REASONS\s*=/.test(collapseText),
+    collapse_module_exports_create_collapse_state: /export\s+function\s+createCollapseState\s*\(/.test(collapseText),
+    collapse_module_exports_start_collapse: /export\s+function\s+startCollapse\s*\(/.test(collapseText),
+    collapse_module_exports_tick_collapse: /export\s+function\s+tickCollapse\s*\(/.test(collapseText),
+    collapse_module_exports_clear_collapse: /export\s+function\s+clearCollapse\s*\(/.test(collapseText),
+    // constants.js
+    constants_minimum_respawn_energy: /export\s+const\s+MINIMUM_RESPAWN_ENERGY\s*=\s*30\b/.test(constantsText),
+    constants_block_stabilizer: /export\s+const\s+BLOCK_STABILIZER\s*=\s*15\b/.test(constantsText),
+    // main.js imports
+    main_imports_find_respawn_target: /import\s*\{[^}]*findRespawnTarget[^}]*\}\s*from\s*['"]\.\/src\/world\/stabilizer\.js['"]/.test(srcText),
+    main_imports_start_collapse: /import\s*\{[^}]*startCollapse[^}]*\}\s*from\s*['"]\.\/src\/collapse\/collapse\.js['"]/.test(srcText),
+    main_imports_tick_collapse: /import\s*\{[^}]*tickCollapse[^}]*\}\s*from\s*['"]\.\/src\/collapse\/collapse\.js['"]/.test(srcText),
+    main_imports_create_collapse_state: /import\s*\{[^}]*createCollapseState[^}]*\}\s*from\s*['"]\.\/src\/collapse\/collapse\.js['"]/.test(srcText),
+    main_imports_minimum_respawn_energy: /import\s*\{[^}]*MINIMUM_RESPAWN_ENERGY[^}]*\}\s*from\s*['"]\.\/src\/core\/constants\.js['"]/.test(srcText),
+    main_imports_block_stabilizer: /import\s*\{[^}]*BLOCK_STABILIZER[^}]*\}\s*from\s*['"]\.\/src\/core\/constants\.js['"]/.test(srcText),
+    main_imports_stabilizer_radius: /import\s*\{[^}]*STABILIZER_RADIUS[^}]*\}\s*from\s*['"]\.\/src\/world\/stabilizer\.js['"]/.test(srcText),
+    main_imports_collapse_duration: /import\s*\{[^}]*COLLAPSE_DURATION[^}]*\}\s*from\s*['"]\.\/src\/collapse\/collapse\.js['"]/.test(srcText),
+    // main.js per-frame collapse tick
+    main_tick_collapse_per_frame_defined: /function\s+tickCollapsePerFrame\s*\(/.test(srcText),
+    main_compute_respawn_target_defined: /function\s+computeRespawnTarget\s*\(/.test(srcText),
+    main_game_loop_calls_tick_collapse_per_frame: /tickCollapsePerFrame\s*\(\s*deltaTime\s*\)/.test(srcText),
+    // main.js forcePhaseCollapse extension
+    main_force_phase_collapse_starts_state_machine: /forcePhaseCollapse\s*\(\s*\)\s*\{[\s\S]{0,2000}?startCollapse\s*\(/.test(srcText),
+    main_force_phase_collapse_calls_compute_respawn_target: /forcePhaseCollapse\s*\(\s*\)\s*\{[\s\S]{0,2000}?computeRespawnTarget\s*\(/.test(srcText),
+    main_force_phase_collapse_to_stabilizer_hook: /forcePhaseCollapseToStabilizer\s*\(\s*x\s*,\s*y\s*,\s*z\s*\)/.test(srcText),
+    // main.js input suppression
+    main_input_suppressed_flag_declared: /let\s+inputSuppressed\s*=/.test(srcText),
+    main_keydown_gates_on_input_suppressed: /keydown[\s\S]*?pointerLockElement\s*\|\|\s*inputSuppressed/.test(srcText),
+    main_contextmenu_gates_on_input_suppressed: /contextmenu[\s\S]{0,400}?pointerLockElement\s*\|\|\s*inputSuppressed/.test(srcText),
+    main_click_gates_on_input_suppressed: /addEventListener\(['"]click['"][\s\S]{0,500}?gamePaused\s*\|\|\s*inputSuppressed/.test(srcText),
+    // main.js debug hooks
+    debug_force_place_stabilizer: /__phaseShifter__[\s\S]*?forcePlaceStabilizer\s*\(/.test(srcText),
+    debug_break_stabilizer: /__phaseShifter__[\s\S]*?breakStabilizer\s*\(/.test(srcText),
+    debug_get_collapse_state: /__phaseShifter__[\s\S]*?getCollapseState\s*\(/.test(srcText),
+    debug_tick_collapse_per_frame_hook: /__phaseShifter__[\s\S]*?tickCollapsePerFrame\s*\(\s*dt\s*\)/.test(srcText),
+    debug_get_respawn_target: /__phaseShifter__[\s\S]*?getRespawnTarget\s*\(/.test(srcText),
+    debug_get_spawn_point: /__phaseShifter__[\s\S]*?getSpawnPoint\s*\(/.test(srcText),
+    debug_get_stabilizer_snapshot: /__phaseShifter__[\s\S]*?getStabilizerSnapshot\s*\(/.test(srcText),
+    debug_get_stabilizer_count: /__phaseShifter__[\s\S]*?getStabilizerCount\s*\(/.test(srcText),
+    debug_clear_stabilizers: /__phaseShifter__[\s\S]*?clearStabilizers\s*\(/.test(srcText),
+    debug_get_checkpoint_mesh_count: /__phaseShifter__[\s\S]*?getCheckpointMeshCount\s*\(/.test(srcText),
+    debug_get_checkpoint_keys: /__phaseShifter__[\s\S]*?getCheckpointKeys\s*\(/.test(srcText),
+    debug_is_checkpoint_at: /__phaseShifter__[\s\S]*?isCheckpointAt\s*\(/.test(srcText),
+    // CheckpointOverlay
+    renderer_checkpoint_overlay_class_exported: /export\s+class\s+CheckpointOverlay\b/.test(rendererText2),
+    renderer_checkpoint_overlay_own_group: /class\s+CheckpointOverlay[\s\S]{0,2000}?this\.group\.name\s*=\s*['"]checkpointOverlay['"]/.test(rendererText2),
+    renderer_checkpoint_overlay_show_checkpoint: /class\s+CheckpointOverlay[\s\S]*?showCheckpoint\s*\(/.test(rendererText2),
+    renderer_checkpoint_overlay_update_checkpoints: /class\s+CheckpointOverlay[\s\S]*?updateCheckpoints\s*\(/.test(rendererText2),
+    renderer_checkpoint_overlay_clear_checkpoint: /class\s+CheckpointOverlay[\s\S]*?clearCheckpoint\s*\(/.test(rendererText2),
+    renderer_show_checkpoint_forwards: /showCheckpoint\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*key\s*\)\s*\{[\s\S]*?this\.checkpointOverlay\.showCheckpoint/.test(rendererText2),
+    renderer_update_checkpoints_forwards: /updateCheckpoints\s*\(\s*snapshot\s*\)\s*\{[\s\S]*?this\.checkpointOverlay\.updateCheckpoints/.test(rendererText2),
+    renderer_clear_checkpoint_forwards: /clearCheckpoint\s*\(\s*key\s*\)\s*\{[\s\S]*?this\.checkpointOverlay\.clearCheckpoint/.test(rendererText2),
+    renderer_clear_checkpoints_forwards: /clearCheckpoints\s*\(\s*\)\s*\{[\s\S]*?this\.checkpointOverlay\.clearCheckpoints/.test(rendererText2),
+    renderer_collapse_overlay_class_exported: /export\s+class\s+CollapseOverlay\b/.test(rendererText2),
+    renderer_update_collapse_overlay_forwards: /updateCollapseOverlay\s*\(\s*progress\s*\)\s*\{[\s\S]*?this\.collapseOverlay\.updateCollapseOverlay/.test(rendererText2),
+    renderer_clear_collapse_overlay_forwards: /clearCollapseOverlay\s*\(\s*\)\s*\{[\s\S]*?this\.collapseOverlay\.clearCollapseOverlay/.test(rendererText2),
+    // World API
+    world_find_nearest_stabilizer_defined: /findNearestStabilizer\s*\(/.test(worldText),
+    world_add_stabilizer_defined: /addStabilizer\s*\(\s*x\s*,\s*y\s*,\s*z\s*\)/.test(worldText),
+    world_remove_stabilizer_defined: /removeStabilizer\s*\(\s*x\s*,\s*y\s*,\s*z\s*\)/.test(worldText),
+    world_stabilizer_positions_map_initialized: /this\._stabilizerPositions\s*=\s*new\s+Map\s*\(\s*\)/.test(worldText),
+    // index.html
+    html_phase_collapse_overlay_element: /<div\s+id\s*=\s*["']phase-collapse-overlay["']\s*><\s*\/div\s*>/.test(htmlText2),
+    html_phase_collapse_overlay_css: /#phase-collapse-overlay\s*\{/.test(htmlText2),
+  };
+  console.log('\n=== Phase 3.2 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase32, null, 2));
+
+console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase31, null, 2));
+
+
+  const phase33 = {
+    // ── Phase 3.3 (Echoes) ────────────────────────────────
+    // The Phase 3.3 work turns Ruins-biome floating crystals
+    // into collectible lore objects with an inventory counter
+    // src/collect/echo.js exports
+    // and HUD label. The pure module src/collect/echo.js owns
+    // the pickup radius + lore library + key formatter.
+    // src/inventory/inventory.js owns the inventory state.
+    // main.js wires the per-frame pickup loop + the debug hooks.
+    phase33_echo_module_exports_pickup_radius: /export\s+const\s+PICKUP_RADIUS\s*=/.test(echoText2),
+    phase33_echo_module_exports_echo_lore_library: /export\s+const\s+ECHO_LORE_LIBRARY\s*=\s*Object\.freeze/.test(echoText2),
+    phase33_echo_module_exports_echo_lore_for_key: /export\s+function\s+echoLoreForKey/.test(echoText2),
+    phase33_echo_module_exports_pickup_result: /export\s+function\s+pickupResult/.test(echoText2),
+    phase33_echo_module_exports_echo_key: /export\s+function\s+echoKey/.test(echoText2),
+    phase33_echo_module_exports_floating_offset: /export\s+function\s+floatingOffset/.test(echoText2),
+    phase33_echo_module_exports_echo_color_for_biome: /export\s+function\s+echoColorForBiome/.test(echoText2),
+    phase33_inventory_module_exports_create_inventory: /export\s+function\s+createInventory/.test(inventoryText),
+    phase33_inventory_module_exports_add_echo: /export\s+function\s+addEcho/.test(inventoryText),
+    phase33_inventory_module_exports_has_echo: /export\s+function\s+hasEcho/.test(inventoryText),
+    phase33_inventory_module_exports_list_echoes: /export\s+function\s+listEchoes/.test(inventoryText),
+    phase33_inventory_module_exports_remove_echo: /export\s+function\s+removeEcho/.test(inventoryText),
+    phase33_inventory_module_exports_add_amplifier: /export\s+function\s+addAmplifier/.test(inventoryText),
+    phase33_inventory_module_exports_has_amplifier: /export\s+function\s+hasAmplifier/.test(inventoryText),
+    phase33_inventory_module_exports_serialize: /export\s+function\s+serialize/.test(inventoryText),
+    phase33_inventory_module_exports_deserialize: /export\s+function\s+deserialize/.test(inventoryText),
+    phase33_inventory_module_exports_collected_count: /export\s+function\s+collectedCount/.test(inventoryText),
+    phase33_inventory_module_exports_amplifier_count: /export\s+function\s+amplifierCount/.test(inventoryText),
+    phase33_constants_block_echo: /export\s+const\s+BLOCK_ECHO\s*=\s*17\b/.test(constantsText),
+    phase33_constants_echo_pickup_radius: /export\s+const\s+ECHO_PICKUP_RADIUS\s*=\s*1\.5\b/.test(constantsText),
+    phase33_world_spawn_echo_defined: /spawnEcho\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*loreKey\s*,\s*biomeId\s*\)/.test(worldText),
+    phase33_world_collect_echo_defined: /collectEcho\s*\(\s*key\s*\)/.test(worldText),
+    phase33_world_list_echoes_defined: /listEchoes\s*\(\s*\)/.test(worldText),
+    phase33_world_get_total_echoes_defined: /getTotalEchoes\s*\(\s*\)/.test(worldText),
+    phase33_world_clear_echoes_defined: /clearEchoes\s*\(\s*\)/.test(worldText),
+    phase33_renderer_echo_overlay_class_exported: /export\s+class\s+EchoOverlay\b/.test(rendererText),
+    phase33_renderer_echo_overlay_own_group: /class\s+EchoOverlay[\s\S]{0,2000}?this\.group\.name\s*=\s*['"]echoOverlay['"]/.test(rendererText),
+    phase33_renderer_show_echo_forwards: /showEcho\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*key\s*,\s*color\s*\)\s*\{[\s\S]*?this\.echoOverlay\.showEcho/.test(rendererText),
+    phase33_renderer_update_echoes_forwards: /updateEchoes\s*\(\s*dt\s*,\s*snapshot\s*\)\s*\{[\s\S]*?this\.echoOverlay\.updateEchoes/.test(rendererText),
+    phase33_renderer_clear_echo_forwards: /clearEcho\s*\(\s*key\s*\)\s*\{[\s\S]*?this\.echoOverlay\.clearEcho/.test(rendererText),
+    phase33_renderer_clear_echoes_forwards: /clearEchoes\s*\(\s*\)\s*\{[\s\S]*?this\.echoOverlay\.clearEchoes/.test(rendererText),
+    phase33_hud_set_echo_counter_defined: /setEchoCounter\s*\(\s*collected\s*,\s*total\s*\)/.test(hudText2),
+    phase33_hud_show_lore_toast_defined: /showLoreToast\s*\(\s*text\s*\)/.test(hudText2),
+    phase33_html_echo_counter_element: /id\s*=\s*["']echo-counter["']/.test(htmlText2),
+    phase33_html_echo_counter_css: /#echo-counter\s*\{/.test(htmlText2),
+    phase33_html_lore_toast_element: /id\s*=\s*["']lore-toast["']/.test(htmlText2),
+    phase33_html_lore_toast_css: /#lore-toast\s*\{/.test(htmlText2),
+    phase33_main_imports_pickup_radius: /import\s*\{[^}]*PICKUP_RADIUS[^}]*\}\s*from\s*['"]\.\/src\/collect\/echo\.js['"]/.test(srcText),
+    phase33_main_imports_inventory_helpers: /import\s*\{[^}]*createInventory[^}]*\}\s*from\s*['"]\.\/src\/inventory\/inventory\.js['"]/.test(srcText),
+    phase33_main_player_inventory_decl: /let\s+playerInventory\s*=/.test(srcText),
+    phase33_main_tick_echoes_per_frame_defined: /function\s+tickEchoesPerFrame/.test(srcText),
+    phase33_main_game_loop_calls_tick_echoes: /tickEchoesPerFrame\s*\(\s*deltaTime\s*\)/.test(srcText),
+    phase33_main_tick_echoes_reads_world_list_echoes: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?world\.listEchoes/.test(srcText),
+    phase33_main_tick_echoes_drives_renderer_update_echoes: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?renderer\.updateEchoes/.test(srcText),
+    phase33_main_tick_echoes_uses_echo_pickup_result: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?echoPickupResult/.test(srcText),
+    phase33_main_tick_echoes_calls_world_collect_echo: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?world\.collectEcho/.test(srcText),
+    phase33_main_tick_echoes_calls_hud_set_echo_counter: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?hud\.setEchoCounter/.test(srcText),
+    phase33_main_save_game_serializes_inventory: /function\s+saveGame[\s\S]{0,1000}?serializeInventory\s*\(\s*playerInventory\s*\)/.test(srcText),
+    phase33_main_save_game_passes_inventory_to_save: /saveSystem\.saveSnapshot\([^)]*inventorySnapshot\s*\)/.test(srcText),
+    phase33_main_init_applies_saved_inventory: /function\s+init[\s\S]{0,15000}?deserializeInventory\s*\(\s*_savedState\.inventory\s*\)/.test(srcText),
+    phase33_debug_force_spawn_echo: /__phaseShifter__[\s\S]*?forceSpawnEcho\s*\(/.test(srcText),
+    phase33_debug_force_collect_echo: /__phaseShifter__[\s\S]*?forceCollectEcho\s*\(/.test(srcText),
+    phase33_debug_get_inventory: /__phaseShifter__[\s\S]*?getInventory\s*\(/.test(srcText),
+    phase33_debug_list_echoes: /__phaseShifter__[\s\S]*?listEchoes\s*\(/.test(srcText),
+    phase33_debug_get_echo_count: /__phaseShifter__[\s\S]*?getEchoCount\s*\(/.test(srcText),
+    phase33_debug_get_echo_keys: /__phaseShifter__[\s\S]*?getEchoKeys\s*\(/.test(srcText),
+    phase33_debug_get_echo_counter_text: /__phaseShifter__[\s\S]*?getEchoCounterText\s*\(/.test(srcText),
+    phase33_debug_tick_echoes_per_frame_hook: /__phaseShifter__[\s\S]*?tickEchoesPerFrame\s*\(\s*dt\s*\)/.test(srcText),
+    phase33_debug_clear_echoes: /__phaseShifter__[\s\S]*?clearEchoes\s*\(/.test(srcText),
+    phase33_debug_add_amplifier: /__phaseShifter__[\s\S]*?addAmplifier\s*\(/.test(srcText),
+    phase33_save_coerce_inventory_defined: /_coerceInventory\s*\(\s*value\s*\)/.test(saveText),
+    phase33_save_coerce_inventory_rejects_non_object: /_coerceInventory[\s\S]{0,500}?return\s+fresh/.test(saveText),
+    phase33_save_normalize_state_passes_inventory: /_normalizeState[\s\S]{0,1000}?_coerceInventory\s*\(\s*state\.inventory\s*\)/.test(saveText),
+    phase33_save_load_game_returns_inventory: /loadGame[\s\S]{0,2000}?inventory\s*:\s*this\._coerceInventory/.test(saveText)  };
 
   const summary = {
     http_ok: resp.status() === 200,
@@ -1081,8 +1254,147 @@ const CHROMIUM_ARGS = [
     phase31_html_biome_info_element_present: phase31.html_biome_info_element_present,
     phase31_html_biome_info_inside_hud_container: phase31.html_biome_info_inside_hud_container,
     phase31_world_get_biome_method_present: phase31.world_get_biome_method_present,
+    phase32_stabilizer_module_exports_stabilizer_radius: phase32.stabilizer_module_exports_stabilizer_radius,
+    phase32_stabilizer_module_exports_stabilizer_place_cost: phase32.stabilizer_module_exports_stabilizer_place_cost,
+    phase32_stabilizer_module_exports_stabilizer_fallback_color: phase32.stabilizer_module_exports_stabilizer_fallback_color,
+    phase32_stabilizer_module_exports_find_respawn_target: phase32.stabilizer_module_exports_find_respawn_target,
+    phase32_stabilizer_module_exports_is_within_radius: phase32.stabilizer_module_exports_is_within_radius,
+    phase32_stabilizer_module_exports_stabilizer_key: phase32.stabilizer_module_exports_stabilizer_key,
+    phase32_stabilizer_module_exports_snap_y_for_stabilizer_cell: phase32.stabilizer_module_exports_snap_y_for_stabilizer_cell,
+    phase32_collapse_module_exports_collapse_duration: phase32.collapse_module_exports_collapse_duration,
+    phase32_collapse_module_exports_collapse_banner_text: phase32.collapse_module_exports_collapse_banner_text,
+    phase32_collapse_module_exports_fallback_warning_text: phase32.collapse_module_exports_fallback_warning_text,
+    phase32_collapse_module_exports_collapse_reasons: phase32.collapse_module_exports_collapse_reasons,
+    phase32_collapse_module_exports_create_collapse_state: phase32.collapse_module_exports_create_collapse_state,
+    phase32_collapse_module_exports_start_collapse: phase32.collapse_module_exports_start_collapse,
+    phase32_collapse_module_exports_tick_collapse: phase32.collapse_module_exports_tick_collapse,
+    phase32_collapse_module_exports_clear_collapse: phase32.collapse_module_exports_clear_collapse,
+    phase32_constants_minimum_respawn_energy: phase32.constants_minimum_respawn_energy,
+    phase32_constants_block_stabilizer: phase32.constants_block_stabilizer,
+    phase32_main_imports_find_respawn_target: phase32.main_imports_find_respawn_target,
+    phase32_main_imports_start_collapse: phase32.main_imports_start_collapse,
+    phase32_main_imports_tick_collapse: phase32.main_imports_tick_collapse,
+    phase32_main_imports_create_collapse_state: phase32.main_imports_create_collapse_state,
+    phase32_main_imports_minimum_respawn_energy: phase32.main_imports_minimum_respawn_energy,
+    phase32_main_imports_block_stabilizer: phase32.main_imports_block_stabilizer,
+    phase32_main_imports_stabilizer_radius: phase32.main_imports_stabilizer_radius,
+    phase32_main_imports_collapse_duration: phase32.main_imports_collapse_duration,
+    phase32_main_tick_collapse_per_frame_defined: phase32.main_tick_collapse_per_frame_defined,
+    phase32_main_compute_respawn_target_defined: phase32.main_compute_respawn_target_defined,
+    phase32_main_game_loop_calls_tick_collapse_per_frame: phase32.main_game_loop_calls_tick_collapse_per_frame,
+    phase32_main_force_phase_collapse_starts_state_machine: phase32.main_force_phase_collapse_starts_state_machine,
+    phase32_main_force_phase_collapse_calls_compute_respawn_target: phase32.main_force_phase_collapse_calls_compute_respawn_target,
+    phase32_main_force_phase_collapse_to_stabilizer_hook: phase32.main_force_phase_collapse_to_stabilizer_hook,
+    phase32_main_input_suppressed_flag_declared: phase32.main_input_suppressed_flag_declared,
+    phase32_main_keydown_gates_on_input_suppressed: phase32.main_keydown_gates_on_input_suppressed,
+    phase32_main_contextmenu_gates_on_input_suppressed: phase32.main_contextmenu_gates_on_input_suppressed,
+    phase32_main_click_gates_on_input_suppressed: phase32.main_click_gates_on_input_suppressed,
+    phase32_debug_force_place_stabilizer: phase32.debug_force_place_stabilizer,
+    phase32_debug_break_stabilizer: phase32.debug_break_stabilizer,
+    phase32_debug_get_collapse_state: phase32.debug_get_collapse_state,
+    phase32_debug_tick_collapse_per_frame_hook: phase32.debug_tick_collapse_per_frame_hook,
+    phase32_debug_get_respawn_target: phase32.debug_get_respawn_target,
+    phase32_debug_get_spawn_point: phase32.debug_get_spawn_point,
+    phase32_debug_get_stabilizer_snapshot: phase32.debug_get_stabilizer_snapshot,
+    phase32_debug_get_stabilizer_count: phase32.debug_get_stabilizer_count,
+    phase32_debug_clear_stabilizers: phase32.debug_clear_stabilizers,
+    phase32_debug_get_checkpoint_mesh_count: phase32.debug_get_checkpoint_mesh_count,
+    phase32_debug_get_checkpoint_keys: phase32.debug_get_checkpoint_keys,
+    phase32_debug_is_checkpoint_at: phase32.debug_is_checkpoint_at,
+    phase32_renderer_checkpoint_overlay_class_exported: phase32.renderer_checkpoint_overlay_class_exported,
+    phase32_renderer_checkpoint_overlay_own_group: phase32.renderer_checkpoint_overlay_own_group,
+    phase32_renderer_checkpoint_overlay_show_checkpoint: phase32.renderer_checkpoint_overlay_show_checkpoint,
+    phase32_renderer_checkpoint_overlay_update_checkpoints: phase32.renderer_checkpoint_overlay_update_checkpoints,
+    phase32_renderer_checkpoint_overlay_clear_checkpoint: phase32.renderer_checkpoint_overlay_clear_checkpoint,
+    phase32_renderer_show_checkpoint_forwards: phase32.renderer_show_checkpoint_forwards,
+    phase32_renderer_update_checkpoints_forwards: phase32.renderer_update_checkpoints_forwards,
+    phase32_renderer_clear_checkpoint_forwards: phase32.renderer_clear_checkpoint_forwards,
+    phase32_renderer_clear_checkpoints_forwards: phase32.renderer_clear_checkpoints_forwards,
+    phase32_renderer_collapse_overlay_class_exported: phase32.renderer_collapse_overlay_class_exported,
+    phase32_renderer_update_collapse_overlay_forwards: phase32.renderer_update_collapse_overlay_forwards,
+    phase32_renderer_clear_collapse_overlay_forwards: phase32.renderer_clear_collapse_overlay_forwards,
+    phase32_world_find_nearest_stabilizer_defined: phase32.world_find_nearest_stabilizer_defined,
+    phase32_world_add_stabilizer_defined: phase32.world_add_stabilizer_defined,
+    phase32_world_remove_stabilizer_defined: phase32.world_remove_stabilizer_defined,
+    phase32_world_stabilizer_positions_map_initialized: phase32.world_stabilizer_positions_map_initialized,
+    phase32_html_phase_collapse_overlay_element: phase32.html_phase_collapse_overlay_element,
+    phase32_html_phase_collapse_overlay_css: phase32.html_phase_collapse_overlay_css,
+
+    // ── Phase 3.3 (Echoes) ────────────────────────────────
+    // The Phase 3.3 work turns Ruins-biome floating crystals
+    // into collectible lore objects with an inventory counter
+    // src/collect/echo.js exports
+    // and HUD label. The pure module src/collect/echo.js owns
+    // the pickup radius + lore library + key formatter.
+    // src/inventory/inventory.js owns the inventory state.
+    // main.js wires the per-frame pickup loop + the debug hooks.
+    phase33_echo_module_exports_pickup_radius: /export\s+const\s+PICKUP_RADIUS\s*=/.test(echoText2),
+    phase33_echo_module_exports_echo_lore_library: /export\s+const\s+ECHO_LORE_LIBRARY\s*=\s*Object\.freeze/.test(echoText2),
+    phase33_echo_module_exports_echo_lore_for_key: /export\s+function\s+echoLoreForKey/.test(echoText2),
+    phase33_echo_module_exports_pickup_result: /export\s+function\s+pickupResult/.test(echoText2),
+    phase33_echo_module_exports_echo_key: /export\s+function\s+echoKey/.test(echoText2),
+    phase33_echo_module_exports_floating_offset: /export\s+function\s+floatingOffset/.test(echoText2),
+    phase33_echo_module_exports_echo_color_for_biome: /export\s+function\s+echoColorForBiome/.test(echoText2),
+    phase33_inventory_module_exports_create_inventory: /export\s+function\s+createInventory/.test(inventoryText),
+    phase33_inventory_module_exports_add_echo: /export\s+function\s+addEcho/.test(inventoryText),
+    phase33_inventory_module_exports_has_echo: /export\s+function\s+hasEcho/.test(inventoryText),
+    phase33_inventory_module_exports_list_echoes: /export\s+function\s+listEchoes/.test(inventoryText),
+    phase33_inventory_module_exports_remove_echo: /export\s+function\s+removeEcho/.test(inventoryText),
+    phase33_inventory_module_exports_add_amplifier: /export\s+function\s+addAmplifier/.test(inventoryText),
+    phase33_inventory_module_exports_has_amplifier: /export\s+function\s+hasAmplifier/.test(inventoryText),
+    phase33_inventory_module_exports_serialize: /export\s+function\s+serialize/.test(inventoryText),
+    phase33_inventory_module_exports_deserialize: /export\s+function\s+deserialize/.test(inventoryText),
+    phase33_inventory_module_exports_collected_count: /export\s+function\s+collectedCount/.test(inventoryText),
+    phase33_inventory_module_exports_amplifier_count: /export\s+function\s+amplifierCount/.test(inventoryText),
+    phase33_constants_block_echo: /export\s+const\s+BLOCK_ECHO\s*=\s*17\b/.test(constantsText),
+    phase33_constants_echo_pickup_radius: /export\s+const\s+ECHO_PICKUP_RADIUS\s*=\s*1\.5\b/.test(constantsText),
+    phase33_world_spawn_echo_defined: /spawnEcho\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*loreKey\s*,\s*biomeId\s*\)/.test(worldText),
+    phase33_world_collect_echo_defined: /collectEcho\s*\(\s*key\s*\)/.test(worldText),
+    phase33_world_list_echoes_defined: /listEchoes\s*\(\s*\)/.test(worldText),
+    phase33_world_get_total_echoes_defined: /getTotalEchoes\s*\(\s*\)/.test(worldText),
+    phase33_world_clear_echoes_defined: /clearEchoes\s*\(\s*\)/.test(worldText),
+    phase33_renderer_echo_overlay_class_exported: /export\s+class\s+EchoOverlay\b/.test(rendererText),
+    phase33_renderer_echo_overlay_own_group: /class\s+EchoOverlay[\s\S]{0,2000}?this\.group\.name\s*=\s*['"]echoOverlay['"]/.test(rendererText),
+    phase33_renderer_show_echo_forwards: /showEcho\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*key\s*,\s*color\s*\)\s*\{[\s\S]*?this\.echoOverlay\.showEcho/.test(rendererText),
+    phase33_renderer_update_echoes_forwards: /updateEchoes\s*\(\s*dt\s*,\s*snapshot\s*\)\s*\{[\s\S]*?this\.echoOverlay\.updateEchoes/.test(rendererText),
+    phase33_renderer_clear_echo_forwards: /clearEcho\s*\(\s*key\s*\)\s*\{[\s\S]*?this\.echoOverlay\.clearEcho/.test(rendererText),
+    phase33_renderer_clear_echoes_forwards: /clearEchoes\s*\(\s*\)\s*\{[\s\S]*?this\.echoOverlay\.clearEchoes/.test(rendererText),
+    phase33_hud_set_echo_counter_defined: /setEchoCounter\s*\(\s*collected\s*,\s*total\s*\)/.test(hudText2),
+    phase33_hud_show_lore_toast_defined: /showLoreToast\s*\(\s*text\s*\)/.test(hudText2),
+    phase33_html_echo_counter_element: /id\s*=\s*["']echo-counter["']/.test(htmlText2),
+    phase33_html_echo_counter_css: /#echo-counter\s*\{/.test(htmlText2),
+    phase33_html_lore_toast_element: /id\s*=\s*["']lore-toast["']/.test(htmlText2),
+    phase33_html_lore_toast_css: /#lore-toast\s*\{/.test(htmlText2),
+    phase33_main_imports_pickup_radius: /import\s*\{[^}]*PICKUP_RADIUS[^}]*\}\s*from\s*['"]\.\/src\/collect\/echo\.js['"]/.test(srcText),
+    phase33_main_imports_inventory_helpers: /import\s*\{[^}]*createInventory[^}]*\}\s*from\s*['"]\.\/src\/inventory\/inventory\.js['"]/.test(srcText),
+    phase33_main_player_inventory_decl: /let\s+playerInventory\s*=/.test(srcText),
+    phase33_main_tick_echoes_per_frame_defined: /function\s+tickEchoesPerFrame/.test(srcText),
+    phase33_main_game_loop_calls_tick_echoes: /tickEchoesPerFrame\s*\(\s*deltaTime\s*\)/.test(srcText),
+    phase33_main_tick_echoes_reads_world_list_echoes: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?world\.listEchoes/.test(srcText),
+    phase33_main_tick_echoes_drives_renderer_update_echoes: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?renderer\.updateEchoes/.test(srcText),
+    phase33_main_tick_echoes_uses_echo_pickup_result: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?echoPickupResult/.test(srcText),
+    phase33_main_tick_echoes_calls_world_collect_echo: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?world\.collectEcho/.test(srcText),
+    phase33_main_tick_echoes_calls_hud_set_echo_counter: /function\s+tickEchoesPerFrame[\s\S]{0,2000}?hud\.setEchoCounter/.test(srcText),
+    phase33_main_save_game_serializes_inventory: /function\s+saveGame[\s\S]{0,1000}?serializeInventory\s*\(\s*playerInventory\s*\)/.test(srcText),
+    phase33_main_save_game_passes_inventory_to_save: /saveSystem\.saveSnapshot\([^)]*inventorySnapshot\s*\)/.test(srcText),
+    phase33_main_init_applies_saved_inventory: /function\s+init[\s\S]{0,15000}?deserializeInventory\s*\(\s*_savedState\.inventory\s*\)/.test(srcText),
+    phase33_debug_force_spawn_echo: /__phaseShifter__[\s\S]*?forceSpawnEcho\s*\(/.test(srcText),
+    phase33_debug_force_collect_echo: /__phaseShifter__[\s\S]*?forceCollectEcho\s*\(/.test(srcText),
+    phase33_debug_get_inventory: /__phaseShifter__[\s\S]*?getInventory\s*\(/.test(srcText),
+    phase33_debug_list_echoes: /__phaseShifter__[\s\S]*?listEchoes\s*\(/.test(srcText),
+    phase33_debug_get_echo_count: /__phaseShifter__[\s\S]*?getEchoCount\s*\(/.test(srcText),
+    phase33_debug_get_echo_keys: /__phaseShifter__[\s\S]*?getEchoKeys\s*\(/.test(srcText),
+    phase33_debug_get_echo_counter_text: /__phaseShifter__[\s\S]*?getEchoCounterText\s*\(/.test(srcText),
+    phase33_debug_tick_echoes_per_frame_hook: /__phaseShifter__[\s\S]*?tickEchoesPerFrame\s*\(\s*dt\s*\)/.test(srcText),
+    phase33_debug_clear_echoes: /__phaseShifter__[\s\S]*?clearEchoes\s*\(/.test(srcText),
+    phase33_debug_add_amplifier: /__phaseShifter__[\s\S]*?addAmplifier\s*\(/.test(srcText),
+    phase33_save_coerce_inventory_defined: /_coerceInventory\s*\(\s*value\s*\)/.test(saveText),
+    phase33_save_coerce_inventory_rejects_non_object: /_coerceInventory[\s\S]{0,500}?return\s+fresh/.test(saveText),
+    phase33_save_normalize_state_passes_inventory: /_normalizeState[\s\S]{0,1000}?_coerceInventory\s*\(\s*state\.inventory\s*\)/.test(saveText),
+    phase33_save_load_game_returns_inventory: /loadGame[\s\S]{0,2000}?inventory\s*:\s*this\._coerceInventory/.test(saveText),
   };
-  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 + 3.1 ACCEPTANCE SUMMARY ===');
+
+  console.log('\n=== Phase 1.1 + 1.2 + 1.3 + 1.4 + 1.5 + 1.6 + 1 closure + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 2.6 + 2.7 + 2.8 + 3.1 + 3.2 + 3.3 ACCEPTANCE SUMMARY ===');
   console.log(JSON.stringify(summary, null, 2));
 
   await browser.close();
@@ -1110,6 +1422,8 @@ const CHROMIUM_ARGS = [
   const phase27Ok = Object.values(phase27).every(Boolean);
   const phase28Ok = Object.values(phase28).every(Boolean);
   const phase31Ok = Object.values(phase31).every(Boolean);
+  const phase32Ok = Object.values(phase32).every(Boolean);
+  const phase33Ok = Object.values(phase33).every(Boolean);
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -1128,7 +1442,9 @@ const CHROMIUM_ARGS = [
     phase26Ok &&
     phase27Ok &&
     phase28Ok &&
-    phase31Ok ? 0 : 1
+    phase31Ok &&
+    phase32Ok &&
+    phase33Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

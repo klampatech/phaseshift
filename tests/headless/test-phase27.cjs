@@ -249,8 +249,8 @@ function check(label, ok, extra = '') {
 
   // ── SaveSystem wiring ─────────────────────────────────────────────
   check(
-    'SaveSystem.saveSnapshot accepts an anchors argument',
-    /saveSnapshot\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*,\s*worldState\s*,\s*anchors\s*\)/.test(saveText)
+    'SaveSystem.saveSnapshot accepts an anchors argument (Phase 3.3 extended with optional inventory)',
+    /saveSnapshot\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*,\s*worldState\s*,\s*anchors\s*(?:,\s*[^)]+)?\s*\)/.test(saveText)
   );
   check(
     'SaveSystem._coerceAnchors is defined',
@@ -263,7 +263,7 @@ function check(label, ok, extra = '') {
   check(
     'main.js#saveGame passes world.exportAnchors() to saveSnapshot',
     /function\s+saveGame[\s\S]{0,1000}?world\.exportAnchors\s*\(/.test(mainText) &&
-    /function\s+saveGame[\s\S]{0,1500}?saveSystem\.saveSnapshot\s*\(\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*anchors\s*\)/.test(mainText)
+    /function\s+saveGame[\s\S]{0,1500}?saveSystem\.saveSnapshot\s*\(\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*anchors\s*(?:,\s*[^)]+)?\s*\)/.test(mainText)
   );
   check(
     'main.js init() imports saved anchors via world.importAnchors',
