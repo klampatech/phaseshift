@@ -3,14 +3,14 @@
 > **🚀 1.0 RELEASED.** All planned phases 0 → 8 are shipped. Live deployment: https://klampatech.github.io/phaseshift/. The "What's next" sections further down are **historical** — each was current at the time the phase shipped but has since been completed (see "Status" below and the per-phase closures below for details).
 >
 > **Status (2026-08-10):**
-> - **Tip:** `70e894a` — "CI: split into test-gate + deploy so Playwright WebGL failures don't block deploy".
-> - **Latest meaningful phase:** Phase 8 — Polish + community (commits `6495145` + `1706a94`). Closes the post-1.0 polish arc.
+> - **Tip:** `bdaa540` — "Phase 9: bug bash + hardening pass" (this phase).
+> - **Latest meaningful phase:** Phase 9 — Bug bash + hardening. Firefox pointer-lock + audio fix + edge case hardening + docs updates. Closes the post-1.0 hardening arc.
 > - **CI:** 3-job workflow (`build-and-test`, `test-gate`, `deploy`) — `test-gate` blocks deploys; Playwright's WebGL failures don't block.
 > - **GitHub Pages:** live at https://klampatech.github.io/phaseshift/ (auto-publishes on every push to `main`).
-> - **Tests:** 23 headless files, 1336 checks (Phase 8 added 65 new checks on top of Phase 7's 1271).
-> - **Build:** `npm run build` produces a 37.80 KB gzipped main entry (well under the 200 KB CI threshold).
-> - **Session goal:** Documentation cleanup — sync `HANDOFF.md` / `KNOWN_ISSUES.md` / `PROJECT_REMEDIATION_PLAN.md` to the actual 1.0-shipped state. Post-1.0 direction TBD with the user.
-> - **Last completed (summary):** Phase 8 — added tutorial skip button (§8.1), 5s post-collapse invuln window (§8.2), audio context restart on tab-resume (§8.3), Settings "Reset to defaults" button (§8.4), compass distance indicator (§8.5), tutorial hint re-trigger on ring re-enter (§8.6), footstep volume scaling with block density (§8.7). The §8.8 "cleanup KNOWN_ISSUES.md" deliverable was started but not fully completed (stale "(commit pending)" notes remained); this session finishes it.
+> - **Tests:** 24 headless files, 1393 checks (Phase 9 added 57 new checks on top of Phase 8's 1336).
+> - **Build:** `npm run build` produces a 38.19 KB gzipped main entry (well under the 200 KB CI threshold).
+> - **Session goal:** Phase 9 hardening — Firefox pointer-lock audio fix, edge case hardening, browser-matrix docs.
+> - **Last completed (summary):** Phase 9 — Firefox pointer-lock audio fix (§9.2: deferred resume + first-input fallback), edge case hardening (§9.3: PhysicsManager y-clamp, reduced-motion-color-pulse, forceCyclePhase spam guard, collapse dt clamp, World.setBlock GC-safety), Tested-browsers matrix in README, KNOWN_ISSUES Platform section updated, "🟫 Discovered in Phase 9.1" section. 57 new headless checks in `tests/headless/test-phase9.cjs` + Firefox pointer-lock Playwright test in `tests/firefox-pointer-lock.spec.js`. §9.4 performance audit was skipped (no perf complaints from §9.1).
 
 ## Current state (snapshot)
 
@@ -25,13 +25,14 @@
 | Phase 6 — Focused test suite | ✅ Done |
 | Phase 7 — Release prep | ✅ Done (README, KNOWN_ISSUES, CI workflow) |
 | Phase 8 — Polish + community | ✅ Done (`6495145` + `1706a94` — 7 polish items + KNOWN_ISSUES cleanup) |
-| Phase 9–10 — Optional platforms/features | ⏳ Pending direction from user (see "Post-1.0 roadmap" section below) |
+| Phase 9 — Bug bash + hardening | ✅ Done (`bdaa540` — Firefox pointer-lock audio fix + edge case hardening + perf audit skipped + docs updates) |
+| Phase 10+ — Optional platforms/features | ⏳ Pending direction from user (see "Post-1.0 roadmap" section below) |
 
 > The journal-style "What's next" sections further down were written **at the time each phase shipped** and have all been overtaken by later phases. They're kept for historical context but should NOT be read as current guidance — see the Status / Current state sections above.
 
-## Post-1.0 roadmap (pending)
+## Post-1.0 roadmap
 
-- **§9 — Bug bash + hardening** (next session): see [`PHASE_9_BRIEF.md`](./PHASE_9_BRIEF.md). Manual browser testing across Chrome / Firefox / Safari, Firefox pointer-lock audio fix, edge case hardening, docs updates.
+- **§9 — Bug bash + hardening** ✅ Done (2026-08-10, commit `bdaa540`). Firefox pointer-lock + audio fix (§9.2: deferred-resume + first-input fallback) + edge case hardening (§9.3: y=0 boundary, GC-d-chunk guards, reduced-motion color pulse, forceCyclePhase spam, collapse dt clamp) + 57 new headless checks + Firefox Playwright test + Tested-browsers matrix in README + KNOWN_ISSUES Platform section updated. See `PHASE_9_BRIEF.md`. §9.4 performance audit was optionally skipped (no perf complaints from §9.1).
 - **§10 — Optional platforms:** touch-input layer for mobile (significant scope expansion), Safari < 16 polyfills.
 - **§11 — Optional features:** cloud saves (account system required), modding/scripting API (sandbox + asset pipeline required), achievements/leaderboards (Steam integration), creative mode / level editor (in-game block editor + world export).
 - **§12 — Content expansion:** more biomes, more echoes / lore, enemy AI / hazards (none currently in the spec), expanded soundtrack, weather / day-night cycle.

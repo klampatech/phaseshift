@@ -801,6 +801,11 @@ const CHROMIUM_ARGS = [
   const stabilizerText = fs2.existsSync(stabilizerSrc) ? fs2.readFileSync(stabilizerSrc, 'utf8') : '';
   const collapseSrc = path.resolve(__dirname, '..', '..', 'src', 'collapse', 'collapse.js');
   const collapseText = fs2.existsSync(collapseSrc) ? fs2.readFileSync(collapseSrc, 'utf8') : '';
+  // Phase 9: audio + physics source files (for the Phase 9 static-analysis block).
+  const audioSrcP9 = path.resolve(__dirname, '..', '..', 'src', 'audio', 'manager.js');
+  const audioText = fs2.existsSync(audioSrcP9) ? fs2.readFileSync(audioSrcP9, 'utf8') : '';
+  const physicsSrcP9 = path.resolve(__dirname, '..', '..', 'src', 'core', 'physics.js');
+  const physicsText = fs2.existsSync(physicsSrcP9) ? fs2.readFileSync(physicsSrcP9, 'utf8') : '';
   const echoSrc = path.resolve(__dirname, '..', '..', 'src', 'collect', 'echo.js');
   const echoText2 = fs2.existsSync(echoSrc) ? fs2.readFileSync(echoSrc, 'utf8') : '';
   const inventorySrc = path.resolve(__dirname, '..', '..', 'src', 'inventory', 'inventory.js');
@@ -1613,6 +1618,56 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
   console.log('\n=== Phase 3.6 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase36, null, 2));
 
+  // ── Phase 9 (Bug bash + hardening pass) ─────────────────────
+  // §9.2 Firefox pointer-lock + audio fix + §9.3 edge case hardening.
+  // The §9.2 acceptance is the deferred-resume + first-input fallback
+  // path; the §9.3 acceptance is the PhysicsManager y-clamp, the
+  // reduced-motion color-pulse skip, the World.setBlock GC-safety,
+  // and the PhaseManager setPhase no-op on bad input.
+  const phase9 = {
+    // §9.2: AudioEngine.safeResume() — the canonical phase-9 deferred
+    // resume method that returns the AudioContext state.
+    audio_safe_resume_defined: /safeResume\s*\(\s*\)\s*\{/.test(audioText),
+    audio_safe_resume_returns_uninitialized: /safeResume[\s\S]{0,400}?return\s+['"]uninitialized['"]/.test(audioText),
+    audio_safe_resume_returns_closed: /ctx\.state\s*===\s*['"]closed['"]/.test(audioText),
+    audio_safe_resume_calls_resume: /ctx\.state\s*===\s*['"]suspended['"][\s\S]{0,200}?ctx\.resume\s*\(\s*\)/.test(audioText),
+    // §9.2: main.js pointerlockchange defers the resume via setTimeout.
+    main_pointer_lock_defers_resume: /document\.addEventListener\s*\(\s*['"]pointerlockchange['"][\s\S]{0,2500}?setTimeout\s*\(\s*deferredResume\s*,\s*0\s*\)/.test(srcText),
+    main_pointer_lock_installs_fallback: /document\.addEventListener\s*\(\s*['"]pointerlockchange['"][\s\S]{0,2500}?installPointerLockAudioFallback\s*\(\s*deferredResume\s*\)/.test(srcText),
+    main_install_pointer_lock_fallback_fn: /function\s+installPointerLockAudioFallback\s*\(/.test(srcText),
+    main_uninstall_pointer_lock_fallback_fn: /function\s+uninstallPointerLockAudioFallback\s*\(/.test(srcText),
+    main_first_input_fallback_mousedown: /document\.addEventListener\s*\(\s*['"]mousedown['"]/.test(srcText),
+    main_first_input_fallback_keydown: /document\.addEventListener\s*\(\s*['"]keydown['"]/.test(srcText),
+    main_first_input_fallback_mousemove: /document\.addEventListener\s*\(\s*['"]mousemove['"]/.test(srcText),
+    main_first_input_fallback_once_true: /once\s*:\s*true/.test(srcText),
+    main_first_input_fallback_safety_timeout: /setTimeout\s*\([\s\S]{0,100}?,\s*5000\s*\)/.test(srcText),
+    main_visibilitychange_defer_safe_resume: /setTimeout\s*\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,100}?safeResume\s*\(\s*\)\s*;/.test(srcText),
+    main_force_audio_resume_debug_hook: /forceAudioResume\s*\(\s*\)\s*\{[\s\S]{0,500}?safeResume\s*\(/.test(srcText),
+    main_get_audio_context_state_debug_hook: /getAudioContextState\s*\(\s*\)\s*\{[\s\S]{0,200}?ctx\.state/.test(srcText),
+    main_get_pointer_lock_fallback_state: /getPointerLockAudioFallbackState\s*\(\s*\)\s*\{/.test(srcText),
+    // §9.3: PhysicsManager.setPosition clamps y to a safe minimum.
+    physics_set_position_clamps_y: /setPosition\s*\(\s*x\s*,\s*y\s*,\s*z\s*\)[\s\S]{0,1500}?safeY/.test(physicsText),
+    physics_set_position_clamps_nan: /Number\.isFinite\s*\(\s*y\s*\)\s*&&\s*y\s*>=\s*1/.test(physicsText),
+    physics_tick_clamps_y_below_1: /_pos\.y\s*<\s*1/.test(physicsText),
+    // §9.3: World.setBlock handles GC'd chunks (returns silently).
+    world_set_block_loaded_check: /!chunk\s*\|\|\s*!chunk\.loaded\s*\)\s*return/.test(worldText),
+    // §9.3: importGlobalState is defensive against null/undefined input.
+    world_import_global_state_validates: /importGlobalState\s*\([\s\S]{0,500}?return\s+0/.test(worldText),
+    // §9.3: PhaseManager.setPhase resets _isShifting (no stuck mid-shift).
+    phase_set_phase_clears_shifting: /setPhase\s*\(\s*phase\s*\)[\s\S]{0,500}?_isShifting\s*=\s*false/.test(phaseText),
+    phase_set_phase_clamps_energy: /setPhase\s*\(\s*phase\s*\)[\s\S]{0,500}?Math\.max\s*\(\s*this\._energy\s*,\s*20\s*\)/.test(phaseText),
+    // §9.3: updatePhaseShiftOverlay skips the color pulse when reduced-motion is on.
+    main_update_phase_shift_overlay_fn: /function\s+updatePhaseShiftOverlay\s*\(\s*\)/.test(srcText),
+    main_update_phase_shift_overlay_reduced_motion: /function\s+updatePhaseShiftOverlay\s*\([\s\S]{0,3000}?\n\}[\s\S]*$/m.test(srcText) && /getReducedMotion\s*\(\s*\)\s*\)/.test(srcText),
+    // §9.3: onPhaseChanged skips FOV breathing when reduced-motion is on.
+    main_on_phase_changed_skips_breathing: /function\s+onPhaseChanged\s*\([\s\S]{0,15000}?getReducedMotion\s*\(\s*\)/.test(srcText),
+    // §9.3: collapse tick clamps dt to 0.05s.
+    collapse_tick_clamps_dt: /Math\.min\s*\(\s*0\.05\s*,\s*rawDt\s*\)/.test(collapseText),
+  };
+  const phase9Ok = Object.values(phase9).every(Boolean);
+  console.log('\n=== Phase 9 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase9, null, 2));
+
   // ── Phase 4 (Polish: HUD-owns-DOM + Settings + Minimap + Save/load) ─
   // Phase 4 work: §4.1 (HUD owns its DOM), §4.2 (Settings menu with
   // localStorage persistence + live-apply), §4.3 (Minimap reads actual
@@ -1813,7 +1868,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase28Ok &&
     phase31Ok &&
     phase32Ok &&
-    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok && phase6Ok ? 0 : 1
+    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok && phase6Ok && phase9Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

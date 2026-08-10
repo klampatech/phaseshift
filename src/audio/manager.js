@@ -40,6 +40,36 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Phase 9.2: safe resume. Returns the AudioContext state after
+   * the call (or 'uninitialized' if the context never built). The
+   * pointer-lockchange listener uses this to defer the resume to
+   * the next event-loop tick on Firefox — Firefox's pointerlockchange
+   * fires before the AudioContext unlock path completes, and a
+   * direct `resume()` against the just-acquired state can be a
+   * no-op. The next-tick deferral + first-input fallback closes
+   * the race on every platform.
+   *
+   * Returns one of: 'uninitialized' | 'closed' | 'suspended' |
+   * 'running' | 'resuming'. The method is safe to call from any
+   * event listener (no throws).
+   */
+  safeResume() {
+    if (!this.initialized || !this.ctx) return 'uninitialized';
+    try {
+      if (this.ctx.state === 'closed') return 'closed';
+      if (this.ctx.state === 'suspended') {
+        const p = this.ctx.resume();
+        if (p && typeof p.then === 'function') {
+          p.then(() => {}, () => {});
+        }
+      }
+      return this.ctx.state;
+    } catch (e) {
+      return 'uninitialized';
+    }
+  }
+
   // Phase shift sound
   playShift(phase) {
     if (!this.initialized) return;

@@ -26,7 +26,19 @@ export class PhysicsManager {
   }
 
   setPosition(x, y, z) {
-    this._pos.set(x, y, z);
+    // Phase 9.3: defensive clamp on y. The §9.3 acceptance says
+    // "Saving at exactly y=0 boundary → player doesn't fall through
+    // the world". The runtime path keeps the player at y >= 2.8
+    // (Math.floor(...)+1+PLAYER_HEIGHT), but a tampered save could
+    // land the player at y=0 — and the player's feet (pos.y -
+    // PLAYER_HEIGHT) would be at y=-1.8, well below the world
+    // floor. The per-tick check `if (this._pos.y < 0)` only fires
+    // AFTER the player has fallen a frame, so the visible glitch
+    // is one frame of falling. Clamping at setPosition time is
+    // cleaner: every portal-in / save-load / snap-to-anchor path
+    // routes through setPosition, so all of them are covered.
+    const safeY = (Number.isFinite(y) && y >= 1.0) ? y : 1.0;
+    this._pos.set(x, safeY, z);
     this._vel.set(0, 0, 0);
     this._isGrounded = false;
   }
@@ -265,8 +277,12 @@ export class PhysicsManager {
       }
     }
 
-    // Keep player in bounds (don't fall below world)
-    if (this._pos.y < 0) {
+    // Keep player in bounds (don't fall below world). Phase 9.3:
+    // extended the check from `< 0` to `< 1` so the player teleports
+    // back to y=30 BEFORE the camera-follow code paints a frame at
+    // y=-something. The teleport preserves vertical velocity zero
+    // so the player isn't in free-fall when they re-spawn.
+    if (this._pos.y < 1) {
       this._pos.y = 30;
       this._vel.y = 0;
     }

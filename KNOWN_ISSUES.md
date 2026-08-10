@@ -63,9 +63,9 @@ This is a significant scope expansion. We recommend keeping it desktop-only for 
 
 Pointer Lock + AudioContext + ES Modules require Safari 16+ (released September 2022). Earlier versions have known bugs.
 
-### Firefox is supported but pointer-lock behavior is finicky
+### Firefox is supported (pointer-lock + audio fixed in Phase 9.2)
 
-Firefox's pointer-lock exit on `Esc` is reliable, but the audio context may need an extra click after pointer-lock to resume on some Linux distros.
+Firefox's pointer-lock exit on `Esc` is reliable. Audio context resume after pointer-lock is now deterministic — see Phase 9.2 in `PHASE_9_BRIEF.md`. The deferred-resume path (next event-loop tick via `setTimeout(..., 0)`) + the one-shot first-input fallback listener handles the Firefox race condition where `pointerlockchange` fires before the AudioContext unlock path completes.
 
 ## 🟪 Out of scope
 
@@ -88,6 +88,20 @@ No achievement system, no Steam integration, no leaderboard. The 3-Act progressi
 ### Editor / creative mode
 
 No in-game block editor, no fly cam toggle (fly mode exists for debug only via `__phaseShifter__.flying`), no world export.
+
+## 🟫 Discovered in Phase 9.1
+
+The Phase 9.1 browser-matrix test pass surfaced the following items. Each is either fixed in §9.2 / §9.3 or filed for a future phase.
+
+### Fixed in Phase 9.2 / §9.3 (closed)
+
+- **🟦 Firefox pointer-lock audio** — `pointerlockchange` fires before the AudioContext unlock path completes on Firefox; audio didn't always start without a second click. Fixed in §9.2: deferred resume via `setTimeout(..., 0)` + one-shot first-input fallback listener. See `PHASE_9_BRIEF.md` §9.2 and the new `tests/firefox-pointer-lock.spec.js` test.
+- **🟨 Phase-shift color pulse ignores reduced-motion** — the `updatePhaseShiftOverlay` function applied the full-screen color pulse regardless of the reduced-motion setting. Fixed in §9.3: respects `settings.getReducedMotion()` and skips the pulse when on. The pulse was the only Phase 5.4 reduced-motion gap (FOV breathing was already gated).
+- **🟨 Loading a save at y=0 boundary** — `PhysicsManager.setPosition(0, 0, 0)` allowed the player to fall through the world floor (the per-tick check `< 0` only caught strictly-negative y). Fixed in §9.3: `setPosition` clamps y to a safe minimum (1.0) and the per-tick check is now `< 1`. The path is exercised via save → reload → next physics tick.
+
+### Filed for a future phase (deferred)
+
+_None currently. The §9.3 acceptance bullets (rapid input, chunk boundaries, save/load edge cases, tab visibility, reduced-motion) all passed the static-analysis + behavioral tests in `tests/headless/test-phase9.cjs` (57 checks). The §9.4 performance audit was skipped — see `HANDOFF.md` for the deferral note._
 
 ## Reporting new issues
 

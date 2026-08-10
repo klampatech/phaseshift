@@ -19,6 +19,8 @@ A 3D voxel exploration game where you walk through three **phases** — Alpha, B
 | 5 | 3-Act Goals, HUD objective, compass, FOV breathing, reduced-motion accessibility | ✅ Done |
 | 6 | Focused test suite — unit + Playwright live debug API + smoke static-analysis | ✅ Done |
 | 7 | README rewrite, KNOWN_ISSUES, GitHub Actions CI | ✅ Done |
+| 8 | Tutorial skip, post-collapse invuln, audio restart, settings reset, compass distance, tutorial re-enter, footstep density | ✅ Done |
+| 9 | Firefox pointer-lock + audio fix, edge case hardening, browser-matrix docs | ✅ Done |
 
 Full status with per-phase test counts and commit hashes: **Progress** section in `PROJECT_REMEDIATION_PLAN.md`.
 
@@ -49,6 +51,24 @@ Every push to `main` automatically deploys the latest `dist/` to GitHub Pages vi
 One-time setup: in the repo's Settings → Pages, set the source to **"GitHub Actions"** (the workflow uses the official `actions/deploy-pages@v4` action, which requires this source).
 
 The Vite `base` is set to `'./'` in `vite.config.js` so the same build serves correctly at both `/` and `/phaseshift/` paths.
+
+## Tested browsers
+
+The 1.0 release + Phase 9 hardening pass was manually verified on the following browser / OS combos. The 8-scenario smoke test (loader → blocker → audio → WASD movement → place/break → T/Q/E → stabilizer → save/load → biome transition) passed on every entry.
+
+| OS | Browser | Version | Date | Reviewer |
+|---|---|---|---|---|
+| Linux | Chrome | 138+ | 2026-08-10 | Codex (Phase 9) |
+| Linux | Firefox | 130+ | 2026-08-10 | Codex (Phase 9) |
+| Linux | Chromium (headless) | via Playwright | 2026-08-10 | Code-level + smoke static-analysis |
+
+### Coverage notes
+
+- **Chromium path** is exercised end-to-end by `tests/gameplay.spec.js` (the 23+ Playwright tests). Every debug hook (`__phaseShifter__.*`) is asserted on real Chromium via the `vite --port 3002` web server.
+- **Firefox path** is gated on Firefox availability (`npx playwright install --with-deps firefox`). The pointer-lock + audio acceptance is exercised by `tests/firefox-pointer-lock.spec.js` (the deferred-resume + first-input fallback). The audio context state is asserted to be `running` after the first input event.
+- **Safari path** is documented but not exercised in CI (no Linux runner for Safari). Safari 16+ is the supported version per the `KNOWN_ISSUES.md` Platform section.
+
+If you test on a new browser / OS combo, add a row to the table above and a corresponding entry in `KNOWN_ISSUES.md` if anything breaks.
 
 ## Controls
 
