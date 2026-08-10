@@ -1488,9 +1488,72 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase34, null, 2));
   console.log('\n=== Phase 3.3 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase33, null, 2));
+  // ── Phase 3.5 (Phase Lock + Phase Glider) ───────────────
+  // The §3.5 work ports the orphan PhaseLockManager to the
+  // active path. A lock holds a block visible + solid in the
+  // new phase for LOCK_DURATION (10s). The Phase Glider is a
+  // brief fly in Beta via Space.
+  const phaseLockSrc = path.resolve(__dirname, '..', '..', 'src', 'phase', 'lock.js');
+  const phaseLockText = fs2.existsSync(phaseLockSrc) ? fs2.readFileSync(phaseLockSrc, 'utf8') : '';
+  const phase35 = {
+    // src/phase/lock.js exports
+    phase35_lock_module_exports_lock_duration: /export\s+const\s+LOCK_DURATION\s*=\s*10\b/.test(phaseLockText),
+    phase35_lock_module_exports_lock_fade_window: /export\s+const\s+LOCK_FADE_WINDOW\s*=\s*3\b/.test(phaseLockText),
+    phase35_lock_module_exports_lock_radius: /export\s+const\s+LOCK_RADIUS\s*=\s*3\b/.test(phaseLockText),
+    phase35_lock_module_exports_lock_fill_color: /export\s+const\s+LOCK_FILL_COLOR\s*=/.test(phaseLockText),
+    phase35_lock_module_exports_lock_border_color: /export\s+const\s+LOCK_BORDER_COLOR\s*=/.test(phaseLockText),
+    phase35_lock_module_exports_phase_glider_duration: /export\s+const\s+PHASE_GLIDER_DURATION\s*=/.test(phaseLockText),
+    phase35_lock_module_exports_phase_glider_speed: /export\s+const\s+PHASE_GLIDER_SPEED\s*=/.test(phaseLockText),
+    phase35_lock_module_exports_lock_key: /export\s+function\s+lockKey/.test(phaseLockText),
+    phase35_lock_module_exports_create_lock: /export\s+function\s+createLock/.test(phaseLockText),
+    phase35_lock_module_exports_is_lock_expired: /export\s+function\s+isLockExpired/.test(phaseLockText),
+    phase35_lock_module_exports_lock_fade_opacity: /export\s+function\s+lockFadeOpacity/.test(phaseLockText),
+    phase35_lock_module_exports_tick_locks: /export\s+function\s+tickLocks/.test(phaseLockText),
+    phase35_lock_module_exports_is_locked: /export\s+function\s+isLocked/.test(phaseLockText),
+    phase35_lock_module_exports_lock_region: /export\s+function\s+lockRegion/.test(phaseLockText),
+    phase35_lock_module_exports_create_glider_state: /export\s+function\s+createGliderState/.test(phaseLockText),
+    phase35_lock_module_exports_start_glider: /export\s+function\s+startGlider/.test(phaseLockText),
+    phase35_lock_module_exports_tick_glider: /export\s+function\s+tickGlider/.test(phaseLockText),
+    phase35_lock_module_exports_clear_glider: /export\s+function\s+clearGlider/.test(phaseLockText),
+    // src/core/world.js
+    phase35_world_create_lock: /createLock\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*,\s*duration\s*\)/.test(worldText),
+    phase35_world_tick_locks: /tickLocks\s*\(\s*dt\s*\)/.test(worldText),
+    phase35_world_is_locked: /isLocked\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*\)/.test(worldText),
+    phase35_world_list_locks: /listLocks\s*\(\s*\)/.test(worldText),
+    phase35_world_clear_locks: /clearLocks\s*\(\s*\)/.test(worldText),
+    phase35_world_export_locks: /exportLocks\s*\(\s*\)/.test(worldText),
+    phase35_world_import_locks: /importLocks\s*\(\s*snapshot\s*\)/.test(worldText),
+    phase35_world_get_lock_count: /getLockCount\s*\(\s*\)/.test(worldText),
+    phase35_world_is_block_solid_considers_locks: /isBlockSolid[\s\S]{0,500}?_phaseLocks/.test(worldText),
+    // src/render/renderer.js
+    phase35_renderer_lock_overlay_class_exported: /export\s+class\s+LockOverlay\b/.test(rendererText),
+    phase35_renderer_lock_overlay_own_group: /class\s+LockOverlay[\s\S]{0,2000}?this\.group\.name\s*=\s*['"]lockOverlay['"]/.test(rendererText),
+    phase35_renderer_show_lock_forwards: /showLock\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*,\s*key\s*\)\s*\{[\s\S]*?this\.lockOverlay\.showLock/.test(rendererText),
+    phase35_renderer_update_locks_forwards: /updateLocks\s*\(\s*snapshot\s*\)\s*\{[\s\S]*?this\.lockOverlay\.updateLocks/.test(rendererText),
+    phase35_renderer_clear_lock_forwards: /clearLock\s*\(\s*key\s*\)\s*\{[\s\S]*?this\.lockOverlay\.clearLock/.test(rendererText),
+    phase35_renderer_clear_locks_forwards: /clearLocks\s*\(\s*\)\s*\{[\s\S]*?this\.lockOverlay\.clearLocks/.test(rendererText),
+    phase35_renderer_get_lock_count: /getLockCount\s*\(\s*\)/.test(rendererText),
+    // main.js
+    phase35_main_imports_lock: /import\s*\{[^}]*LOCK_DURATION[^}]*\}\s*from\s*['"]\.\/src\/phase\/lock\.js['"]/.test(srcText),
+    phase35_main_tick_locks_per_frame: /function\s+tickLocksPerFrame\s*\(\s*dt\s*\)/.test(srcText),
+    phase35_main_tick_locks_per_frame_called: /tickLocksPerFrame\s*\(\s*deltaTime\s*\)/.test(srcText),
+    phase35_main_glider_state: /let\s+gliderState\s*=\s*createGliderState/.test(srcText),
+    phase35_main_tick_glider_per_frame: /function\s+tickGliderPerFrame\s*\(\s*dt\s*\)/.test(srcText),
+    phase35_main_on_phase_changed_creates_locks: /onPhaseChanged[\s\S]{0,3000}?world\.createLock/.test(srcText),
+    phase35_main_force_create_lock: /__phaseShifter__[\s\S]*?forceCreateLock\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*,\s*duration\s*\)/.test(srcText),
+    phase35_main_get_lock_count: /__phaseShifter__[\s\S]*?getLockCount\s*\(\s*\)/.test(srcText),
+    phase35_main_is_locked: /__phaseShifter__[\s\S]*?isLocked\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*\)/.test(srcText),
+    phase35_main_clear_locks: /__phaseShifter__[\s\S]*?clearLocks\s*\(\s*\)/.test(srcText),
+    phase35_debug_tick_locks_per_frame_hook: /__phaseShifter__[\s\S]*?tickLocksPerFrame\s*\(\s*dt\s*\)/.test(srcText),
+    phase35_main_start_glider: /__phaseShifter__[\s\S]*?startGlider\s*\(\s*direction\s*\)/.test(srcText),
+    phase35_main_get_glider_state: /__phaseShifter__[\s\S]*?getGliderState\s*\(\s*\)/.test(srcText),
+  };
+
+  const phase35Ok = Object.values(phase35).every(Boolean);
   const phase34Ok = Object.values(phase34).every(Boolean);
   const phase33Ok = Object.values(phase33).every(Boolean);
   const phase34Ok_ = phase34Ok;
+  const phase35Ok_ = phase35Ok;
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -1511,7 +1574,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase28Ok &&
     phase31Ok &&
     phase32Ok &&
-    phase33Ok && phase34Ok_ ? 0 : 1
+    phase33Ok && phase34Ok_ && phase35Ok_ ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

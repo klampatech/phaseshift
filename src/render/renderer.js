@@ -1324,6 +1324,112 @@ export class EchoOverlay {
   }
 }
 
+// Phase 3.5: LockOverlay - yellow-glow outline on each
+// Phase Lock cell. Per-lock BoxGeometry 1.02 + EdgesGeometry +
+// per-lock fill/edge materials so the pulse-fade in the last 3s
+// is per-lock; auto-disposes on expiry. Lives in its own
+// THREE.Group named 'lockOverlay' (independent of the chunk-mesh,
+// Phase Lens, Resonance, Anchor, Checkpoint, Collapse, Echo,
+// and Resonance Core groups).
+export class LockOverlay {
+  constructor() {
+    this.group = new THREE.Group();
+    this.group.name = 'lockOverlay';
+    /** Map<key, { fillMesh, edgeMesh, key, fillMat, edgeMat, group, expires, phase }> */
+    this.entries = new Map();
+  }
+
+  showLock(x, y, z, phase, key) {
+    if (typeof key !== 'string' || key.length === 0) return;
+    if (!this.entries.has(key)) {
+      const boxGeom = new THREE.BoxGeometry(1.02, 1.02, 1.02);
+      const fillMat = new THREE.MeshBasicMaterial({
+        color: 0xffee88,
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+      });
+      const fillMesh = new THREE.Mesh(boxGeom, fillMat);
+      fillMesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+      const edges = new THREE.EdgesGeometry(boxGeom);
+      const edgeMat = new THREE.LineBasicMaterial({
+        color: 0xffcc00,
+        transparent: true,
+        opacity: 0.9,
+      });
+      const edgeMesh = new THREE.LineSegments(edges, edgeMat);
+      edgeMesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+      const group = new THREE.Group();
+      group.add(fillMesh);
+      group.add(edgeMesh);
+      this.group.add(group);
+      this.entries.set(key, { fillMesh, edgeMesh, key, fillMat, edgeMat, group, x, y, z, phase });
+    } else {
+      const entry = this.entries.get(key);
+      if (entry && entry.group) {
+        entry.group.position.set(x + 0.5, y + 0.5, z + 0.5);
+      }
+    }
+  }
+
+  updateLocks(snapshot) {
+    const list = Array.isArray(snapshot) ? snapshot : [];
+    const presentKeys = new Set();
+    for (const l of list) {
+      if (!l || typeof l !== 'object' || !l.key) continue;
+      if (!this.entries.has(l.key)) {
+        this.showLock(l.x, l.y, l.z, l.phase, l.key);
+      }
+      const entry = this.entries.get(l.key);
+      if (!entry) continue;
+      presentKeys.add(l.key);
+      // Compute fade opacity based on remaining time
+      const now = (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() / 1000 : Date.now() / 1000;
+      const remaining = (l.expires || 0) - now;
+      let opacity = 0.9;
+      if (remaining < 3 && remaining > 0) {
+        opacity = 0.4 + 0.3 * Math.abs(Math.sin((3 - remaining) * Math.PI * 1.5));
+      } else if (remaining <= 0) {
+        opacity = 0;
+      }
+      if (entry.fillMat) entry.fillMat.opacity = Math.max(0, Math.min(1, opacity * 0.5));
+      if (entry.edgeMat) entry.edgeMat.opacity = Math.max(0, Math.min(1, opacity));
+    }
+    // Drop entries that are no longer in the snapshot
+    for (const key of Array.from(this.entries.keys())) {
+      if (!presentKeys.has(key)) this.clearLock(key);
+    }
+  }
+
+  clearLock(key) {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    if (entry.group && entry.group.parent) entry.group.parent.remove(entry.group);
+    if (entry.fillMesh && entry.fillMesh.geometry) entry.fillMesh.geometry.dispose();
+    if (entry.fillMat) entry.fillMat.dispose();
+    if (entry.edgeMesh && entry.edgeMesh.geometry) entry.edgeMesh.geometry.dispose();
+    if (entry.edgeMat) entry.edgeMat.dispose();
+    this.entries.delete(key);
+  }
+
+  clearLocks() {
+    for (const key of Array.from(this.entries.keys())) this.clearLock(key);
+  }
+
+  getCount() {
+    return this.entries.size;
+  }
+
+  getKeys() {
+    return Array.from(this.entries.keys());
+  }
+
+  dispose() {
+    this.clearLocks();
+    if (this.group.parent) this.group.parent.remove(this.group);
+  }
+}
+
 // Phase 3.4: ResonanceCoreOverlay - floating amplifier meshes
 // (one per BLOCK_RESONANCE_CORE in the world). Each Core is a
 // rotating octahedron with a faint glow ring; the color is
@@ -1521,6 +1627,10 @@ export class Renderer {
     // above each BLOCK_RESONANCE_CORE in Crystal Caverns).
     this.resonanceCoreOverlay = new ResonanceCoreOverlay();
     scene.add(this.resonanceCoreOverlay.group);
+    // Phase 3.5: LockOverlay (yellow-glow outline on each Phase
+    // Lock cell - the §3.5 port of the orphan PhaseLockManager).
+    this.lockOverlay = new LockOverlay();
+    scene.add(this.lockOverlay.group);
   }
 
   // Phase 2.6: thin wrappers over the ResonancePulse so main.js has
@@ -1675,6 +1785,34 @@ export class Renderer {
 
   getResonanceCoreAmplifierAt(key) {
     return this.resonanceCoreOverlay ? this.resonanceCoreOverlay.getAmplifierAt(key) : null;
+  }
+
+  // Phase 3.5: thin wrappers over the LockOverlay so main.js has
+  // a single dispatcher API. The overlay owns its own THREE.Group
+  // so the chunk-mesh, Phase Lens, Resonance, Anchor, Checkpoint,
+  // Collapse, Echo, and Resonance Core groups stay independent.
+  showLock(x, y, z, phase, key) {
+    if (this.lockOverlay) this.lockOverlay.showLock(x, y, z, phase, key);
+  }
+
+  updateLocks(snapshot) {
+    if (this.lockOverlay) this.lockOverlay.updateLocks(snapshot);
+  }
+
+  clearLock(key) {
+    if (this.lockOverlay) this.lockOverlay.clearLock(key);
+  }
+
+  clearLocks() {
+    if (this.lockOverlay) this.lockOverlay.clearLocks();
+  }
+
+  getLockCount() {
+    return this.lockOverlay ? this.lockOverlay.getCount() : 0;
+  }
+
+  getLockKeys() {
+    return this.lockOverlay ? this.lockOverlay.getKeys() : [];
   }
 
   // Phase 2.5: thin wrappers over the ScanOverlay so main.js has a

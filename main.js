@@ -37,6 +37,7 @@ import { COLLAPSE_DURATION, COLLAPSE_BANNER_TEXT, FALLBACK_WARNING_TEXT, COLLAPS
 import { PICKUP_RADIUS as ECHO_PICKUP_RADIUS, ECHO_LORE_LIBRARY, echoLoreForKey, pickupResult as echoPickupResult, echoKey, echoColorForBiome } from './src/collect/echo.js';
 import { PICKUP_RADIUS as AMPLIFIER_PICKUP_RADIUS, resonanceCoreKey, resonanceCoreColorForBiome, pickAmplifierForKey, pickupResult as resonancePickupResult, amplifierApplies } from './src/collect/resonance.js';
 import { AMPLIFIER_SHIFT_REDUCTION, AMPLIFIER_TRANSITIONS, AMPLIFIER_AB, AMPLIFIER_BG, AMPLIFIER_AG, AMPLIFIER_PICKUP_RADIUS as _AMP_R, AMPLIFIER_UNLOCK_TEXT } from './src/core/constants.js';
+import { LOCK_DURATION, LOCK_RADIUS, lockKey, createLock as createLockData, tickLocks as tickLocksPure, isLocked as isLockedPure, lockRegion, createGliderState, startGlider as startGliderPure, tickGlider as tickGliderPure, clearGlider as clearGliderPure } from './src/phase/lock.js';
 // Phase 3.3: Player inventory (collected Echoes + unlocked
 // amplifiers). The save/load round-trip + the per-frame pickup
 // tick both delegate to this module.
@@ -127,6 +128,9 @@ let inputSuppressed = false;
 // game loop owns the singleton; the save/load round-trip
 // serializes + deserializes it.
 let playerInventory = createInventory();
+
+// Phase 3.5: Phase Glider state machine (Space held in Beta = brief fly)
+let gliderState = createGliderState();
 let collapseNotifyPending = false;
 let fallbackWarnedForCurrentCollapse = false;
 // Phase 3.2: original spawn point. Captured from physicsManager
@@ -560,6 +564,30 @@ function onPhaseChanged(phaseManager) {
     hud.showNotification(names[displayPhase], colors[displayPhase]);
   }
 
+  // Phase 3.5: create Phase Locks around the player on phase shift.
+  // The lock holds blocks visible + solid in the new phase for
+  // LOCK_DURATION (10s) seconds. The player can step on blocks
+  // they couldn't reach before (e.g. Obsidian in Beta).
+  if (physicsManager && typeof physicsManager.getPos === 'function' && world && typeof world.createLock === 'function') {
+    const playerPos = physicsManager.getPos();
+    if (playerPos && typeof playerPos === 'object') {
+      const region = lockRegion(playerPos.x, playerPos.y, playerPos.z, LOCK_RADIUS);
+      for (const cell of region) {
+        // Only lock blocks that exist in the new phase (i.e. have
+        // a non-air block at this cell in the new phase).
+        try {
+          const block = world.getBlock(cell.x, cell.y, cell.z, phase);
+          if (block && block !== 0) {
+            world.createLock(cell.x, cell.y, cell.z, phase, LOCK_DURATION);
+          }
+        } catch (e) { /* ignore chunk-not-loaded cells */ }
+      }
+      if (hud && typeof hud.showNotification === 'function' && region.length > 0) {
+        hud.showNotification(`Phase Lock: ${region.length} blocks`, '#ffee88');
+      }
+    }
+  }
+
   // Update scene fog/background to match phase
   scene.fog.color.setRGB(
     colors[phase].substring(1, 3),
@@ -903,6 +931,8 @@ function gameLoop(time) {
   tickCollapsePerFrame(deltaTime);
   tickEchoesPerFrame(deltaTime);
   tickResonanceCoresPerFrame(deltaTime);
+  tickLocksPerFrame(deltaTime);
+  tickGliderPerFrame(deltaTime);
 
   // Handle Block Interaction (Mouse)
   // Already handled by event listeners
@@ -1654,6 +1684,36 @@ function tickEchoesPerFrame(dt) {
     if (hud && typeof hud.setEchoCounter === 'function') {
       hud.setEchoCounter(collectedCount(playerInventory), world.getTotalEchoes());
     }
+  }
+}
+
+// Phase 3.5: tickLocksPerFrame(dt) - drive the lock overlay
+// (yellow-glow outline) + tick the world's lock list. The
+// actual lock creation happens in onPhaseChanged; this tick
+// just drives the visual + clears expired locks.
+function tickLocksPerFrame(dt) {
+  if (!world || typeof world.tickLocks !== 'function') return;
+  world.tickLocks(dt);
+  if (renderer && typeof renderer.updateLocks === 'function') {
+    const snap = (typeof world.listLocks === 'function') ? world.listLocks() : [];
+    renderer.updateLocks(snap);
+  }
+}
+
+// Phase 3.5: tickGliderPerFrame(dt) - advance the Phase Glider
+// state machine (Space held in Beta = brief fly). The glider
+// state was started by `startGlider(...)` (e.g. on Space press);
+// the tick applies the per-frame delta to the player position.
+function tickGliderPerFrame(dt) {
+  if (!gliderState || !gliderState.gliding) return;
+  const t = tickGliderPure(gliderState, dt);
+  if (t.done) {
+    clearGliderPure(gliderState);
+    return;
+  }
+  if (physicsManager && typeof physicsManager.setPosition === 'function' && (t.dx || t.dy || t.dz)) {
+    const pos = physicsManager.getPos();
+    physicsManager.setPosition(pos.x + t.dx, pos.y + t.dy, pos.z + t.dz);
   }
 }
 
@@ -2489,6 +2549,63 @@ if (typeof window !== 'undefined') {
       if (world && typeof world.clearResonanceCores === 'function') world.clearResonanceCores();
       if (renderer && typeof renderer.clearResonanceCores === 'function') renderer.clearResonanceCores();
       return true;
+    },
+    // Phase 3.5: forceCreateLock(x, y, z, phase, duration?) debug hook.
+    forceCreateLock(x, y, z, phase, duration) {
+      if (!world || typeof world.createLock !== 'function') return null;
+      const dur = (typeof duration === 'number' && Number.isFinite(duration)) ? duration : LOCK_DURATION;
+      const lock = world.createLock(x, y, z, phase, dur);
+      if (lock && renderer && typeof renderer.showLock === 'function') {
+        const key = lockKey(x, y, z, phase);
+        renderer.showLock(x, y, z, phase, key);
+      }
+      return lock;
+    },
+    // Phase 3.5: getLockCount() debug hook.
+    getLockCount() {
+      return world && typeof world.getLockCount === 'function' ? world.getLockCount() : 0;
+    },
+    // Phase 3.5: getLockKeys() debug hook.
+    getLockKeys() {
+      return world && typeof world.getLockKeys === 'function' ? world.getLockKeys() : [];
+    },
+    // Phase 3.5: isLocked(x, y, z, phase) debug hook.
+    isLocked(x, y, z, phase) {
+      return world && typeof world.isLocked === 'function' ? world.isLocked(x, y, z, phase) : false;
+    },
+    // Phase 3.5: clearLocks() debug hook.
+    clearLocks() {
+      if (world && typeof world.clearLocks === 'function') world.clearLocks();
+      if (renderer && typeof renderer.clearLocks === 'function') renderer.clearLocks();
+      return true;
+    },
+    // Phase 3.5: tickLocksPerFrame(dt) debug hook.
+    tickLocksPerFrame(dt) {
+      const d = (typeof dt === 'number' && Number.isFinite(dt)) ? dt : 0;
+      tickLocksPerFrame(d);
+      return { ok: true };
+    },
+    // Phase 3.5: startGlider(direction) debug hook.
+    startGlider(direction) {
+      const dir = (direction && typeof direction === 'object') ? direction : { x: 0, y: 1, z: 0 };
+      const state = startGliderPure(gliderState, dir, performance.now() / 1000);
+      gliderState = state;
+      return { ok: true, state: { gliding: state.gliding, timer: state.timer } };
+    },
+    // Phase 3.5: tickGliderPerFrame(dt) debug hook.
+    tickGliderPerFrame(dt) {
+      const d = (typeof dt === 'number' && Number.isFinite(dt)) ? dt : 0;
+      tickGliderPerFrame(d);
+      return { ok: true, gliding: gliderState.gliding };
+    },
+    // Phase 3.5: getGliderState() debug hook.
+    getGliderState() {
+      return { gliding: gliderState.gliding, timer: gliderState.timer, duration: gliderState.duration };
+    },
+    // Phase 3.5: clearGlider() debug hook.
+    clearGlider() {
+      gliderState = clearGliderPure(gliderState);
+      return { ok: true };
     },
     // Phase 3.3: isEchoAt(key) debug hook.
     isEchoAt(key) {

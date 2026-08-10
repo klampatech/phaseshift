@@ -364,6 +364,19 @@ export class World {
    */
   isBlockSolid(x, y, z, phase = PHASE_ALPHA) {
     const block = this.getBlock(x, y, z, phase);
+    // Phase 3.5: locked cells are always solid in their locked phase
+    // (even if the block would be transparent in that phase normally).
+    // This is the §3.5 contract: the lock makes a block "stick" in the
+    // new phase for LOCK_DURATION seconds.
+    if (Array.isArray(this._phaseLocks) && this._phaseLocks.length > 0) {
+      const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z), ip = Math.floor(phase);
+      for (const l of this._phaseLocks) {
+        if (l.x === ix && l.y === iy && l.z === iz && l.phase === ip) {
+          const now = (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() / 1000 : Date.now() / 1000;
+          if (l.expires > now) return true;
+        }
+      }
+    }
     if (block === BLOCK_AIR) return false;
     const props = BLOCK_PROPERTIES[block];
     if (!props) return false;
@@ -1294,5 +1307,119 @@ export class World {
   /** Clear all Resonance Cores (test reset path). */
   clearResonanceCores() {
     this._resonanceCores = [];
+  }
+
+  // ── Phase 3.5: §3.5 Phase Lock API ───────────────────────────
+  // The §3.5 work ports the orphan `PhaseLockManager` logic to
+  // the active path. A lock holds a block visible + solid in
+  // the new phase for `LOCK_DURATION` (10s) after a phase shift.
+  // The lock key is "x,y,z,phase" (phase included so the same
+  // cell can be locked in 2 different phases simultaneously).
+  // The `isLocked(x, y, z, phase)` helper is consulted by the
+  // collision system (overrides `phaseSolid` for the locked cell).
+
+  /** Create a Phase Lock at the given cell + phase. Idempotent
+   *  for the same key (re-locking refreshes the duration). */
+  createLock(x, y, z, phase, duration) {
+    if (!Array.isArray(this._phaseLocks)) this._phaseLocks = [];
+    const dur = (typeof duration === 'number' && Number.isFinite(duration)) ? duration : 10;
+    const now = (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() / 1000 : Date.now() / 1000;
+    const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z), ip = Math.floor(phase);
+    const key = `${ix},${iy},${iz},${ip}`;
+    const existing = this._phaseLocks.find(l => l.key === key);
+    if (existing) {
+      existing.expires = now + dur;
+      existing.duration = dur;
+      return existing;
+    }
+    const lock = {
+      x: ix, y: iy, z: iz, phase: ip,
+      expires: now + dur,
+      duration: dur,
+      key,
+    };
+    this._phaseLocks.push(lock);
+    return lock;
+  }
+
+  /** Tick the lock list - removes expired locks. */
+  tickLocks(dt) {
+    if (!Array.isArray(this._phaseLocks)) return;
+    const now = (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() / 1000 : Date.now() / 1000;
+    this._phaseLocks = this._phaseLocks.filter(l => l.expires > now);
+  }
+
+  /** Check if a (x, y, z, phase) cell is currently locked. */
+  isLocked(x, y, z, phase) {
+    if (!Array.isArray(this._phaseLocks)) return false;
+    const now = (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() / 1000 : Date.now() / 1000;
+    const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z), ip = Math.floor(phase);
+    for (const l of this._phaseLocks) {
+      if (l.x === ix && l.y === iy && l.z === iz && l.phase === ip) {
+        return l.expires > now;
+      }
+    }
+    return false;
+  }
+
+  /** Return all active (non-expired) locks as a plain array. */
+  listLocks() {
+    if (!Array.isArray(this._phaseLocks)) return [];
+    const now = (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() / 1000 : Date.now() / 1000;
+    return this._phaseLocks.filter(l => l.expires > now).map(l => ({
+      x: l.x, y: l.y, z: l.z, phase: l.phase,
+      expires: l.expires,
+      duration: l.duration,
+      key: l.key,
+    }));
+  }
+
+  /** Return the total lock count (active only). */
+  getLockCount() {
+    if (!Array.isArray(this._phaseLocks)) return 0;
+    const now = (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() / 1000 : Date.now() / 1000;
+    return this._phaseLocks.filter(l => l.expires > now).length;
+  }
+
+  /** Return all lock keys (active only). */
+  getLockKeys() {
+    if (!Array.isArray(this._phaseLocks)) return [];
+    const now = (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() / 1000 : Date.now() / 1000;
+    return this._phaseLocks.filter(l => l.expires > now).map(l => l.key);
+  }
+
+  /** Export the lock snapshot for save/load. */
+  exportLocks() {
+    if (!Array.isArray(this._phaseLocks)) return [];
+    return this._phaseLocks.map(l => ({
+      x: l.x, y: l.y, z: l.z, phase: l.phase,
+      expires: l.expires, duration: l.duration,
+    }));
+  }
+
+  /** Import a lock snapshot (save/load). Defensive: filters
+   *  non-object entries + clamps expires to now + duration. */
+  importLocks(snapshot) {
+    if (!Array.isArray(snapshot)) { this._phaseLocks = []; return; }
+    const now = (typeof performance !== 'undefined' && Number.isFinite(performance.now)) ? performance.now() / 1000 : Date.now() / 1000;
+    this._phaseLocks = snapshot.filter(l => l && Number.isFinite(l.x) && Number.isFinite(l.y) && Number.isFinite(l.z) && Number.isFinite(l.phase)).map(l => {
+      // Defensive: if expires is in the past, push it forward by
+      // `duration` so the saved locks are usable after reload.
+      const dur = (Number.isFinite(l.duration)) ? l.duration : 10;
+      let exp = (Number.isFinite(l.expires)) ? l.expires : (now + dur);
+      if (exp < now) exp = now + dur;
+      return {
+        x: Math.floor(l.x), y: Math.floor(l.y), z: Math.floor(l.z),
+        phase: Math.floor(l.phase),
+        expires: exp,
+        duration: dur,
+        key: `${Math.floor(l.x)},${Math.floor(l.y)},${Math.floor(l.z)},${Math.floor(l.phase)}`,
+      };
+    });
+  }
+
+  /** Clear all locks (test reset path). */
+  clearLocks() {
+    this._phaseLocks = [];
   }
 }
