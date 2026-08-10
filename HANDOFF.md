@@ -5,12 +5,13 @@
 > **Status (2026-08-10):**
 > - **Tip:** `bdaa540` — "Phase 9: bug bash + hardening pass" (this phase).
 > - **Latest meaningful phase:** Phase 9 — Bug bash + hardening. Firefox pointer-lock + audio fix + edge case hardening + docs updates. Closes the post-1.0 hardening arc.
+> - **Next phase (planned):** Phase 10 — Gameplay mechanics, playability & fun pass. Brief at `PHASE_10_BRIEF.md`. Closes the gaps surfaced in the post-1.0 gameplay-mechanics review (broken energy economy, missing Memory World pillar, random flavor-text lore, no payoff after Act 3, etc.). 14 sub-phases (§10.1 → §10.14) sequenced P0 → P1 → P2. P0 (§10.1 → §10.5) is required for the game to be fun.
 > - **CI:** 3-job workflow (`build-and-test`, `test-gate`, `deploy`) — `test-gate` blocks deploys; Playwright's WebGL failures don't block.
 > - **GitHub Pages:** live at https://klampatech.github.io/phaseshift/ (auto-publishes on every push to `main`).
 > - **Tests:** 24 headless files, 1393 checks (Phase 9 added 57 new checks on top of Phase 8's 1336).
 > - **Build:** `npm run build` produces a 38.19 KB gzipped main entry (well under the 200 KB CI threshold).
-> - **Session goal:** Phase 9 hardening — Firefox pointer-lock audio fix, edge case hardening, browser-matrix docs.
-> - **Last completed (summary):** Phase 9 — Firefox pointer-lock audio fix (§9.2: deferred resume + first-input fallback), edge case hardening (§9.3: PhysicsManager y-clamp, reduced-motion-color-pulse, forceCyclePhase spam guard, collapse dt clamp, World.setBlock GC-safety), Tested-browsers matrix in README, KNOWN_ISSUES Platform section updated, "🟫 Discovered in Phase 9.1" section. 57 new headless checks in `tests/headless/test-phase9.cjs` + Firefox pointer-lock Playwright test in `tests/firefox-pointer-lock.spec.js`. §9.4 performance audit was skipped (no perf complaints from §9.1).
+> - **Session goal:** Begin Phase 10 (gameplay-mechanics pass) — start with §10.1 (energy rebalance), then §10.2 (Phase Fuse), §10.3 (collapse penalty), §10.4 (sequenced lore), §10.5 (Nexus finale). See `PHASE_10_BRIEF.md`.
+> - **Last completed (summary):** Phase 9 — Firefox pointer-lock audio fix (§9.2: deferred resume + first-input fallback), edge case hardening (§9.3: PhysicsManager y-clamp, reduced-motion-color-pulse, forceCyclePhase spam guard, collapse dt clamp, World.setBlock GC-safety), Tested-browsers matrix in README, KNOWN_ISSUES Platform section updated, "🟫 Discovered in Phase 9.1" section. 57 new headless checks in `tests/headless/test-phase9.cjs` + Firefox pointer-lock Playwright test in `tests/firefox-pointer-lock.spec.js`. §9.4 performance audit was skipped (no perf complaints from §9.1). **Post-1.0 gameplay-mechanics review** completed; brief at `PHASE_10_BRIEF.md` covers the 14 recommended sub-phases.
 
 ## Current state (snapshot)
 
@@ -26,17 +27,19 @@
 | Phase 7 — Release prep | ✅ Done (README, KNOWN_ISSUES, CI workflow) |
 | Phase 8 — Polish + community | ✅ Done (`6495145` + `1706a94` — 7 polish items + KNOWN_ISSUES cleanup) |
 | Phase 9 — Bug bash + hardening | ✅ Done (`bdaa540` — Firefox pointer-lock audio fix + edge case hardening + perf audit skipped + docs updates) |
-| Phase 10+ — Optional platforms/features | ⏳ Pending direction from user (see "Post-1.0 roadmap" section below) |
+| Phase 10 — Gameplay mechanics, playability & fun pass | ⏳ Brief ready at `PHASE_10_BRIEF.md`. Start with §10.1 (energy rebalance). |
+| Phase 11+ — Optional platforms/features | ⏳ Pending direction from user (see "Post-1.0 roadmap" section below) |
 
 > The journal-style "What's next" sections further down were written **at the time each phase shipped** and have all been overtaken by later phases. They're kept for historical context but should NOT be read as current guidance — see the Status / Current state sections above.
 
 ## Post-1.0 roadmap
 
 - **§9 — Bug bash + hardening** ✅ Done (2026-08-10, commit `bdaa540`). Firefox pointer-lock + audio fix (§9.2: deferred-resume + first-input fallback) + edge case hardening (§9.3: y=0 boundary, GC-d-chunk guards, reduced-motion color pulse, forceCyclePhase spam, collapse dt clamp) + 57 new headless checks + Firefox Playwright test + Tested-browsers matrix in README + KNOWN_ISSUES Platform section updated. See `PHASE_9_BRIEF.md`. §9.4 performance audit was optionally skipped (no perf complaints from §9.1).
-- **§10 — Optional platforms:** touch-input layer for mobile (significant scope expansion), Safari < 16 polyfills.
-- **§11 — Optional features:** cloud saves (account system required), modding/scripting API (sandbox + asset pipeline required), achievements/leaderboards (Steam integration), creative mode / level editor (in-game block editor + world export).
-- **§12 — Content expansion:** more biomes, more echoes / lore, enemy AI / hazards (none currently in the spec), expanded soundtrack, weather / day-night cycle.
-- **§13 — Polish & quality-of-life:** accessibility pass (colorblind modes, captions), localization, performance optimization (draw-distance scaling, LOD, occlusion culling), community features (seed sharing, screenshots).
+- **§10 — Gameplay mechanics, playability & fun pass** ⏳ Brief ready. 14 sub-phases (§10.1 → §10.14) sequenced P0 → P1 → P2. **P0 (§10.1 → §10.5) is required for the game to be fun:** fix the energy economy (§10.1 — `PHASE_SHIFT_COST` 5 → 15, remove the `dt * 60` regen multiplier, add per-second drain in Beta/Gamma), implement Memory World via Phase Fuse (§10.2 — 3s hold + 30 energy = permanent phase swap, persists across save/load), add a real failure state (Echo loss on collapse, §10.3), sequence the 12 random lore strings into a 30+ Echo narrative (§10.4), give the Phase Nexus a finale with Act 4 Convergence (§10.5). **P1 (§10.6 → §10.9)** makes the game feel good: per-biome signature mechanics, drop LMB/RMB block edit or update the spec, wire up erosion (dead code today), energy danger states. **P2 (§10.10 → §10.14)** makes it addictive: Echo Hunter panel, wrong-phase Echoes, phase shift preview, resonance charge-up, New Game+ mode. **Recommendation:** do P0 in this arc, P1 next, P2 as scope allows. Estimated ~170 new headless checks across §10.1 → §10.14. See `PHASE_10_BRIEF.md`.
+- **§11 — Optional platforms:** touch-input layer for mobile (significant scope expansion), Safari < 16 polyfills.
+- **§12 — Optional features:** cloud saves (account system required), modding/scripting API (sandbox + asset pipeline required), achievements/leaderboards (Steam integration), creative mode / level editor (in-game block editor + world export).
+- **§13 — Content expansion:** more biomes, more echoes / lore, enemy AI / hazards (none currently in the spec), expanded soundtrack, weather / day-night cycle.
+- **§14 — Polish & quality-of-life:** accessibility pass (colorblind modes, captions), localization, performance optimization (draw-distance scaling, LOD, occlusion culling), community features (seed sharing, screenshots).
 
 > See [`PROJECT_REMEDIATION_PLAN.md`](./PROJECT_REMEDIATION_PLAN.md) for the full plan.
 
@@ -46,7 +49,7 @@
 
 - **Repo:** `/home/kyle/Development/phaseshift` (local) ⇄ `klampatech/phaseshift` (remote, public).
 - **Branch:** `main`. **Tip:** `70e894a` — "CI: split into test-gate + deploy so Playwright WebGL failures don't block deploy".
-- **Phases 0 through 8 done. 1.0 released.** All §1–§8 of the remediation plan is shipped. The post-1.0 polish arc (Phase 8) closed with the seven user-facing polish items. Live deployment is auto-published to GitHub Pages on every push to `main`. Post-1.0 direction (Phase 9+) is pending user input — see the "Post-1.0 roadmap" section above.
+- **Phases 0 through 9 done. 1.0 released.** All §1–§9 of the remediation plan is shipped. The post-1.0 hardening arc (Phase 9) closed with Firefox pointer-lock + audio fix and edge case hardening. Live deployment is auto-published to GitHub Pages on every push to `main`. **Phase 10 is ready to start** — see `PHASE_10_BRIEF.md` for the 14 sub-phases (gameplay mechanics, playability & fun pass). Start with §10.1 (energy rebalance).
 - **Active code path:** `index.html` → `main.js` (root) → `src/core/{world,phase,physics}.js` + `src/{render,ui,input,audio,save}/*`.
 - **Quarantined reference implementation:** orphan `GameEngine` modules — see "Architectural state" below. **Do not import them.**
 - **Headless test infra** at `tests/headless/` (`smoke.cjs`, `test-safeon.cjs`, `test-camera-basis.cjs`, `test-phase12.cjs`, `test-phase13.cjs`, `safeon-unit.html`, `static-server.cjs`, `screenshots/`).
