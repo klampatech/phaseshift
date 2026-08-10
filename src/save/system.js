@@ -123,6 +123,7 @@ export class SaveSystem {
       phase: Number.isFinite(state.phase) ? state.phase : 0,
       worldState: this._coerceWorldState(state.worldState),
       anchors: this._coerceAnchors(state.anchors),
+      inventory: this._coerceInventory(state.inventory),
       timestamp: Number.isFinite(state.timestamp) ? state.timestamp : Date.now(),
     };
   }
@@ -138,6 +139,7 @@ export class SaveSystem {
       echoesFound: 0,
       worldState: {},
       anchors: [],
+      inventory: { collectedEchoes: [], amplifiers: [] },
       timestamp: Date.now(),
     };
   }
@@ -221,10 +223,11 @@ export class SaveSystem {
    * block memory produced by World.exportGlobalState(). The snapshot
    * survives across reloads via loadGame().
    */
-  saveSnapshot(x, y, z, phase, worldState, anchors) {
+  saveSnapshot(x, y, z, phase, worldState, anchors, inventory) {
     return this.saveGame(x, y, z, phase, {
       worldState: worldState || {},
       anchors: this._coerceAnchors(anchors),
+      inventory: this._coerceInventory(inventory),
     });
   }
 
@@ -248,6 +251,7 @@ export class SaveSystem {
       },
       worldState: this._coerceWorldState(raw.worldState),
       anchors: this._coerceAnchors(raw.anchors),
+      inventory: this._coerceInventory(raw.inventory),
       timestamp: stamp,
     };
   }
@@ -301,6 +305,38 @@ export class SaveSystem {
       });
     }
     return out;
+  }
+
+
+  /**
+   * Phase 3.3: coerce the inventory from a save blob. Defensive —
+   * rejects non-objects, malformed collectedEchoes entries, and
+   * malformed amplifier names so a tampered save can't poison the
+   * inventory. Mirrors `_coerceAnchors` for the inventory shape:
+   *   { collectedEchoes: [{ key, lore }], amplifiers: [name] }.
+   *
+   * Missing / null / non-object input returns a fresh empty
+   * inventory (back-compat with §1.7 / §2.4 / §2.7 blobs that
+   * don't include inventory).
+   */
+  _coerceInventory(value) {
+    const fresh = { collectedEchoes: [], amplifiers: [] };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return fresh;
+    const echoes = Array.isArray(value.collectedEchoes) ? value.collectedEchoes : [];
+    const filtered = [];
+    for (const e of echoes) {
+      if (!e || typeof e !== 'object') continue;
+      if (typeof e.key !== 'string' || e.key.length === 0) continue;
+      const lore = typeof e.lore === 'string' ? e.lore : '';
+      filtered.push({ key: e.key, lore });
+    }
+    const amps = Array.isArray(value.amplifiers) ? value.amplifiers : [];
+    const filteredAmps = [];
+    for (const a of amps) {
+      if (typeof a !== 'string' || a.length === 0) continue;
+      filteredAmps.push(a);
+    }
+    return { collectedEchoes: filtered, amplifiers: filteredAmps };
   }
 
   /** Human-readable timestamp of the most recent save, or null. */

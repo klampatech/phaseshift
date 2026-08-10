@@ -21,6 +21,16 @@ export class HUD {
     this._biomeInfoEl = (typeof document !== 'undefined')
       ? document.querySelector('#biome-info')
       : null;
+    // Phase 3.3: echo counter + lore toast. Both elements live in
+    // index.html; the HUD just queries them here so the per-frame
+    // update is a one-line DOM write.
+    this._echoCounterEl = (typeof document !== 'undefined')
+      ? document.querySelector('#echo-counter')
+      : null;
+    this._loreToastEl = (typeof document !== 'undefined')
+      ? document.querySelector('#lore-toast')
+      : null;
+    this._loreToastTimer = null;
     this._createElements();
   }
 
@@ -476,6 +486,37 @@ export class HUD {
     this._notifTimer = setTimeout(() => {
       notification.style.opacity = '0';
     }, 2000);
+  }
+
+
+
+  /**
+   * Phase 3.3: update the `#echo-counter` HUD element. The format
+   * is `ECHOES: X / Y` where X is the collected count and Y is
+   * the total spawned count. The DOM write only fires when the
+   * element exists (safe in headless tests without a DOM).
+   */
+  setEchoCounter(collected, total) {
+    if (!this._echoCounterEl) return;
+    const x = Number.isFinite(collected) ? Math.max(0, collected | 0) : 0;
+    const y = Number.isFinite(total) ? Math.max(0, total | 0) : 0;
+    this._echoCounterEl.textContent = `ECHOES: ${x} / ${y}`;
+  }
+
+  /**
+   * Phase 3.3: show a lore toast for `ECHO_LORE_TTL` seconds.
+   * Subsequent calls reset the timer (so rapid pickups update the
+   * toast rather than stacking on top of the prior one).
+   */
+  showLoreToast(text) {
+    if (!this._loreToastEl) return;
+    if (typeof text !== 'string' || text.length === 0) return;
+    this._loreToastEl.textContent = text;
+    this._loreToastEl.style.opacity = '1';
+    if (this._loreToastTimer) clearTimeout(this._loreToastTimer);
+    this._loreToastTimer = setTimeout(() => {
+      if (this._loreToastEl) this._loreToastEl.style.opacity = '0';
+    }, 5000);
   }
 
   showBlockHint(visible) {

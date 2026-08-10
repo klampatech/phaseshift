@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL } from './src/core/constants.js';
+import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_STABILIZER, MINIMUM_RESPAWN_ENERGY, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL } from './src/core/constants.js';
 import { World } from './src/core/world.js';
 import { PhaseManager } from './src/core/phase.js';
 import { PhysicsManager } from './src/core/physics.js';
-import { setupLighting, createPlayerMesh, createSkybox, ChunkVisual, setupPostProcessing, ScanOverlay, ResonancePulse, AnchorOverlay } from './src/render/renderer.js';
+import { setupLighting, createPlayerMesh, createSkybox, ChunkVisual, setupPostProcessing, ScanOverlay, ResonancePulse, AnchorOverlay, CheckpointOverlay, CollapseOverlay } from './src/render/renderer.js';
 import { Controls } from './src/input/controls.js';
 import { placeBlock as placeBlockAtTarget } from './src/input/placeBlock.js';
 import { HUD } from './src/ui/hud.js';
@@ -23,6 +23,22 @@ import { placeAnchorAt, snapYForCell, cellUnderPlayer, anchorLifetime, ANCHOR_FI
 import { biomeTint, biomeLabel as biomeLabelFromHelper, biomeFogDensity, lerpBiomeTints, biomeTransitionDuration,
   BIOME_TINTS, BIOME_NAMES, BIOME_FOREST, BIOME_CAVES, BIOME_DEEP_VOID, BIOME_RUINS,
   BIOME_DESERT, BIOME_CRYSTAL_CAVERN, BIOME_SKY_RUINS, BIOME_PHASE_NEXUS } from './src/world/biome.js';
+// Phase 3.2: Stabilizer placement cost, search radius, and respawn
+// target lookup. The pure module is the single source of truth for
+// the 3.2 math; main.js is the dispatcher.
+import { STABILIZER_RADIUS, STABILIZER_PLACE_COST, STABILIZER_FALLBACK_COLOR, findRespawnTarget, isWithinRadius, stabilizerKey, snapYForStabilizerCell } from './src/world/stabilizer.js';
+// Phase 3.2: Phase Collapse state machine (the 1.5s animation +
+// input suppression + teleport + energy restore). The pure module
+// owns the timer math + the done payload; main.js is the
+// dispatcher.
+import { COLLAPSE_DURATION, COLLAPSE_BANNER_TEXT, FALLBACK_WARNING_TEXT, COLLAPSE_RESPAWN_ENERGY, COLLAPSE_REASONS, createCollapseState, startCollapse, tickCollapse, clearCollapse, collapseProgress } from './src/collapse/collapse.js';
+// Phase 3.3: Echo pickup radius + lore library + key formatter. The
+// pure module owns the §3.3 contract; main.js is the dispatcher.
+import { PICKUP_RADIUS as ECHO_PICKUP_RADIUS, ECHO_LORE_LIBRARY, echoLoreForKey, pickupResult as echoPickupResult, echoKey, echoColorForBiome } from './src/collect/echo.js';
+// Phase 3.3: Player inventory (collected Echoes + unlocked
+// amplifiers). The save/load round-trip + the per-frame pickup
+// tick both delegate to this module.
+import { createInventory, addEcho, hasEcho, listEchoes, removeEcho, addAmplifier, hasAmplifier, collectedCount, amplifierCount, serialize as serializeInventory, deserialize as deserializeInventory } from './src/inventory/inventory.js';
 
 // Eye height: distance from feet to eyes. Player physics height is 1.7 (see
 // src/core/physics.js PLAYER_HEIGHT); 1.6 is a comfortable eye offset for a
@@ -96,6 +112,30 @@ let footstepTimer = 0;
 // (the most recent world.getBiome() result).
 let currentBiomeId = BIOME_FOREST;
 let currentBiomeTint = biomeTint(BIOME_FOREST);
+// Phase 3.2: collapse state machine (the 3.2 "Stabilizers"
+// deliverable). collapseState is the module-level singleton
+// that the game loop owns; the per-frame collapse tick advances
+// the timer + drives the renderer overlay + dispatches the
+// teleport + energy restore. inputSuppressed is the keyboard /
+// mouse input gate - while true, the input handlers no-op so the
+// player can't move or shift mid-collapse.
+let collapseState = createCollapseState();
+let inputSuppressed = false;
+// Phase 3.3: Player inventory (collected Echoes + amplifiers). The
+// game loop owns the singleton; the save/load round-trip
+// serializes + deserializes it.
+let playerInventory = createInventory();
+let collapseNotifyPending = false;
+let fallbackWarnedForCurrentCollapse = false;
+// Phase 3.2: original spawn point. Captured from physicsManager
+// after the player settles so the fallback respawn path can
+// teleport back here when no Stabilizer is in range.
+let spawnPoint = null;
+// Phase 3.2: last known stabilizer snapshot (the renderer's
+// checkpoint overlay syncs from this on each frame).
+let lastStabilizerSnapshot = [];
+let collapseWasCollapsingLastFrame = false;
+
 let targetBiomeTint = biomeTint(BIOME_FOREST);
 let biomeTransitionTimer = biomeTransitionDuration();
 let currentBlockPlaced = null; // block type for shift+click placement
@@ -180,6 +220,7 @@ function init() {
     // moved (and the snap-to-anchor logic only fires on phase change).
     if (Array.isArray(_savedState.anchors) && _savedState.anchors.length > 0) {
       world.importAnchors(_savedState.anchors);
+      playerInventory = deserializeInventory(_savedState.inventory);
     } else {
       // Defensive: ensure the anchor list is empty even when the save
       // blob has no anchors (back-compat with §1.7 / §2.4).
@@ -232,6 +273,12 @@ function init() {
   const _spawnPos = physicsManager.getPos();
   camera.position.set(_spawnPos.x, _spawnPos.y + EYE_HEIGHT, _spawnPos.z);
 
+  // Phase 3.2: capture the original spawn point.
+  spawnPoint = {
+    x: _spawnPos.x,
+    y: _spawnPos.y,
+    z: _spawnPos.z,
+  };
   console.info('[Phase Shifter] Spawned at', _spawnPos.toArray());
   refreshSaveInfo();
 
@@ -298,7 +345,7 @@ function init() {
   // static-analysis regex distance.
   document.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    if (!document.pointerLockElement) return;
+    if (!document.pointerLockElement || inputSuppressed) return;
     const hit = raycastBlock(physicsManager.getPos(), getCameraDirection());
     if (tryPlaceStoneOnFace(hit)) return;
     phaseManager.cyclePhase();
@@ -306,7 +353,7 @@ function init() {
 
   // Handle key press for phase cycling and menus
   document.addEventListener('keydown', (e) => {
-    if (!document.pointerLockElement) return;
+    if (!document.pointerLockElement || inputSuppressed) return;
     
     // Direct phase selection (1, 2, 3)
     if (e.key === '1') { phaseManager.setPhase(PHASE_ALPHA); phaseManager.notify(); }
@@ -330,7 +377,7 @@ function init() {
   // a double-cycle here anyway, but we don't call cyclePhase at all from
   // this handler so the §2.3 place-on-face path is unambiguous.
   document.addEventListener('click', (e) => {
-    if (!document.pointerLockElement || gamePaused) return;
+    if (!document.pointerLockElement || gamePaused || inputSuppressed) return;
 
     if (e.button === 0 && shiftKeyHeld) {
       // Shift+click: place anchor (Phase 2.7 will replace this body
@@ -346,7 +393,7 @@ function init() {
 
   // Mouse movement for raycasting (block hint display)
   document.addEventListener('mousemove', (e) => {
-    if (!document.pointerLockElement || gamePaused) return;
+    if (!document.pointerLockElement || gamePaused || inputSuppressed) return;
     updateBlockHint();
   });
 
@@ -846,6 +893,13 @@ function gameLoop(time) {
   // the player's CURRENT biome — the `forceBiome` debug hook
   // bypasses this read and pins the player to a specific biome.
   tickBiomesPerFrame(deltaTime);
+
+  // Phase 3.2: per-frame collapse tick. The state machine owns
+  // the 1.5s timer; the per-frame tick advances it, drives the
+  // renderer overlay, suppresses input, and dispatches the
+  // teleport + energy restore on completion.
+  tickCollapsePerFrame(deltaTime);
+  tickEchoesPerFrame(deltaTime);
 
   // Handle Block Interaction (Mouse)
   // Already handled by event listeners
@@ -1523,6 +1577,12 @@ function updateInventoryUI() {
 }
 
 function saveGame() {
+  const inventorySnapshot = serializeInventory(playerInventory);
+  // Phase 3.2: don't save mid-collapse.
+  if (inputSuppressed || (collapseState && collapseState.isCollapsing)) {
+    if (hud) hud.showNotification('Cannot save during collapse', '#ff8844');
+    return;
+  }
   const pos = physicsManager.getPos();
   const phase = phaseManager.getCurrentPhase();
   const worldState = world.exportGlobalState();
@@ -1530,7 +1590,7 @@ function saveGame() {
   // placed anchors survive a save → reload round-trip. The legacy
   // §1.7 / §2.4 save blob (without anchors) is still loadable.
   const anchors = world.exportAnchors ? world.exportAnchors() : [];
-  saveSystem.saveSnapshot(pos.x, pos.y, pos.z, phase, worldState, anchors);
+  saveSystem.saveSnapshot(pos.x, pos.y, pos.z, phase, worldState, anchors, inventorySnapshot);
   hud.showNotification('GAME SAVED', '#4488ff');
   refreshSaveInfo();
 }
@@ -1541,6 +1601,129 @@ function refreshSaveInfo() {
   if (!saveInfo) return;
   const lastSave = saveSystem.getLastSaveInfo();
   saveInfo.textContent = lastSave ? `Last save: ${lastSave}` : '';
+}
+
+// Phase 3.2: computeRespawnTarget(playerPos).
+function computeRespawnTarget(playerPos) {
+  const list = world && world._stabilizerPositions
+    ? Array.from(world._stabilizerPositions.values())
+    : [];
+  return findRespawnTarget(playerPos, list, {
+    radius: STABILIZER_RADIUS,
+    fallback: spawnPoint,
+  });
+}
+
+// Phase 3.3: tickEchoesPerFrame(dt) - drive the floating
+// animation on the EchoOverlay + run the pickup loop against
+// the player's current position. The pickup is one-shot per
+// Echo (world.collectEcho + inventory.addEcho + clearEcho).
+function tickEchoesPerFrame(dt) {
+  if (!world || typeof world.listEchoes !== 'function') return;
+  const snapshot = world.listEchoes();
+  if (renderer && typeof renderer.updateEchoes === 'function') {
+    renderer.updateEchoes(dt, snapshot);
+  }
+  if (!physicsManager || typeof physicsManager.getPos !== 'function') return;
+  const pos = physicsManager.getPos();
+  const playerPos = pos && typeof pos === 'object'
+    ? { x: pos.x, y: pos.y, z: pos.z }
+    : null;
+  if (!playerPos) return;
+  const hit = echoPickupResult(playerPos, snapshot, ECHO_PICKUP_RADIUS);
+  if (hit && hit.key) {
+    const lore = hit.lore || echoLoreForKey(hit.key);
+    const added = addEcho(playerInventory, hit.key, lore);
+    if (added) {
+      world.collectEcho(hit.key);
+      if (renderer && typeof renderer.clearEcho === 'function') {
+        renderer.clearEcho(hit.key);
+      }
+      if (hud && typeof hud.showNotification === 'function') {
+        hud.showNotification(`ECHO: ${lore}`, '#ffeeaa');
+      }
+      if (hud && typeof hud.showLoreToast === 'function') {
+        hud.showLoreToast(lore);
+      }
+    }
+    // Always update the counter (even on re-collect no-op, so the
+    // test surface sees the edge). Cheap: one DOM write.
+    if (hud && typeof hud.setEchoCounter === 'function') {
+      hud.setEchoCounter(collectedCount(playerInventory), world.getTotalEchoes());
+    }
+  }
+}
+
+// Phase 3.2: tickCollapsePerFrame(dt).
+function tickCollapsePerFrame(dt) {
+  if (!collapseState || !collapseState.isCollapsing) {
+    collapseWasCollapsingLastFrame = false;
+    if (renderer && typeof renderer.clearCollapseOverlay === 'function') {
+      renderer.clearCollapseOverlay();
+    }
+    return;
+  }
+  const result = tickCollapse(collapseState, dt);
+  collapseState = result.state;
+  if (renderer && typeof renderer.updateCollapseOverlay === 'function') {
+    renderer.updateCollapseOverlay(result.progress);
+  }
+  const overlayEl = (typeof document !== 'undefined') ? document.getElementById('phase-collapse-overlay') : null;
+  if (overlayEl) {
+    if (result.progress > 0) {
+      const alpha = Math.sin(result.progress * Math.PI) * 0.55;
+      overlayEl.style.backgroundColor = `rgba(68, 0, 34, ${alpha.toFixed(3)})`;
+      overlayEl.style.opacity = '1';
+    } else {
+      overlayEl.style.opacity = '0';
+    }
+  }
+  if (collapseNotifyPending && !collapseWasCollapsingLastFrame) {
+    if (hud && typeof hud.showNotification === 'function') {
+      hud.showNotification(COLLAPSE_BANNER_TEXT, '#ff8844');
+    }
+    collapseNotifyPending = false;
+  }
+  collapseWasCollapsingLastFrame = !!collapseState.isCollapsing;
+  if (result.done) {
+    const tp = result.targetPos;
+    if (tp && Number.isFinite(tp.x) && Number.isFinite(tp.y) && Number.isFinite(tp.z)) {
+      if (physicsManager && typeof physicsManager.setPosition === 'function') {
+        physicsManager.setPosition(tp.x, tp.y, tp.z);
+      }
+    } else if (spawnPoint) {
+      if (physicsManager && typeof physicsManager.setPosition === 'function') {
+        physicsManager.setPosition(spawnPoint.x, spawnPoint.y, spawnPoint.z);
+      }
+    }
+    if (phaseManager && typeof phaseManager.setEnergy === 'function') {
+      phaseManager.setEnergy(MINIMUM_RESPAWN_ENERGY);
+    } else if (phaseManager && typeof phaseManager.consumeEnergy === 'function') {
+      const cur = phaseManager.getEnergy();
+      const delta = cur - MINIMUM_RESPAWN_ENERGY;
+      if (delta > 0) phaseManager.consumeEnergy(delta);
+    }
+    if (tp && tp.source === 'spawn' && !fallbackWarnedForCurrentCollapse) {
+      if (hud && typeof hud.showNotification === 'function') {
+        hud.showNotification(FALLBACK_WARNING_TEXT, '#ffaa66');
+      }
+      fallbackWarnedForCurrentCollapse = true;
+    }
+    collapseState = clearCollapse(collapseState);
+    inputSuppressed = false;
+    if (renderer && typeof renderer.clearCollapseOverlay === 'function') {
+      renderer.clearCollapseOverlay();
+    }
+    if (overlayEl) {
+      overlayEl.style.opacity = '0';
+    }
+  }
+  if (world && world._stabilizerPositions) {
+    lastStabilizerSnapshot = Array.from(world._stabilizerPositions.values());
+  }
+  if (renderer && typeof renderer.updateCheckpoints === 'function') {
+    renderer.updateCheckpoints(lastStabilizerSnapshot);
+  }
 }
 
 // Debug hooks for testing
@@ -1822,23 +2005,34 @@ if (typeof window !== 'undefined') {
       const phase = phaseManager.getCurrentPhase();
       if (phase === PHASE_ALPHA) {
         // The collapse precondition is "any non-Alpha phase" per
-        // the §2.8 brief. Refuse to collapse in Alpha — the audio
-        // wouldn't fire meaningfully and the player is in the
+        // the 2.8 brief. Refuse to collapse in Alpha - the audio
+        // would not fire meaningfully and the player is in the
         // "safe" phase.
         return { ok: false, reason: 'alpha-cannot-collapse', phase };
       }
       if (phaseManager.setEnergy) {
         phaseManager.setEnergy(0);
       } else if (phaseManager.consumeEnergy) {
-        // Best-effort fallback: consume all current energy.
         phaseManager.consumeEnergy(phaseManager.getEnergy());
       }
       if (audioManager && typeof audioManager.playCollapse === 'function') {
         audioManager.playCollapse();
       }
-      return { ok: true, phase, energy: phaseManager.getEnergy() };
+      // Phase 3.2: extend the audio stub with the collapse state
+      // machine. The audio fires BEFORE the state machine so the
+      // player hears the "vacuum sweep" cue during the 1.5s
+      // animation. The respawn target lookup uses the player's
+      // CURRENT position (the collapse point) + the world's
+      // stabilizer list. The fallback is the original spawn point.
+      const target = computeRespawnTarget(physicsManager.getPos());
+      startCollapse(collapseState, COLLAPSE_REASONS.FORCED, target, target ? target.source : null);
+      inputSuppressed = true;
+      collapseNotifyPending = true;
+      fallbackWarnedForCurrentCollapse = false;
+      collapseWasCollapsingLastFrame = false;
+      return { ok: true, phase, energy: phaseManager.getEnergy(), target };
     },
-    // Phase 3.1: forceBiome(biomeId) test hook. Pins the player
+        // Phase 3.1: forceBiome(biomeId) test hook. Pins the player
     // to a specific biome regardless of position. The production
     // path uses `world.getBiome(playerPos.x, playerPos.z)` (the
     // deterministic per-region assignment); the debug hook
@@ -1968,6 +2162,235 @@ if (typeof window !== 'undefined') {
     },
     get phase() { return phaseManager && phaseManager.getCurrentPhase ? phaseManager.getCurrentPhase() : -1; },
     get lastSaveInfo() { return saveSystem ? saveSystem.getLastSaveInfo() : null; },
+    // Phase 3.2: forcePlaceStabilizer(x, y, z, phase?) debug hook.
+    forcePlaceStabilizer(x, y, z, phase) {
+      if (!world) return null;
+      const fx = Math.floor(x);
+      const fy = Math.floor(y);
+      const fz = Math.floor(z);
+      const p = (typeof phase === 'number') ? phase : (phaseManager ? phaseManager.getCurrentPhase() : 0);
+      world.setBlock(fx, fy, fz, p, BLOCK_STABILIZER);
+      const key = stabilizerKey(fx, fy, fz);
+      if (renderer && typeof renderer.showCheckpoint === 'function') {
+        renderer.showCheckpoint(fx, fy, fz, key);
+      }
+      return {
+        ok: true,
+        x: fx, y: fy, z: fz, phase: p,
+        key,
+        count: world._stabilizerPositions ? world._stabilizerPositions.size : 0,
+        meshCount: renderer && renderer.checkpointOverlay ? renderer.checkpointOverlay.getCheckpointCount() : 0,
+      };
+    },
+    // Phase 3.2: breakStabilizer(x, y, z, phase?) debug hook.
+    breakStabilizer(x, y, z, phase) {
+      if (!world) return null;
+      const fx = Math.floor(x);
+      const fy = Math.floor(y);
+      const fz = Math.floor(z);
+      const p = (typeof phase === 'number') ? phase : (phaseManager ? phaseManager.getCurrentPhase() : 0);
+      world.setBlock(fx, fy, fz, p, BLOCK_AIR);
+      const key = stabilizerKey(fx, fy, fz);
+      if (renderer && typeof renderer.clearCheckpoint === 'function') {
+        renderer.clearCheckpoint(key);
+      }
+      return { ok: true, x: fx, y: fy, z: fz, key, count: world._stabilizerPositions ? world._stabilizerPositions.size : 0 };
+    },
+    // Phase 3.2: getCollapseState() debug hook.
+    getCollapseState() {
+      return {
+        isCollapsing: !!collapseState.isCollapsing,
+        collapseTimer: collapseState.collapseTimer,
+        collapseDuration: COLLAPSE_DURATION,
+        reason: collapseState.reason,
+        targetPos: collapseState.targetPos,
+        inputSuppressed: !!inputSuppressed,
+      };
+    },
+    // Phase 3.2: tickCollapsePerFrame(dt) debug hook.
+    tickCollapsePerFrame(dt) {
+      const d = (typeof dt === 'number') ? dt : 0;
+      tickCollapsePerFrame(d);
+      return {
+        isCollapsing: !!collapseState.isCollapsing,
+        collapseTimer: collapseState.collapseTimer,
+        targetPos: collapseState.targetPos,
+      };
+    },
+    // Phase 3.2: getRespawnTarget() debug hook.
+    getRespawnTarget() {
+      return computeRespawnTarget(physicsManager.getPos());
+    },
+    // Phase 3.2: getSpawnPoint() debug hook.
+    getSpawnPoint() {
+      return spawnPoint ? { x: spawnPoint.x, y: spawnPoint.y, z: spawnPoint.z } : null;
+    },
+    // Phase 3.2: getStabilizerSnapshot() debug hook.
+    getStabilizerSnapshot() {
+      return lastStabilizerSnapshot.slice();
+    },
+    // Phase 3.2: getStabilizerCount() debug hook.
+    getStabilizerCount() {
+      return world && world._stabilizerPositions ? world._stabilizerPositions.size : 0;
+    },
+    // Phase 3.2: forcePhaseCollapseToStabilizer(x, y, z) debug hook.
+    forcePhaseCollapseToStabilizer(x, y, z) {
+      if (!phaseManager) return null;
+      const phase = phaseManager.getCurrentPhase();
+      if (phase === PHASE_ALPHA) {
+        return { ok: false, reason: 'alpha-cannot-collapse', phase };
+      }
+      if (phaseManager.setEnergy) {
+        phaseManager.setEnergy(0);
+      } else if (phaseManager.consumeEnergy) {
+        phaseManager.consumeEnergy(phaseManager.getEnergy());
+      }
+      if (audioManager && typeof audioManager.playCollapse === 'function') {
+        audioManager.playCollapse();
+      }
+      const snapY = snapYForStabilizerCell(y);
+      const target = { x: x, y: snapY, z: z, source: 'stabilizer' };
+      startCollapse(collapseState, COLLAPSE_REASONS.TEST, target, 'stabilizer');
+      inputSuppressed = true;
+      collapseNotifyPending = true;
+      fallbackWarnedForCurrentCollapse = false;
+      collapseWasCollapsingLastFrame = false;
+      return { ok: true, phase, energy: phaseManager.getEnergy(), target };
+    },
+    // Phase 3.2: clearStabilizers() debug hook.
+    clearStabilizers() {
+      if (!world) return null;
+      const list = world._stabilizerPositions ? [...world._stabilizerPositions.values()] : [];
+      for (const s of list) {
+        world.setBlock(s.x, s.y, s.z, phaseManager ? phaseManager.getCurrentPhase() : 0, BLOCK_AIR);
+      }
+      if (renderer && typeof renderer.clearCheckpoints === 'function') {
+        renderer.clearCheckpoints();
+      }
+      lastStabilizerSnapshot = [];
+      return { cleared: list.length };
+    },
+    // Phase 3.2: getCheckpointMeshCount() debug hook.
+    getCheckpointMeshCount() {
+      return renderer && renderer.checkpointOverlay ? renderer.checkpointOverlay.getCheckpointCount() : 0;
+    },
+    getCheckpointKeys() {
+      return renderer && renderer.checkpointOverlay ? renderer.checkpointOverlay.getCheckpointKeys() : [];
+    },
+    // Phase 3.3: forceSpawnEcho(x, y, z, loreKey?, biomeId?) debug hook.
+    forceSpawnEcho(x, y, z, loreKey, biomeId) {
+      if (!world || typeof world.spawnEcho !== 'function') return null;
+      const k = (typeof loreKey === 'string' && loreKey.length > 0) ? loreKey : echoKey(x, y, z);
+      const biome = Number.isFinite(biomeId) ? biomeId : (world.getBiome ? world.getBiome(Math.floor(x), Math.floor(z)) : 0);
+      const echo = world.spawnEcho(x, y, z, k, biome);
+      if (renderer && typeof renderer.showEcho === 'function') {
+        renderer.showEcho(Math.floor(x), Math.floor(y) + 1, Math.floor(z), echo.key, echoColorForBiome(biome));
+      }
+      return {
+        ok: !!echo,
+        key: echo.key,
+        x: echo.x, y: echo.y, z: echo.z,
+        biomeId: echo.biomeId,
+        lore: echo.lore,
+        loreKey: echo.loreKey,
+        color: echoColorForBiome(biome),
+        collected: echo.collected,
+      };
+    },
+    // Phase 3.3: forceCollectEcho(key) debug hook.
+    forceCollectEcho(key) {
+      if (!world || typeof world.collectEcho !== 'function') return null;
+      const lore = echoLoreForKey(key);
+      const result = world.collectEcho(key);
+      if (result) {
+        addEcho(playerInventory, key, lore);
+        if (renderer && typeof renderer.clearEcho === 'function') renderer.clearEcho(key);
+        if (hud && typeof hud.setEchoCounter === 'function') {
+          hud.setEchoCounter(collectedCount(playerInventory), world.getTotalEchoes());
+        }
+      }
+      return result ? { ok: true, ...result, lore } : { ok: false };
+    },
+    // Phase 3.3: getInventory() debug hook - returns the raw
+    // inventory state for inspection. The shape is
+    // { collectedEchoes: Map<key, lore>, amplifiers: Set<name> }.
+    getInventory() {
+      return {
+        collectedEchoes: Array.from(playerInventory.collectedEchoes.entries()).map(([key, lore]) => ({ key, lore })),
+        amplifiers: Array.from(playerInventory.amplifiers),
+        collectedCount: collectedCount(playerInventory),
+        amplifierCount: amplifierCount(playerInventory),
+      };
+    },
+    // Phase 3.3: listEchoes() debug hook - the world's
+    // uncollected Echoes (the shape the per-frame pickup reads).
+    listEchoes() {
+      if (!world || typeof world.listEchoes !== 'function') return [];
+      return world.listEchoes();
+    },
+    // Phase 3.3: getEchoCount() debug hook - the number of
+    // uncollected Echo meshes in the renderer.
+    getEchoCount() {
+      return renderer && typeof renderer.getEchoCount === 'function' ? renderer.getEchoCount() : 0;
+    },
+    // Phase 3.3: getEchoKeys() debug hook - the active Echo mesh keys.
+    getEchoKeys() {
+      return renderer && typeof renderer.getEchoKeys === 'function' ? renderer.getEchoKeys() : [];
+    },
+    // Phase 3.3: getTotalEchoes() debug hook.
+    getTotalEchoes() {
+      return world && typeof world.getTotalEchoes === 'function' ? world.getTotalEchoes() : 0;
+    },
+    // Phase 3.3: getCollectedEchoCount() debug hook.
+    getCollectedEchoCount() {
+      return world && typeof world.getCollectedEchoCount === 'function' ? world.getCollectedEchoCount() : collectedCount(playerInventory);
+    },
+    // Phase 3.3: getEchoCounterText() debug hook - the current
+    // #echo-counter textContent (or null if the DOM element is
+    // missing).
+    getEchoCounterText() {
+      const el = (typeof document !== 'undefined') ? document.querySelector('#echo-counter') : null;
+      return el ? el.textContent : null;
+    },
+    // Phase 3.3: isEchoAt(key) debug hook.
+    isEchoAt(key) {
+      return renderer && typeof renderer.isEchoAt === 'function' ? renderer.isEchoAt(key) : false;
+    },
+    // Phase 3.2: isCheckpointAt(x, y, z) debug hook.
+    isCheckpointAt(x, y, z) {
+      const key = stabilizerKey(x, y, z);
+      return renderer && typeof renderer.isCheckpointAt === 'function' ? renderer.isCheckpointAt(key) : false;
+    },
+    // Phase 3.3: tickEchoesPerFrame(dt) debug hook - drives the
+    // per-frame Echo animation + pickup loop from outside the
+    // game loop (used by the Playwright test).
+    tickEchoesPerFrame(dt) {
+      const d = (typeof dt === 'number' && Number.isFinite(dt)) ? dt : 0;
+      tickEchoesPerFrame(d);
+      return { ok: true, dt: d };
+    },
+    // Phase 3.3: clearEchoes() debug hook (test reset path).
+    clearEchoes() {
+      if (world && typeof world.clearEchoes === 'function') world.clearEchoes();
+      if (renderer && typeof renderer.clearEchoes === 'function') renderer.clearEchoes();
+      return { ok: true };
+    },
+    // Phase 3.3: addAmplifier(name) debug hook - unlocks an
+    // amplifier for the player (Phase 3.4 wires this to the
+    // Resonance Core pickup). Returns { ok, newlyAdded }.
+    addAmplifier(name) {
+      if (typeof name !== 'string' || name.length === 0) return { ok: false, reason: 'bad-name' };
+      const added = addAmplifier(playerInventory, name);
+      return { ok: true, newlyAdded: added, name };
+    },
+    // Phase 3.3: hasAmplifier(name) debug hook.
+    hasAmplifier(name) {
+      return hasAmplifier(playerInventory, name);
+    },
+    // Phase 3.3: hasEcho(key) debug hook.
+    hasEcho(key) {
+      return hasEcho(playerInventory, key);
+    },
     saveSnapshot(x, y, z, phase, worldState) {
       if (!saveSystem) return null;
       return saveSystem.saveSnapshot(x, y, z, phase, worldState);

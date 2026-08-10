@@ -37,6 +37,7 @@ export const BLOCK_GOLD_ORE = 12;
 export const BLOCK_WATER = 13;
 export const BLOCK_ENERGY = 14;
 export const BLOCK_STABILIZER = 15;
+export const BLOCK_ECHO = 17;
 
 
 // ── Block Names (display) ──────────────────────────────────────
@@ -58,6 +59,7 @@ export const BLOCK_NAMES = [
   'Energy',       // 14
   'Stabilizer',   // 15
   'Resonance Core', // 16
+  'Echo', // 17
 ];
 
 // ── Block Properties ─────────────────────────────────────────────
@@ -87,6 +89,7 @@ export const BLOCK_PROPERTIES = {
   [BLOCK_WATER]:     { name: 'Water',     color: [50, 120, 200], solid: true,  transparent: false, phase: [PHASE_ALPHA], phaseSolid: [true, false, false], isResource: false, immovable: false },
   [BLOCK_ENERGY]:    { name: 'Energy',    color: [235, 204, 50], solid: false, transparent: true,  phase: [PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA], phaseSolid: [false, false, false], isResource: true, immovable: false },
   [BLOCK_STABILIZER]: { name: 'Stabilizer', color: [255, 102, 68], solid: true,  transparent: false, phase: [PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA], phaseSolid: [true, true, true], isResource: false, immovable: true },
+  [BLOCK_ECHO]:       { name: 'Echo',       color: [180, 220, 255], solid: false, transparent: true,  phase: [PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA], phaseSolid: [false, false, false], isResource: false, immovable: true },
 };
 
 // ── Biome Constants ──────────────────────────────────────────────
@@ -233,6 +236,14 @@ export const SAVE_CHUNK_DIST = 2;
 export const UNLOAD_CHUNK_DIST = 1;
 export const INITIAL_CHUNKS = 1;
 export const MINIMUM_RESPAWN_ENERGY = 30;
+// Phase 3.3: Echo pickup radius (blocks, cubic). The §3.3 acceptance
+// is "walking within 2 blocks of an Echo collects it"; 1.5 gives
+// the player a small grace margin and matches the §2.7 anchor snap
+// pattern (a 1-cell radius around the player's feet).
+export const ECHO_PICKUP_RADIUS = 1.5;
+// Phase 3.3: Echo lore toast duration (seconds). The §3.3 brief
+// specifies a 5-second display window before the lore toast fades.
+export const ECHO_LORE_TTL = 5;
 
 
 // ── Tool Constants ───────────────────────────────────────────────

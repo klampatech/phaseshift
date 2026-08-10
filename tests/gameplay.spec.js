@@ -887,4 +887,252 @@ test('placeBlock debug hook writes Stone at (x, y, z) in the current phase (Phas
     expect(biomeInfoText.startsWith('BIOME: ')).toBe(true);
   });
 
+  test('Stabilizer: place + checkpoint graphic + collapse teleport + fallback respawn (Phase 3.2)', async ({ page }) => {
+    // Phase 3.2 acceptance:
+    //   - Placing a Stabilizer spawns a checkpoint graphic
+    //     (warm-orange ring + crosshair above the block).
+    //   - Phase Collapse teleports to the nearest Stabilizer
+    //     within STABILIZER_RADIUS (16 blocks) with
+    //     MINIMUM_RESPAWN_ENERGY (30) restored.
+    //   - If no Stabilizer is in range, the player respawns at
+    //     the original spawn point with the "No Stabilizer
+    //     nearby" warning notification.
+    //   - The collapse state machine clears after the
+    //     COLLAPSE_DURATION (1.5s) timer expires.
+    // The Playwright test can't verify the 3D visual (no WebGL in
+    // this sandbox), so it asserts the non-visual invariants: the
+    // Stabilizer count, the checkpoint mesh count, the
+    // respawn-target lookup, the energy math, and the
+    // state-machine clearing.
+    await page.waitForTimeout(500);
+
+    // 1) forcePlaceStabilizer creates the world entry + the
+    //    checkpoint mesh + a tracked key.
+    const r1 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const r = ps.forcePlaceStabilizer(8, 8, 8);
+      return {
+        ok: r && r.ok,
+        count: r && r.count,
+        meshCount: r && r.meshCount,
+        stabilizerCount: ps.getStabilizerCount(),
+        checkpointMeshCount: ps.getCheckpointMeshCount(),
+        keys: ps.getCheckpointKeys(),
+        isAt: ps.isCheckpointAt(8, 8, 8),
+      };
+    });
+    expect(r1.ok).toBe(true);
+    expect(r1.count).toBe(1);
+    expect(r1.meshCount).toBeGreaterThanOrEqual(2); // ring + crosshair
+    expect(r1.stabilizerCount).toBe(1);
+    expect(r1.checkpointMeshCount).toBeGreaterThanOrEqual(2);
+    expect(r1.keys).toContain('8,8,8');
+    expect(r1.isAt).toBe(true);
+
+    // 2) getRespawnTarget() returns the nearest Stabilizer source
+    //    (player is at the spawn, Stabilizer at (8,8,8) is within
+    //    STABILIZER_RADIUS = 16).
+    const r2 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      return ps.getRespawnTarget();
+    });
+    expect(r2.source).toBe('stabilizer');
+    expect(r2.x).toBe(8);
+    expect(r2.y).toBe(8);
+    expect(r2.z).toBe(8);
+
+    // 3) forcePhaseCollapse() starts the state machine. After the
+    //    1.5s timer expires, the player lands on the Stabilizer
+    //    with energy restored to MINIMUM_RESPAWN_ENERGY (30).
+    const r3 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      // Move into Beta so the collapse can fire.
+      ps.phaseManager.setPhase(1);
+      ps.phaseManager.notify();
+      // Set energy to 5 so the post-collapse restore (30) is
+      // observable in the assertion below.
+      ps.phaseManager.setEnergy(5);
+      const energyBefore = ps.phaseManager.getEnergy();
+      const playerPosBefore = ps.physicsManager.getPosition
+        ? ps.physicsManager.getPosition()
+        : null;
+      // Start the collapse.
+      const started = ps.forcePhaseCollapse();
+      // Drive the per-frame tick for 1.6s (one frame past 1.5s)
+      // so the state machine clears + teleport + restore fire.
+      ps.tickCollapsePerFrame(1.6);
+      const energyAfter = ps.phaseManager.getEnergy();
+      const playerPosAfter = ps.physicsManager.getPosition
+        ? ps.physicsManager.getPosition()
+        : null;
+      const state = ps.getCollapseState();
+      return {
+        started,
+        energyBefore,
+        energyAfter,
+        playerPosBefore,
+        playerPosAfter,
+        stateIsCollapsing: state.isCollapsing,
+        stateReason: state.reason,
+        stateSource: state.targetPos && state.targetPos.source,
+      };
+    });
+    expect(r3.started && r3.started.ok).toBe(true);
+    expect(r3.energyBefore).toBe(5);
+    expect(r3.energyAfter).toBe(30); // MINIMUM_RESPAWN_ENERGY
+    expect(r3.stateIsCollapsing).toBe(false); // cleared after timer
+    expect(r3.stateReason === 'forced' || r3.stateReason === 'test').toBe(true);
+    expect(r3.stateSource).toBe('stabilizer');
+    // The player Y after teleport is the Stabilizer cell Y + 1 + 1.8.
+    if (r3.playerPosAfter) {
+      const expectedY = 8 + 1 + 1.8;
+      expect(Math.abs(r3.playerPosAfter.y - expectedY) < 0.01).toBe(true);
+    }
+
+    // 4) Fallback path: with no Stabilizer in range, the collapse
+    //    teleports to the original spawn point and emits the
+    //    "No Stabilizer nearby" warning.
+    const r4 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      // Remove the Stabilizer so the next collapse has no in-range
+      // respawn target.
+      ps.breakStabilizer(8, 8, 8);
+      // Move the player far from the spawn to confirm fallback.
+      const farX = 100, farZ = 100;
+      if (ps.physicsManager.setPosition) {
+        ps.physicsManager.setPosition(farX, 30, farZ);
+      }
+      // Capture the spawn point for the assertion below.
+      const spawn = ps.getSpawnPoint();
+      // Move into Beta for the collapse and ensure energy.
+      ps.phaseManager.setPhase(1);
+      ps.phaseManager.notify();
+      ps.phaseManager.setEnergy(0);
+      const started = ps.forcePhaseCollapse();
+      // Drive the per-frame tick past 1.5s so the state machine
+      // completes + the fallback teleport + restore fire.
+      ps.tickCollapsePerFrame(1.6);
+      const energyAfter = ps.phaseManager.getEnergy();
+      const playerPosAfter = ps.physicsManager.getPosition
+        ? ps.physicsManager.getPosition()
+        : null;
+      const state = ps.getCollapseState();
+      return {
+        spawn,
+        started,
+        energyAfter,
+        playerPosAfter,
+        stateIsCollapsing: state.isCollapsing,
+        stateSource: state.targetPos && state.targetPos.source,
+      };
+    });
+    expect(r4.started && r4.started.ok).toBe(true);
+    expect(r4.energyAfter).toBe(30); // MINIMUM_RESPAWN_ENERGY
+    expect(r4.stateIsCollapsing).toBe(false);
+    expect(r4.stateSource).toBe('spawn');
+    // The player lands back at (or near) the original spawn point.
+    if (r4.playerPosAfter && r4.spawn) {
+      expect(Math.abs(r4.playerPosAfter.x - r4.spawn.x) < 1).toBe(true);
+      expect(Math.abs(r4.playerPosAfter.z - r4.spawn.z) < 1).toBe(true);
+    }
+
+    // 5) forcePhaseCollapseToStabilizer(x, y, z) bypasses the
+    //    search and pins the teleport to the given cell.
+    const r5 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      ps.phaseManager.setPhase(1);
+      ps.phaseManager.notify();
+      ps.phaseManager.setEnergy(0);
+      ps.forcePhaseCollapseToStabilizer(20, 20, 20);
+      ps.tickCollapsePerFrame(1.6);
+      const energyAfter = ps.phaseManager.getEnergy();
+      const playerPosAfter = ps.physicsManager.getPosition
+        ? ps.physicsManager.getPosition()
+        : null;
+      const state = ps.getCollapseState();
+      return {
+        energyAfter,
+        playerPosAfter,
+        stateIsCollapsing: state.isCollapsing,
+        stateSource: state.targetPos && state.targetPos.source,
+      };
+    });
+    expect(r5.energyAfter).toBe(30);
+    expect(r5.stateIsCollapsing).toBe(false);
+    expect(r5.stateSource).toBe('stabilizer');
+    if (r5.playerPosAfter) {
+      const expectedY = 20 + 1 + 1.8;
+      expect(Math.abs(r5.playerPosAfter.y - expectedY) < 0.01).toBe(true);
+    }
+  });
+
+  test('Echo: forceSpawnEcho + tickEchoesPerFrame collects when player is close (Phase 3.3)', async ({ page }) => {
+    // Phase 3.3 acceptance:
+    //   - Entering a Ruins biome produces floating crystals.
+    //   - Walking close to one collects it (one-shot).
+    //   - The inventory shows the lore (in the HUD counter).
+    //   - An Echo counter in the HUD shows "X / Y".
+    // The Playwright test can't verify the 3D visual (no WebGL in
+    // this sandbox), so it asserts the non-visual invariants: the
+    // Echo count, the inventory growth, the HUD counter text, and
+    // the lore-toast activation.
+    await page.waitForTimeout(500);
+
+    // 1) forceSpawnEcho creates a world entry + a tracked key.
+    const r1 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const playerPos = ps.physicsManager.getPosition
+        ? ps.physicsManager.getPosition()
+        : { x: 0, y: 30, z: 0 };
+      const x = Math.floor(playerPos.x) + 1;
+      const z = Math.floor(playerPos.z) + 1;
+      const y = Math.floor(playerPos.y);
+      const r = ps.forceSpawnEcho(x, y, z, 'phase33.test.lore', 1);
+      return {
+        ok: r && r.ok,
+        key: r && r.key,
+        lore: r && r.lore,
+        echoCount: ps.getEchoCount(),
+        echoKeys: ps.getEchoKeys(),
+        totalEchoes: ps.getTotalEchoes(),
+        counterText: ps.getEchoCounterText ? ps.getEchoCounterText() : null,
+      };
+    });
+    expect(r1.ok).toBe(true);
+    expect(r1.key).toBeTruthy();
+    expect(r1.lore).toBeTruthy();
+    expect(r1.totalEchoes).toBeGreaterThanOrEqual(1);
+    expect(r1.echoCount).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(r1.echoKeys)).toBe(true);
+    expect(r1.echoKeys.length).toBeGreaterThanOrEqual(1);
+
+    // 2) Move the player next to the Echo and tick the loop.
+    const r2 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const keys = ps.getEchoKeys();
+      if (keys.length === 0) return { picked: false };
+      const key = keys[0];
+      const [ex, ey, ez] = key.split(',').map(Number);
+      ps.physicsManager.setPosition(ex + 0.5, ey, ez + 0.5);
+      ps.tickEchoesPerFrame(0.1);
+      const inv = ps.getInventory();
+      const found = inv.collectedEchoes.find((e) => e.key === key);
+      return {
+        picked: inv.collectedCount >= 1,
+        collectedCount: inv.collectedCount,
+        lore: found ? found.lore : null,
+        echoCount: ps.getEchoCount(),
+        counterText: ps.getEchoCounterText ? ps.getEchoCounterText() : null,
+      };
+    });
+    expect(r2.picked).toBe(true);
+    expect(r2.collectedCount).toBeGreaterThanOrEqual(1);
+    expect(r2.lore).toBeTruthy();
+    expect(r2.echoCount).toBeLessThanOrEqual(r1.echoCount);
+
+    // 3) The counter text should be in the form "X / Y" (X = collected, Y = total)
+    expect(r2.counterText).toBeTruthy();
+    expect(r2.counterText).toMatch(/\d+\s*\/\s*\d+/);
+  });
+
 });

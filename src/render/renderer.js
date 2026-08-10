@@ -1081,6 +1081,249 @@ export class AnchorOverlay {
   }
 }
 
+// Phase 3.2: Stabilizer checkpoint overlay + Phase Collapse screen
+// tint. The CheckpointOverlay is a THREE.Group (named
+// "checkpointOverlay") that draws a ring + crosshair above each
+// placed Stabilizer block. The CollapseOverlay is a progress
+// tracker for the deep-purple vignette + screen tint during the
+// 1.5s collapse animation (the actual visual is a DOM element in
+// index.html - this class only tracks the progress value).
+
+export class CheckpointOverlay {
+  constructor(scene) {
+    this.scene = scene;
+    this.group = new THREE.Group();
+    this.group.name = 'checkpointOverlay';
+    this.scene.add(this.group);
+
+    // Per-Stabilizer resources, keyed by the canonical "x,y,z" string.
+    this._checkpoints = new Map();
+  }
+
+  showCheckpoint(x, y, z, key) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+    const fx = Math.floor(x);
+    const fy = Math.floor(y);
+    const fz = Math.floor(z);
+    const k = (typeof key === 'string' && key.length > 0) ? key : `${fx},${fy},${fz}`;
+    this._disposeKey(k);
+
+    const ringGeom = new THREE.RingGeometry(0.45, 0.6, 16);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xff8844,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const ring = new THREE.Mesh(ringGeom, ringMat);
+    ring.position.set(fx + 0.5, fy + 1.02, fz + 0.5);
+    ring.rotation.x = -Math.PI / 2;
+
+    const spriteMat = new THREE.SpriteMaterial({
+      color: 0xff8844,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+      depthTest: false,
+    });
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.position.set(fx + 0.5, fy + 1 + 1.2, fz + 0.5);
+    sprite.scale.set(0.8, 0.8, 0.8);
+
+    const innerGroup = new THREE.Group();
+    innerGroup.add(ring);
+    innerGroup.add(sprite);
+    this.group.add(innerGroup);
+
+    this._checkpoints.set(k, {
+      group: innerGroup,
+      ring,
+      ringGeom,
+      ringMat,
+      sprite,
+      spriteMat,
+    });
+  }
+
+  updateCheckpoints(snapshot) {
+    if (!Array.isArray(snapshot)) return;
+    const present = new Set();
+    for (const c of snapshot) {
+      if (!c || typeof c !== 'object') continue;
+      if (!Number.isFinite(c.x) || !Number.isFinite(c.y) || !Number.isFinite(c.z)) continue;
+      const fx = Math.floor(c.x);
+      const fy = Math.floor(c.y);
+      const fz = Math.floor(c.z);
+      const k = (typeof c.key === 'string' && c.key.length > 0) ? c.key : `${fx},${fy},${fz}`;
+      present.add(k);
+      if (!this._checkpoints.has(k)) {
+        this.showCheckpoint(c.x, c.y, c.z, k);
+      }
+    }
+    for (const k of [...this._checkpoints.keys()]) {
+      if (!present.has(k)) {
+        this._disposeKey(k);
+      }
+    }
+  }
+
+  clearCheckpoint(key) {
+    return this._disposeKey(key);
+  }
+
+  clearCheckpoints() {
+    for (const k of [...this._checkpoints.keys()]) {
+      this._disposeKey(k);
+    }
+  }
+
+  getCheckpointCount() {
+    return this._checkpoints.size;
+  }
+
+  getCheckpointKeys() {
+    return [...this._checkpoints.keys()];
+  }
+
+  _disposeKey(key) {
+    const rec = this._checkpoints.get(key);
+    if (!rec) return false;
+    this._checkpoints.delete(key);
+    if (rec.group && rec.group.parent) rec.group.parent.remove(rec.group);
+    if (rec.ringGeom) rec.ringGeom.dispose();
+    if (rec.ringMat) rec.ringMat.dispose();
+    if (rec.spriteMat) rec.spriteMat.dispose();
+    return true;
+  }
+
+  dispose() {
+    this.clearCheckpoints();
+    if (this.group.parent) this.group.parent.remove(this.group);
+  }
+}
+
+export class CollapseOverlay {
+  constructor() {
+    this._progress = 0;
+    this._visible = false;
+  }
+
+  updateCollapseOverlay(progress) {
+    const p = (typeof progress === 'number' && Number.isFinite(progress))
+      ? Math.max(0, Math.min(1, progress))
+      : 0;
+    this._progress = p;
+    this._visible = p > 0;
+  }
+
+  clearCollapseOverlay() {
+    this._progress = 0;
+    this._visible = false;
+  }
+
+  getProgress() {
+    return this._progress;
+  }
+
+  isVisible() {
+    return this._visible;
+  }
+}
+
+export class EchoOverlay {
+  constructor() {
+    this.group = new THREE.Group();
+    this.group.name = 'echoOverlay';
+    /** Map<key, { mesh, key, color }> */
+    this.entries = new Map();
+    /** Per-Echo animation phase (radians) for out-of-sync bobbing */
+    this._animTime = 0;
+  }
+
+  showEcho(x, y, z, key, color) {
+    if (typeof key !== 'string' || key.length === 0) return;
+    if (!this.entries.has(key)) {
+      const geometry = new THREE.OctahedronGeometry(0.25, 0);
+      const c = (Array.isArray(color) && color.length >= 3) ? color : [0.95, 0.78, 0.35];
+      const material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(c[0], c[1], c[2]),
+        transparent: true,
+        opacity: 0.85,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(x, y, z);
+      mesh.userData = { key, baseY: y, phase: Math.random() * Math.PI * 2 };
+      this.group.add(mesh);
+      this.entries.set(key, { mesh, key, color: c });
+    } else {
+      const entry = this.entries.get(key);
+      entry.mesh.position.set(x, y, z);
+      if (Array.isArray(color) && color.length >= 3) {
+        entry.color = color;
+        if (entry.mesh.material && entry.mesh.material.color) {
+          entry.mesh.material.color.setRGB(color[0], color[1], color[2]);
+        }
+      }
+    }
+  }
+
+  updateEchoes(dt, snapshot) {
+    const d = (typeof dt === 'number' && Number.isFinite(dt)) ? dt : 0;
+    this._animTime += d;
+    const presentKeys = new Set();
+    const list = Array.isArray(snapshot) ? snapshot : [];
+    for (const e of list) {
+      if (!e || typeof e !== 'object' || !e.key) continue;
+      if (!this.entries.has(e.key)) {
+        // Auto-create if missing (the per-frame tick is the
+        // single source of truth for which Echoes are alive).
+        const c = (Array.isArray(e.color) && e.color.length >= 3) ? e.color : [0.95, 0.78, 0.35];
+        this.showEcho(e.x, e.y, e.z, e.key, c);
+      }
+      const entry = this.entries.get(e.key);
+      if (!entry) continue;
+      presentKeys.add(e.key);
+      // Bob + rotate animation
+      const t = this._animTime;
+      const ph = (entry.mesh.userData && Number.isFinite(entry.mesh.userData.phase))
+        ? entry.mesh.userData.phase : 0;
+      entry.mesh.position.y = (e.y || 0) + Math.sin(t * 1.5 + ph) * 0.15;
+      entry.mesh.rotation.y = t * 0.4 + ph;
+    }
+    // Drop entries that are no longer in the snapshot (collected)
+    for (const key of Array.from(this.entries.keys())) {
+      if (!presentKeys.has(key)) this.clearEcho(key);
+    }
+  }
+
+  clearEcho(key) {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    if (entry.mesh && entry.mesh.parent) entry.mesh.parent.remove(entry.mesh);
+    if (entry.mesh && entry.mesh.geometry) entry.mesh.geometry.dispose();
+    if (entry.mesh && entry.mesh.material) entry.mesh.material.dispose();
+    this.entries.delete(key);
+  }
+
+  clearEchoes() {
+    for (const key of Array.from(this.entries.keys())) this.clearEcho(key);
+  }
+
+  getCount() {
+    return this.entries.size;
+  }
+
+  getKeys() {
+    return Array.from(this.entries.keys());
+  }
+
+  dispose() {
+    this.clearEchoes();
+    if (this.group.parent) this.group.parent.remove(this.group);
+  }
+}
+
 export class Renderer {
   constructor(world, scene, camera, phaseManager, webglRenderer) {
     this.world = world;
@@ -1132,6 +1375,21 @@ export class Renderer {
     // the Resonance pulse are all untouched. The four visuals are
     // fully independent: clearing one does not affect the others.
     this.anchorOverlay = new AnchorOverlay(scene);
+    // Phase 3.2: Stabilizer checkpoint overlay. Owns its own
+    // THREE.Group ("checkpointOverlay") so the chunk-mesh
+    // group, the Phase Lens overlay, the Resonance pulse, the
+    // Anchor overlay, and the checkpoint overlay are all
+    // independent.
+    this.checkpointOverlay = new CheckpointOverlay(scene);
+    // Phase 3.2: Phase Collapse overlay (deep-purple vignette
+    // + screen tint during the 1.5s collapse animation). The
+    // visual lives in the #phase-collapse-overlay DOM element;
+    // this class only tracks the progress value for the test
+    // surface.
+    this.collapseOverlay = new CollapseOverlay();
+    // Phase 3.3: EchoOverlay (floating crystal meshes above each Echo).
+    this.echoOverlay = new EchoOverlay();
+    scene.add(this.echoOverlay.group);
   }
 
   // Phase 2.6: thin wrappers over the ResonancePulse so main.js has
@@ -1163,6 +1421,90 @@ export class Renderer {
 
   clearAnchors() {
     if (this.anchorOverlay) this.anchorOverlay.clearAnchors();
+  }
+
+  // Phase 3.2: thin wrappers over the CheckpointOverlay so main.js
+  // has a single dispatcher API.
+  showCheckpoint(x, y, z, key) {
+    if (this.checkpointOverlay) this.checkpointOverlay.showCheckpoint(x, y, z, key);
+  }
+
+  updateCheckpoints(snapshot) {
+    if (this.checkpointOverlay) this.checkpointOverlay.updateCheckpoints(snapshot);
+  }
+
+  clearCheckpoint(key) {
+    if (this.checkpointOverlay) this.checkpointOverlay.clearCheckpoint(key);
+  }
+
+  clearCheckpoints() {
+    if (this.checkpointOverlay) this.checkpointOverlay.clearCheckpoints();
+  }
+
+  getCheckpointCount() {
+    return this.checkpointOverlay ? this.checkpointOverlay.getCheckpointCount() : 0;
+  }
+
+  getCheckpointKeys() {
+    return this.checkpointOverlay ? this.checkpointOverlay.getCheckpointKeys() : [];
+  }
+
+  isCheckpointAt(key) {
+    if (!this.checkpointOverlay) return false;
+    const keys = this.checkpointOverlay.getCheckpointKeys();
+    return keys.indexOf(key) >= 0;
+  }
+
+  // Phase 3.2: Phase Collapse overlay driver.
+  updateCollapseOverlay(progress) {
+    if (this.collapseOverlay) this.collapseOverlay.updateCollapseOverlay(progress);
+  }
+
+  clearCollapseOverlay() {
+    if (this.collapseOverlay) this.collapseOverlay.clearCollapseOverlay();
+  }
+
+  getCollapseOverlayProgress() {
+    return this.collapseOverlay ? this.collapseOverlay.getProgress() : 0;
+  }
+
+  isCollapseOverlayVisible() {
+    return this.collapseOverlay ? this.collapseOverlay.isVisible() : false;
+  }
+
+
+  // Phase 3.3: thin wrappers over the EchoOverlay so main.js has a
+  // single dispatcher API. The overlay owns its own THREE.Group so
+  // the chunk-mesh, Phase Lens, Resonance, Anchor, Checkpoint, and
+  // Collapse groups are all independent.
+  showEcho(x, y, z, key, color) {
+    if (this.echoOverlay) this.echoOverlay.showEcho(x, y, z, key, color);
+  }
+
+  updateEchoes(dt, snapshot) {
+    if (this.echoOverlay) this.echoOverlay.updateEchoes(dt, snapshot);
+  }
+
+  clearEcho(key) {
+    if (this.echoOverlay) this.echoOverlay.clearEcho(key);
+  }
+
+  clearEchoes() {
+    if (this.echoOverlay) this.echoOverlay.clearEchoes();
+  }
+
+  getEchoCount() {
+    return this.echoOverlay ? this.echoOverlay.getCount() : 0;
+  }
+
+  getEchoKeys() {
+    return this.echoOverlay ? this.echoOverlay.getKeys() : [];
+  }
+
+  isEchoAt(key) {
+    if (!this.echoOverlay) return false;
+    const keys = this.echoOverlay.getKeys();
+    return keys.indexOf(key) >= 0;
   }
 
   // Phase 2.5: thin wrappers over the ScanOverlay so main.js has a

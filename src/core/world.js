@@ -1075,6 +1075,84 @@ export class World {
     }
   }
 
+
+
+  // ── Phase 3.3: §3.3 Echo API ─────────────────────────────────
+  // Keyed echo map for O(1) pickup lookups + the canonical "x,y,z"
+  // string key. The underlying `_echoes` array stays for back-compat
+  // with the pre-3.3 lore code path (interactNearbyEcho etc); the
+  // §3.3 helpers populate it via addEcho + read via the array.
+
+  /** Spawn an Echo at the given coords. Idempotent (re-spawning the
+   *  same cell is a no-op unless the Echo was collected, in which
+   *  case the new spawn wins - the brief's "one-shot per Echo"
+   *  semantics are owned by `collectEcho`). */
+  spawnEcho(x, y, z, loreKey, biomeId) {
+    const posKey = `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`;
+    const existing = this._echoes.find(e =>
+      e.x === Math.floor(x) && e.y === Math.floor(y) && e.z === Math.floor(z)
+    );
+    if (existing && !existing.collected) return existing;
+    const echo = {
+      type: 'echo',
+      x: Math.floor(x), y: Math.floor(y), z: Math.floor(z),
+      lore: loreKey || '',
+      loreKey: loreKey || posKey,
+      biomeId: Number.isFinite(biomeId) ? biomeId : 0,
+      collected: false,
+      key: posKey,
+    };
+    if (existing) {
+      // overwrite in place
+      Object.assign(existing, echo);
+      return existing;
+    }
+    this._echoes.push(echo);
+    return echo;
+  }
+
+  /** Collect an Echo by key. Returns the Echo data (with lore) or
+   *  null if no uncollected Echo exists at that key. */
+  collectEcho(key) {
+    if (typeof key !== 'string' || key.length === 0) return null;
+    const e = this._echoes.find(ev => ev.key === key && !ev.collected);
+    if (!e) return null;
+    e.collected = true;
+    return { key: e.key, lore: e.lore, x: e.x, y: e.y, z: e.z, biomeId: e.biomeId };
+  }
+
+  /** Return all uncollected Echoes as a plain array (the shape the
+   *  §3.3 pickup helper expects). */
+  listEchoes() {
+    return this._echoes.filter(e => !e.collected).map(e => ({
+      key: e.key,
+      loreKey: e.loreKey || e.key,
+      lore: e.lore,
+      x: e.x, y: e.y, z: e.z,
+      biomeId: e.biomeId,
+    }));
+  }
+
+  /** Return the total spawned Echo count (collected + uncollected). */
+  getTotalEchoes() {
+    return this._echoes.length;
+  }
+
+  /** Return the count of uncollected Echoes. */
+  getUncollectedEchoCount() {
+    return this._echoes.filter(e => !e.collected).length;
+  }
+
+  /** Return the count of collected Echoes. */
+  getCollectedEchoCount() {
+    return this._echoes.filter(e => e.collected).length;
+  }
+
+  /** Clear all Echoes (test reset path). */
+  clearEchoes() {
+    this._echoes = [];
+  }
+
   // ── Phase Lens Scan ──────────────────────────────────────────────
 
   /** Scan phase lens: marks blocks within radius as "scan revealed" in visual feedback */
