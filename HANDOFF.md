@@ -784,3 +784,20 @@ this._pos.y = Math.floor(newY - PLAYER_HEIGHT) + 1 + PLAYER_HEIGHT;
 - `src/core/physics.js` (1 line — landing-snap formula corrected)
 
 **No new tests added** — the headless suite already covers the phase-relative collision; the snap formula is now consistent with the §2.2 collision math. Future session: add a `_test-snap-formula` regression in `tests/headless/` that exercises a single-block landing surface.
+
+## Phase 7 follow-up — CI workflow landed via PR (post-merge)
+
+The GitHub Actions CI workflow (`.github/workflows/ci.yml`) is now live on `main`. It was originally part of the Phase 7 commit (`eab59b9`) but the OAuth token used for git push lacked the `workflow` scope, so the commit was amended to drop the file. The file was then:
+
+1. Pushed to a `phase-7-ci` branch via SSH (`git push origin phase-7-ci`).
+2. Opened as PR #1 ("Phase 7: add CI workflow").
+3. Squashed + merged into `main` (the merge commit is `95d91f7`).
+
+The CI now runs on every push to `main` and every PR targeting `main`:
+- `npm ci`
+- `npm run build`
+- Bundle size check (main entry gzipped < 200 KB)
+- All `tests/headless/test-phase*.cjs` files (looped)
+- `npx playwright install --with-deps chromium`
+- `npm test`
+- Uploads `playwright-report/` + `test-results/` on failure
