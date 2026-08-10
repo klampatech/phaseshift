@@ -1,4 +1,4 @@
-import { PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, PHASE_PHASED, PHASE_COLORS, PHASE_SHIFT_COST, INITIAL_ENERGY, MAX_ENERGY, PHASE_REGEN_RATE_ALPHA, ENERGY_REGEN_RATE } from './constants.js';
+import { PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, PHASE_PHASED, PHASE_COLORS, PHASE_SHIFT_COST, INITIAL_ENERGY, MAX_ENERGY, PHASE_REGEN_RATE_ALPHA, PHASE_DRAIN_RATE_BETA, PHASE_DRAIN_RATE_GAMMA, ENERGY_REGEN_RATE } from './constants.js';
 
 export class PhaseManager {
   constructor() {
@@ -119,11 +119,27 @@ export class PhaseManager {
         this._notifyListeners();
       }
     } else {
-      // Regen energy
-      this._energy = Math.min(MAX_ENERGY, this._energy + this._energyRegenRate * dt * 60);
-      // Extra regen in Alpha phase
+      // Phase 10.1: per-real-second energy flow. The previous
+      // multiplier `dt * 60` made energy scale with frame rate (a
+      // 60fps player recovered 30x faster than a 30fps player).
+      // Now we use `dt` directly: 2.0/sec regen in Alpha, 0.5/sec
+      // drain in Beta, 1.0/sec drain in Gamma. The amplifier
+      // discount is applied by the main loop when computing the
+      // effective drain on shift entry.
+      const dts = Number.isFinite(dt) ? Math.max(0, Math.min(0.1, dt)) : 0;
       if (this._currentPhase === PHASE_ALPHA) {
-        this._energy = Math.min(MAX_ENERGY, this._energy + this._alphaRegenRate * dt * 60);
+        this._energy = Math.min(MAX_ENERGY, this._energy + this._alphaRegenRate * dts);
+      } else if (this._currentPhase === PHASE_BETA) {
+        this._energy = Math.max(0, this._energy - PHASE_DRAIN_RATE_BETA * dts);
+      } else if (this._currentPhase === PHASE_GAMMA) {
+        this._energy = Math.max(0, this._energy - PHASE_DRAIN_RATE_GAMMA * dts);
+      }
+      // Backward-compat: apply the legacy per-frame regen rate if a
+      // caller still asks for it (the main loop no longer sets
+      // ENERGY_REGEN_RATE-driven regen, but the field is preserved
+      // for any test that imports it).
+      if (this._legacyRegenEnabled && this._energyRegenRate > 0) {
+        this._energy = Math.min(MAX_ENERGY, this._energy + this._energyRegenRate * dts);
       }
     }
   }

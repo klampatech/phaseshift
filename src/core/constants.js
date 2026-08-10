@@ -154,7 +154,10 @@ export const PLAYER_CROUCH_SPEED = 0.5;
 export const PLAYER_START = { x: 8, y: 8 };
 export const INITIAL_ENERGY = 100;
 export const MAX_ENERGY = 100;
-export const PHASE_SHIFT_COST = 5;
+// Phase 10.1: energy rebalance — shift cost raised from 5 to 15 so the
+// player can shift ~6 times in a row from full energy, then must rest
+// to recover. The "Phase Collapse" penalty now has real consequence.
+export const PHASE_SHIFT_COST = 15;
 export const PHASE_SHIFT_SPEED = 0.3;
 export const JUMP_VELOCITY = 6;
 export const NOISE_SCALE = 0.01;
@@ -170,10 +173,14 @@ export const BLOCK_PHASE_COLORS = {
   1: { r: 0.25, g: 0.65, b: 0.92 },  // Beta - blue
   2: { r: 0.95, g: 0.78, b: 0.35 },  // Gamma - gold
 };
-export const MAX_PHASE_ENERGY = 100;
-export const PHASE_REGEN_RATE_ALPHA = 0.5;
-export const PHASE_DRAIN_RATE_BETA = 0.2;
-export const PHASE_DRAIN_RATE_GAMMA = 0.4;
+// Phase 10.1: per-real-second rates (the previous values were multiplied
+// by `dt * 60` in phase.js, which made them scale with frame rate).
+// Now energy flows in real seconds: 2.0/sec regen in Alpha, 0.5/sec
+// drain in Beta, 1.0/sec drain in Gamma. A 15-energy shift recovers in
+// 7.5s of Alpha rest; a full drain in Beta takes 200s.
+export const PHASE_REGEN_RATE_ALPHA = 2.0;
+export const PHASE_DRAIN_RATE_BETA = 0.5;
+export const PHASE_DRAIN_RATE_GAMMA = 1.0;
 export const MAX_FATIGUE = 100;
 export const SCAN_COST = 3;
 export const RESONATE_COST = 15;

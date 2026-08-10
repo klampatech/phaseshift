@@ -141,7 +141,7 @@ async function main() {
   console.log('\n=== §9.3 Edge case hardening ===');
 
   // 1. Rapid T-spam: cyclePhase() handles the energy clamp.
-  // PHASE_SHIFT_COST = 5 (see src/core/constants.js).
+  // PHASE_SHIFT_COST = 15 (Phase 10.1 rebalance; see src/core/constants.js).
   const { PhaseManager, PHASE_SHIFT_COST } = await import(pathToFileURL(phaseModPath).href);
   // Import constants directly to drive the test math.
   const constantsMod = await import(pathToFileURL(path.join(ROOT, 'src', 'core', 'constants.js')).href);
@@ -149,9 +149,8 @@ async function main() {
   const MAX_E = constantsMod.MAX_ENERGY;
   const pm = new PhaseManager();
   pm.setEnergy(MAX_E);
-  // 100 cycles: each takes PHASE_COST energy. The 100/5 = 20th cycle
-  // drops energy to 0, the 21st would have to consume 5 more but energy
-  // is exhausted → no-op.
+  // 100 cycles: each takes PHASE_COST energy. floor(100/15) = 6 cycles
+  // succeed, the 7th would consume 15 more but only 10 remains → no-op.
   let successful = 0;
   for (let i = 0; i < 100; i++) {
     if (pm.cyclePhase()) {

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_STABILIZER, MINIMUM_RESPAWN_ENERGY, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL } from './src/core/constants.js';
+import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_STABILIZER, MINIMUM_RESPAWN_ENERGY, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL, PHASE_SHIFT_COST } from './src/core/constants.js';
 import { World } from './src/core/world.js';
 import { PhaseManager } from './src/core/phase.js';
 import { PhysicsManager } from './src/core/physics.js';
@@ -3119,7 +3119,7 @@ if (typeof window !== 'undefined') {
     // Phase 3.4: getShiftCost(from, to) debug hook - returns the
     // effective energy cost after the amplifier discount.
     getShiftCost(from, to) {
-      const base = 5; // PHASE_SHIFT_COST
+      const base = PHASE_SHIFT_COST; // Phase 10.1: rebalanced from 5 to 15
       if (!Number.isFinite(from) || !Number.isFinite(to)) return base;
       const amps = (playerInventory && playerInventory.amplifiers) ? playerInventory.amplifiers : new Set();
       let reduction = 0;

@@ -78,7 +78,7 @@ Mouse: click the blocker to start, then move the mouse to look. `Esc` releases t
 |---|---|
 | **W / A / S / D** | Move |
 | **Space** | Jump |
-| **Shift + Space** | Phase Shift (costs 30 energy; auto-respawns at nearest Stabilizer) |
+| **Shift + Space** | Phase Shift (costs 15 energy; auto-respawns at nearest Stabilizer) |
 | **Q** | Resonance — swap phase presence in a 3×3×3 around you |
 | **E** (hold) | Phase Lens — highlights blocks that differ from the current phase (drains 0.5 energy / sec) |
 | **LMB** | Break block (current phase only) |
@@ -103,7 +103,7 @@ The three **phases** — Alpha, Beta, Gamma — each see a different subset of b
 - **Beta** (magenta): Obsidian + Void are solid; Stone is air. Useful for crossing gaps blocked by Stone.
 - **Gamma** (gold): Stone + Obsidian are solid; Crystal Cavern crystals are air.
 
-You start in **Alpha** with full energy. Each phase shift costs **30 energy**. Energy regenerates at 1/sec in Alpha, 0.5/sec in Beta, 0.25/sec in Gamma. If you run out of energy in Beta or Gamma, you **collapse** — the world sucks you down, then teleports you to the nearest **Stabilizer** (if any) with 30 energy restored. Place Stabilizers freely (free, no energy cost) to build safe respawn points. Without one, you respawn at the original spawn with a "No Stabilizer nearby" warning.
+You start in **Alpha** with full energy (100). Each phase shift costs **15 energy**. Energy flows in real time: 2.0/sec regen in Alpha, 0.5/sec drain in Beta, 1.0/sec drain in Gamma — a 15-energy shift recovers in 7.5s of Alpha rest. If you run out of energy in Beta or Gamma, you **collapse** — the world sucks you down, then teleports you to the nearest **Stabilizer** (if any) with 30 energy restored. Place Stabilizers freely (free, no energy cost) to build safe respawn points. Without one, you respawn at the original spawn with a "No Stabilizer nearby" warning.
 
 **Three Acts** guide your exploration:
 
