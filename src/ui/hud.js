@@ -31,6 +31,11 @@ export class HUD {
       ? document.querySelector('#lore-toast')
       : null;
     this._loreToastTimer = null;
+    // Phase 3.4: amplifier status panel (AB / BG / AG indicators).
+    this._ampStatusEl = (typeof document !== 'undefined')
+      ? document.querySelector('#amplifier-status')
+      : null;
+    this._lastAmpString = null;
     this._createElements();
   }
 
@@ -517,6 +522,27 @@ export class HUD {
     this._loreToastTimer = setTimeout(() => {
       if (this._loreToastEl) this._loreToastEl.style.opacity = '0';
     }, 5000);
+  }
+
+  /**
+   * Phase 3.4: update the `#amplifier-status` HUD element. The
+   * format is `AMPS: AB BG AG` (lit if unlocked, dim if not).
+   * The DOM write only fires when the element exists + the
+   * status string changes (cheap: one DOM write per unlock).
+   *
+   * @param {Set<string>|string[]} unlocked - the unlocked
+   *   amplifier names (e.g. 'amplifierAB').
+   */
+  setAmplifierStatus(unlocked) {
+    if (!this._ampStatusEl) return;
+    const set = (unlocked instanceof Set) ? unlocked : new Set(Array.isArray(unlocked) ? unlocked : []);
+    const isAB = set.has('amplifierAB');
+    const isBG = set.has('amplifierBG');
+    const isAG = set.has('amplifierAG');
+    const str = `AMPS: ${isAB ? '●' : '○'} AB  ${isBG ? '●' : '○'} BG  ${isAG ? '●' : '○'} AG`;
+    if (this._lastAmpString === str) return;
+    this._lastAmpString = str;
+    this._ampStatusEl.textContent = str;
   }
 
   showBlockHint(visible) {

@@ -1324,6 +1324,133 @@ export class EchoOverlay {
   }
 }
 
+// Phase 3.4: ResonanceCoreOverlay - floating amplifier meshes
+// (one per BLOCK_RESONANCE_CORE in the world). Each Core is a
+// rotating octahedron with a faint glow ring; the color is
+// picked by `resonanceCoreColorForBiome(biomeId)`. The mesh
+// lives in its own THREE.Group named 'resonanceCoreOverlay' so
+// the chunk-mesh, Phase Lens, Resonance, Anchor, Checkpoint,
+// Collapse, and Echo groups stay independent.
+export class ResonanceCoreOverlay {
+  constructor() {
+    this.group = new THREE.Group();
+    this.group.name = 'resonanceCoreOverlay';
+    /** Map<key, { mesh, ring, key, color }> */
+    this.entries = new Map();
+    /** Per-Core animation phase (radians) for out-of-sync bobbing */
+    this._animTime = 0;
+  }
+
+  showResonanceCore(x, y, z, key, color, amplifier) {
+    if (typeof key !== 'string' || key.length === 0) return;
+    if (!this.entries.has(key)) {
+      const geometry = new THREE.OctahedronGeometry(0.32, 0);
+      // Cores are larger than Echoes (0.25 vs 0.32) and have a
+      // brighter color (no opacity falloff).
+      const c = (Array.isArray(color) && color.length >= 3) ? color : [0.85, 0.78, 0.3];
+      const material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(c[0], c[1], c[2]),
+        transparent: true,
+        opacity: 0.95,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(x, y + 1, z);
+      mesh.userData = { key, baseY: y + 1, phase: Math.random() * Math.PI * 2, amplifier: amplifier || null };
+      this.group.add(mesh);
+      // Faint glow ring at the base of the Core
+      const ringGeometry = new THREE.RingGeometry(0.4, 0.5, 16);
+      const ringMaterial = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(c[0], c[1], c[2]),
+        transparent: true,
+        opacity: 0.4,
+        side: THREE.DoubleSide,
+      });
+      const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+      ring.position.set(x, y + 0.05, z);
+      ring.rotation.x = -Math.PI / 2;
+      this.group.add(ring);
+      this.entries.set(key, { mesh, ring, key, color: c, amplifier: amplifier || null });
+    } else {
+      const entry = this.entries.get(key);
+      entry.mesh.position.set(x, y + 1, z);
+      if (entry.ring) entry.ring.position.set(x, y + 0.05, z);
+      if (Array.isArray(color) && color.length >= 3) {
+        entry.color = color;
+        if (entry.mesh.material && entry.mesh.material.color) {
+          entry.mesh.material.color.setRGB(color[0], color[1], color[2]);
+        }
+        if (entry.ring && entry.ring.material && entry.ring.material.color) {
+          entry.ring.material.color.setRGB(color[0], color[1], color[2]);
+        }
+      }
+      if (amplifier) entry.amplifier = amplifier;
+    }
+  }
+
+  updateResonanceCores(dt, snapshot) {
+    const d = (typeof dt === 'number' && Number.isFinite(dt)) ? dt : 0;
+    this._animTime += d;
+    const presentKeys = new Set();
+    const list = Array.isArray(snapshot) ? snapshot : [];
+    for (const e of list) {
+      if (!e || typeof e !== 'object' || !e.key) continue;
+      if (!this.entries.has(e.key)) {
+        const c = (Array.isArray(e.color) && e.color.length >= 3) ? e.color : [0.85, 0.78, 0.3];
+        this.showResonanceCore(e.x, e.y, e.z, e.key, c, e.amplifier);
+      }
+      const entry = this.entries.get(e.key);
+      if (!entry) continue;
+      presentKeys.add(e.key);
+      const t = this._animTime;
+      const ph = (entry.mesh.userData && Number.isFinite(entry.mesh.userData.phase))
+        ? entry.mesh.userData.phase : 0;
+      // Slower + larger bob than Echoes
+      entry.mesh.position.y = (e.y || 0) + 1 + Math.sin(t * 1.2 + ph) * 0.2;
+      entry.mesh.rotation.y = t * 0.5 + ph;
+      if (entry.ring) {
+        entry.ring.rotation.z = t * 0.3 + ph;
+      }
+    }
+    for (const key of Array.from(this.entries.keys())) {
+      if (!presentKeys.has(key)) this.clearResonanceCore(key);
+    }
+  }
+
+  clearResonanceCore(key) {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    if (entry.mesh && entry.mesh.parent) entry.mesh.parent.remove(entry.mesh);
+    if (entry.mesh && entry.mesh.geometry) entry.mesh.geometry.dispose();
+    if (entry.mesh && entry.mesh.material) entry.mesh.material.dispose();
+    if (entry.ring && entry.ring.parent) entry.ring.parent.remove(entry.ring);
+    if (entry.ring && entry.ring.geometry) entry.ring.geometry.dispose();
+    if (entry.ring && entry.ring.material) entry.ring.material.dispose();
+    this.entries.delete(key);
+  }
+
+  clearResonanceCores() {
+    for (const key of Array.from(this.entries.keys())) this.clearResonanceCore(key);
+  }
+
+  getCount() {
+    return this.entries.size;
+  }
+
+  getKeys() {
+    return Array.from(this.entries.keys());
+  }
+
+  getAmplifierAt(key) {
+    const entry = this.entries.get(key);
+    return entry ? (entry.amplifier || null) : null;
+  }
+
+  dispose() {
+    this.clearResonanceCores();
+    if (this.group.parent) this.group.parent.remove(this.group);
+  }
+}
+
 export class Renderer {
   constructor(world, scene, camera, phaseManager, webglRenderer) {
     this.world = world;
@@ -1390,6 +1517,10 @@ export class Renderer {
     // Phase 3.3: EchoOverlay (floating crystal meshes above each Echo).
     this.echoOverlay = new EchoOverlay();
     scene.add(this.echoOverlay.group);
+    // Phase 3.4: ResonanceCoreOverlay (floating amplifier meshes
+    // above each BLOCK_RESONANCE_CORE in Crystal Caverns).
+    this.resonanceCoreOverlay = new ResonanceCoreOverlay();
+    scene.add(this.resonanceCoreOverlay.group);
   }
 
   // Phase 2.6: thin wrappers over the ResonancePulse so main.js has
@@ -1505,6 +1636,45 @@ export class Renderer {
     if (!this.echoOverlay) return false;
     const keys = this.echoOverlay.getKeys();
     return keys.indexOf(key) >= 0;
+  }
+
+  // Phase 3.4: thin wrappers over the ResonanceCoreOverlay so
+  // main.js has a single dispatcher API. The overlay owns its
+  // own THREE.Group so the chunk-mesh, Phase Lens, Resonance,
+  // Anchor, Checkpoint, Collapse, and Echo groups stay
+  // independent.
+  showResonanceCore(x, y, z, key, color, amplifier) {
+    if (this.resonanceCoreOverlay) this.resonanceCoreOverlay.showResonanceCore(x, y, z, key, color, amplifier);
+  }
+
+  updateResonanceCores(dt, snapshot) {
+    if (this.resonanceCoreOverlay) this.resonanceCoreOverlay.updateResonanceCores(dt, snapshot);
+  }
+
+  clearResonanceCore(key) {
+    if (this.resonanceCoreOverlay) this.resonanceCoreOverlay.clearResonanceCore(key);
+  }
+
+  clearResonanceCores() {
+    if (this.resonanceCoreOverlay) this.resonanceCoreOverlay.clearResonanceCores();
+  }
+
+  getResonanceCoreCount() {
+    return this.resonanceCoreOverlay ? this.resonanceCoreOverlay.getCount() : 0;
+  }
+
+  getResonanceCoreKeys() {
+    return this.resonanceCoreOverlay ? this.resonanceCoreOverlay.getKeys() : [];
+  }
+
+  isResonanceCoreAt(key) {
+    if (!this.resonanceCoreOverlay) return false;
+    const keys = this.resonanceCoreOverlay.getKeys();
+    return keys.indexOf(key) >= 0;
+  }
+
+  getResonanceCoreAmplifierAt(key) {
+    return this.resonanceCoreOverlay ? this.resonanceCoreOverlay.getAmplifierAt(key) : null;
   }
 
   // Phase 2.5: thin wrappers over the ScanOverlay so main.js has a

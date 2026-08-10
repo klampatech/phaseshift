@@ -35,6 +35,8 @@ import { COLLAPSE_DURATION, COLLAPSE_BANNER_TEXT, FALLBACK_WARNING_TEXT, COLLAPS
 // Phase 3.3: Echo pickup radius + lore library + key formatter. The
 // pure module owns the §3.3 contract; main.js is the dispatcher.
 import { PICKUP_RADIUS as ECHO_PICKUP_RADIUS, ECHO_LORE_LIBRARY, echoLoreForKey, pickupResult as echoPickupResult, echoKey, echoColorForBiome } from './src/collect/echo.js';
+import { PICKUP_RADIUS as AMPLIFIER_PICKUP_RADIUS, resonanceCoreKey, resonanceCoreColorForBiome, pickAmplifierForKey, pickupResult as resonancePickupResult, amplifierApplies } from './src/collect/resonance.js';
+import { AMPLIFIER_SHIFT_REDUCTION, AMPLIFIER_TRANSITIONS, AMPLIFIER_AB, AMPLIFIER_BG, AMPLIFIER_AG, AMPLIFIER_PICKUP_RADIUS as _AMP_R, AMPLIFIER_UNLOCK_TEXT } from './src/core/constants.js';
 // Phase 3.3: Player inventory (collected Echoes + unlocked
 // amplifiers). The save/load round-trip + the per-frame pickup
 // tick both delegate to this module.
@@ -900,6 +902,7 @@ function gameLoop(time) {
   // teleport + energy restore on completion.
   tickCollapsePerFrame(deltaTime);
   tickEchoesPerFrame(deltaTime);
+  tickResonanceCoresPerFrame(deltaTime);
 
   // Handle Block Interaction (Mouse)
   // Already handled by event listeners
@@ -1654,6 +1657,63 @@ function tickEchoesPerFrame(dt) {
   }
 }
 
+// Phase 3.4: tickResonanceCoresPerFrame(dt) - drive the
+// floating animation on the ResonanceCoreOverlay + run the
+// pickup loop against the player's current position. The pickup
+// is one-shot per Core (world.collectResonanceCore +
+// inventory.addAmplifier + clearResonanceCore).
+function tickResonanceCoresPerFrame(dt) {
+  if (!world || typeof world.listResonanceCores !== 'function') return;
+  const snapshot = world.listResonanceCores();
+  if (renderer && typeof renderer.updateResonanceCores === 'function') {
+    renderer.updateResonanceCores(dt, snapshot);
+  }
+  if (!physicsManager || typeof physicsManager.getPos !== 'function') return;
+  const pos = physicsManager.getPos();
+  const playerPos = pos && typeof pos === 'object'
+    ? { x: pos.x, y: pos.y, z: pos.z }
+    : null;
+  if (!playerPos) return;
+  // Augment the snapshot with a `color` field for the overlay
+  // (the World's listResonanceCores() doesn't include color, but
+  // the overlay needs it for showResonanceCore).
+  const augmented = snapshot.map((c) => ({
+    ...c,
+    color: (typeof resonanceCoreColorForBiome === 'function')
+      ? [
+          ((resonanceCoreColorForBiome(c.biomeId) >> 16) & 0xff) / 255,
+          ((resonanceCoreColorForBiome(c.biomeId) >> 8) & 0xff) / 255,
+          (resonanceCoreColorForBiome(c.biomeId) & 0xff) / 255,
+        ]
+      : [0.85, 0.78, 0.3],
+  }));
+  if (renderer && typeof renderer.updateResonanceCores === 'function') {
+    renderer.updateResonanceCores(dt, augmented);
+  }
+  const hit = resonancePickupResult(playerPos, snapshot, AMPLIFIER_PICKUP_RADIUS);
+  if (hit && hit.key) {
+    const result = world.collectResonanceCore(hit.key);
+    if (result) {
+      addAmplifier(playerInventory, result.amplifier);
+      if (renderer && typeof renderer.clearResonanceCore === 'function') {
+        renderer.clearResonanceCore(hit.key);
+      }
+      if (hud && typeof hud.showNotification === 'function') {
+        const msg = (AMPLIFIER_UNLOCK_TEXT && AMPLIFIER_UNLOCK_TEXT[result.amplifier])
+          || `Amplifier ${result.amplifier} unlocked`;
+        hud.showNotification(msg, '#aaffaa');
+      }
+      if (hud && typeof hud.setAmplifierStatus === 'function') {
+        hud.setAmplifierStatus(playerInventory.amplifiers);
+      }
+    }
+  }
+  // Always update the amplifier status HUD (cheap, fires on change only).
+  if (hud && typeof hud.setAmplifierStatus === 'function') {
+    hud.setAmplifierStatus(playerInventory.amplifiers);
+  }
+}
+
 // Phase 3.2: tickCollapsePerFrame(dt).
 function tickCollapsePerFrame(dt) {
   if (!collapseState || !collapseState.isCollapsing) {
@@ -2351,6 +2411,84 @@ if (typeof window !== 'undefined') {
     getEchoCounterText() {
       const el = (typeof document !== 'undefined') ? document.querySelector('#echo-counter') : null;
       return el ? el.textContent : null;
+    },
+    // Phase 3.4: forceSpawnResonanceCore(x, y, z, amplifier?, biomeId?) debug hook.
+    forceSpawnResonanceCore(x, y, z, amplifier, biomeId) {
+      if (!world || typeof world.spawnResonanceCore !== 'function') return null;
+      const amp = (typeof amplifier === 'string' && amplifier.length > 0)
+        ? amplifier
+        : pickAmplifierForKey(resonanceCoreKey(x, y, z));
+      const biome = Number.isFinite(biomeId) ? biomeId : (world.getBiome ? world.getBiome(Math.floor(x), Math.floor(z)) : 0);
+      const core = world.spawnResonanceCore(x, y, z, amp, biome);
+      if (renderer && typeof renderer.showResonanceCore === 'function') {
+        renderer.showResonanceCore(Math.floor(x), Math.floor(y), Math.floor(z), core.key, resonanceCoreColorForBiome(biome), amp);
+      }
+      return {
+        ok: !!core,
+        key: core.key,
+        amplifier: core.amplifier,
+        x: core.x, y: core.y, z: core.z,
+        biomeId: core.biomeId,
+      };
+    },
+    // Phase 3.4: forceCollectResonanceCore(key) debug hook.
+    forceCollectResonanceCore(key) {
+      if (!world || typeof world.collectResonanceCore !== 'function') return null;
+      const result = world.collectResonanceCore(key);
+      if (result) {
+        addAmplifier(playerInventory, result.amplifier);
+        if (renderer && typeof renderer.clearResonanceCore === 'function') {
+          renderer.clearResonanceCore(key);
+        }
+        if (hud && typeof hud.setAmplifierStatus === 'function') {
+          hud.setAmplifierStatus(playerInventory.amplifiers);
+        }
+      }
+      return result ? { ok: true, ...result } : { ok: false };
+    },
+    // Phase 3.4: getResonanceCores() debug hook.
+    getResonanceCores() {
+      if (!world || typeof world.listResonanceCores !== 'function') return [];
+      return world.listResonanceCores();
+    },
+    // Phase 3.4: getResonanceCoreCount() debug hook.
+    getResonanceCoreCount() {
+      return renderer && typeof renderer.getResonanceCoreCount === 'function' ? renderer.getResonanceCoreCount() : 0;
+    },
+    // Phase 3.4: getResonanceCoreKeys() debug hook.
+    getResonanceCoreKeys() {
+      return renderer && typeof renderer.getResonanceCoreKeys === 'function' ? renderer.getResonanceCoreKeys() : [];
+    },
+    // Phase 3.4: getResonanceCoreAmplifierAt(key) debug hook.
+    getResonanceCoreAmplifierAt(key) {
+      return renderer && typeof renderer.getResonanceCoreAmplifierAt === 'function' ? renderer.getResonanceCoreAmplifierAt(key) : null;
+    },
+    // Phase 3.4: isResonanceCoreAt(key) debug hook.
+    isResonanceCoreAt(key) {
+      return renderer && typeof renderer.isResonanceCoreAt === 'function' ? renderer.isResonanceCoreAt(key) : false;
+    },
+    // Phase 3.4: getAmplifierStatusText() debug hook.
+    getAmplifierStatusText() {
+      const el = (typeof document !== 'undefined') ? document.querySelector('#amplifier-status') : null;
+      return el ? el.textContent : null;
+    },
+    // Phase 3.4: getShiftCost(from, to) debug hook - returns the
+    // effective energy cost after the amplifier discount.
+    getShiftCost(from, to) {
+      const base = 5; // PHASE_SHIFT_COST
+      if (!Number.isFinite(from) || !Number.isFinite(to)) return base;
+      const amps = (playerInventory && playerInventory.amplifiers) ? playerInventory.amplifiers : new Set();
+      let reduction = 0;
+      for (const amp of amps) {
+        if (amplifierApplies(amp, from, to)) reduction += AMPLIFIER_SHIFT_REDUCTION;
+      }
+      return Math.max(0, base - reduction);
+    },
+    // Phase 3.4: clearResonanceCores() debug hook.
+    clearResonanceCores() {
+      if (world && typeof world.clearResonanceCores === 'function') world.clearResonanceCores();
+      if (renderer && typeof renderer.clearResonanceCores === 'function') renderer.clearResonanceCores();
+      return true;
     },
     // Phase 3.3: isEchoAt(key) debug hook.
     isEchoAt(key) {

@@ -1423,7 +1423,74 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
   const phase28Ok = Object.values(phase28).every(Boolean);
   const phase31Ok = Object.values(phase31).every(Boolean);
   const phase32Ok = Object.values(phase32).every(Boolean);
+  // ── Phase 3.4 (Resonance Cores / Crystal Caverns amplifiers) ─
+  // The Phase 3.4 work turns Crystal Caverns floating cores into
+  // collectible amplifier objects (AB / BG / AG) that reduce the
+  // energy cost of the matching phase shift. The pure module
+  // src/collect/resonance.js owns the pickup radius, the
+  // amplifier mapping, and the floating animation. main.js wires
+  // the per-frame pickup loop + the debug hooks.
+  const resonanceSrc = path.resolve(__dirname, '..', '..', 'src', 'collect', 'resonance.js');
+  const resonanceText2 = fs2.existsSync(resonanceSrc) ? fs2.readFileSync(resonanceSrc, 'utf8') : '';
+  const phase34 = {
+    // src/collect/resonance.js exports
+    phase34_resonance_module_exports_pickup_radius: /export\s+const\s+PICKUP_RADIUS\s*=/.test(resonanceText2),
+    phase34_resonance_module_exports_resonance_core_key: /export\s+function\s+resonanceCoreKey/.test(resonanceText2),
+    phase34_resonance_module_exports_resonance_core_color_for_biome: /export\s+function\s+resonanceCoreColorForBiome/.test(resonanceText2),
+    phase34_resonance_module_exports_pick_amplifier_for_key: /export\s+function\s+pickAmplifierForKey/.test(resonanceText2),
+    phase34_resonance_module_exports_pickup_result: /export\s+function\s+pickupResult/.test(resonanceText2),
+    phase34_resonance_module_exports_is_within_radius: /export\s+function\s+isWithinRadius/.test(resonanceText2),
+    phase34_resonance_module_exports_floating_offset: /export\s+function\s+floatingOffset/.test(resonanceText2),
+    phase34_resonance_module_exports_core_to_world_data: /export\s+function\s+coreToWorldData/.test(resonanceText2),
+    phase34_resonance_module_exports_is_resonance_core_block: /export\s+function\s+isResonanceCoreBlock/.test(resonanceText2),
+    phase34_resonance_module_exports_amplifier_applies: /export\s+function\s+amplifierApplies/.test(resonanceText2),
+    // src/core/constants.js
+    phase34_constants_block_resonance_core: /export\s+const\s+BLOCK_RESONANCE_CORE\s*=\s*16\b/.test(constantsText),
+    phase34_constants_amplifier_pickup_radius: /export\s+const\s+AMPLIFIER_PICKUP_RADIUS\s*=\s*1\.5\b/.test(constantsText),
+    phase34_constants_amplifier_transitions: /export\s+const\s+AMPLIFIER_TRANSITIONS\s*=/.test(constantsText),
+    phase34_constants_amplifier_unlock_text: /export\s+const\s+AMPLIFIER_UNLOCK_TEXT\s*=/.test(constantsText),
+    phase34_block_properties_has_resonance_core: /\[BLOCK_RESONANCE_CORE\]:\s*\{/.test(constantsText),
+    // src/core/world.js
+    phase34_world_spawn_resonance_core: /spawnResonanceCore\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*amplifier\s*,\s*biomeId\s*\)/.test(worldText),
+    phase34_world_collect_resonance_core: /collectResonanceCore\s*\(\s*key\s*\)/.test(worldText),
+    phase34_world_list_resonance_cores: /listResonanceCores\s*\(\s*\)/.test(worldText),
+    phase34_world_clear_resonance_cores: /clearResonanceCores\s*\(\s*\)/.test(worldText),
+    phase34_world_get_total_resonance_cores: /getTotalResonanceCores\s*\(\s*\)/.test(worldText),
+    // src/render/renderer.js
+    phase34_renderer_resonance_core_overlay_class_exported: /export\s+class\s+ResonanceCoreOverlay\b/.test(rendererText),
+    phase34_renderer_resonance_core_overlay_own_group: /class\s+ResonanceCoreOverlay[\s\S]{0,2500}?this\.group\.name\s*=\s*['"]resonanceCoreOverlay['"]/.test(rendererText),
+    phase34_renderer_show_resonance_core_forwards: /showResonanceCore\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*key\s*,\s*color\s*,\s*amplifier\s*\)\s*\{[\s\S]*?this\.resonanceCoreOverlay\.showResonanceCore/.test(rendererText),
+    phase34_renderer_update_resonance_cores_forwards: /updateResonanceCores\s*\(\s*dt\s*,\s*snapshot\s*\)\s*\{[\s\S]*?this\.resonanceCoreOverlay\.updateResonanceCores/.test(rendererText),
+    phase34_renderer_clear_resonance_core_forwards: /clearResonanceCore\s*\(\s*key\s*\)\s*\{[\s\S]*?this\.resonanceCoreOverlay\.clearResonanceCore/.test(rendererText),
+    phase34_renderer_clear_resonance_cores_forwards: /clearResonanceCores\s*\(\s*\)\s*\{[\s\S]*?this\.resonanceCoreOverlay\.clearResonanceCores/.test(rendererText),
+    phase34_renderer_get_resonance_core_count: /getResonanceCoreCount\s*\(\s*\)/.test(rendererText),
+    // src/ui/hud.js
+    phase34_hud_constructor_queries_amp_status: /querySelector\(['"]#amplifier-status['"]\)/.test(hudText2),
+    phase34_hud_set_amplifier_status_method: /setAmplifierStatus\s*\(\s*unlocked\s*\)/.test(hudText2),
+    // index.html
+    phase34_html_amplifier_status_element: /id\s*=\s*["']amplifier-status["']/.test(htmlText2),
+    phase34_html_amplifier_status_css: /#amplifier-status\s*\{/.test(htmlText2),
+    // main.js
+    phase34_main_imports_resonance: /import\s*\{[^}]*resonanceCoreKey[^}]*\}\s*from\s*['"]\.\/src\/collect\/resonance\.js['"]/.test(srcText),
+    phase34_main_tick_resonance_cores_per_frame: /function\s+tickResonanceCoresPerFrame\s*\(\s*dt\s*\)/.test(srcText),
+    phase34_main_tick_resonance_cores_per_frame_called: /tickResonanceCoresPerFrame\s*\(\s*deltaTime\s*\)/.test(srcText),
+    phase34_main_force_spawn_resonance_core: /__phaseShifter__[\s\S]*?forceSpawnResonanceCore\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*amplifier\s*,\s*biomeId\s*\)/.test(srcText),
+    phase34_main_force_collect_resonance_core: /__phaseShifter__[\s\S]*?forceCollectResonanceCore\s*\(\s*key\s*\)/.test(srcText),
+    phase34_main_get_resonance_cores: /__phaseShifter__[\s\S]*?getResonanceCores\s*\(\s*\)/.test(srcText),
+    phase34_main_get_resonance_core_count: /__phaseShifter__[\s\S]*?getResonanceCoreCount\s*\(\s*\)/.test(srcText),
+    phase34_main_get_amplifier_status_text: /__phaseShifter__[\s\S]*?getAmplifierStatusText\s*\(\s*\)/.test(srcText),
+    phase34_main_get_shift_cost: /__phaseShifter__[\s\S]*?getShiftCost\s*\(\s*from\s*,\s*to\s*\)/.test(srcText),
+    phase34_debug_tick_resonance_cores_per_frame_hook: /__phaseShifter__[\s\S]*?tickResonanceCoresPerFrame\s*\(\s*dt\s*\)/.test(srcText),
+    phase34_main_hud_set_amplifier_status_wired: /hud\.setAmplifierStatus\s*\(\s*playerInventory\.amplifiers\s*\)/.test(srcText),
+  };
+
+  console.log('\n=== Phase 3.4 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase34, null, 2));
+  console.log('\n=== Phase 3.3 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase33, null, 2));
+  const phase34Ok = Object.values(phase34).every(Boolean);
   const phase33Ok = Object.values(phase33).every(Boolean);
+  const phase34Ok_ = phase34Ok;
   process.exit(
     summary.structural_dom_all_present &&
     summary.no_unrelated_pageerrors &&
@@ -1444,7 +1511,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase28Ok &&
     phase31Ok &&
     phase32Ok &&
-    phase33Ok ? 0 : 1
+    phase33Ok && phase34Ok_ ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

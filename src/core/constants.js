@@ -37,6 +37,7 @@ export const BLOCK_GOLD_ORE = 12;
 export const BLOCK_WATER = 13;
 export const BLOCK_ENERGY = 14;
 export const BLOCK_STABILIZER = 15;
+export const BLOCK_RESONANCE_CORE = 16;
 export const BLOCK_ECHO = 17;
 
 
@@ -90,6 +91,7 @@ export const BLOCK_PROPERTIES = {
   [BLOCK_ENERGY]:    { name: 'Energy',    color: [235, 204, 50], solid: false, transparent: true,  phase: [PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA], phaseSolid: [false, false, false], isResource: true, immovable: false },
   [BLOCK_STABILIZER]: { name: 'Stabilizer', color: [255, 102, 68], solid: true,  transparent: false, phase: [PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA], phaseSolid: [true, true, true], isResource: false, immovable: true },
   [BLOCK_ECHO]:       { name: 'Echo',       color: [180, 220, 255], solid: false, transparent: true,  phase: [PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA], phaseSolid: [false, false, false], isResource: false, immovable: true },
+  [BLOCK_RESONANCE_CORE]: { name: 'Resonance Core', color: [235, 200, 50], solid: false, transparent: true, phase: [PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA], phaseSolid: [false, false, false], isResource: true, immovable: true },
 };
 
 // ── Biome Constants ──────────────────────────────────────────────
@@ -132,6 +134,13 @@ export const AMPLIFIER_SHIFT_REDUCTION = 1.5;
 
 /** Drain rate reduction per matching amplifier */
 export const AMPLIFIER_DRAIN_REDUCTION = 0.05;
+
+/** Map an amplifier to the two phases its transition covers */
+export const AMPLIFIER_TRANSITIONS = Object.freeze({
+  [AMPLIFIER_AB]: [0, 1], // PHASE_ALPHA <-> PHASE_BETA
+  [AMPLIFIER_BG]: [1, 2], // PHASE_BETA <-> PHASE_GAMMA
+  [AMPLIFIER_AG]: [0, 2], // PHASE_ALPHA <-> PHASE_GAMMA
+});
 
 // ── Player / Movement Constants ──────────────────────────────────
 export const COLS = 20;
@@ -244,6 +253,18 @@ export const ECHO_PICKUP_RADIUS = 1.5;
 // Phase 3.3: Echo lore toast duration (seconds). The §3.3 brief
 // specifies a 5-second display window before the lore toast fades.
 export const ECHO_LORE_TTL = 5;
+
+// ── Resonance Core / Amplifier Constants (Phase 3.4) ─────────────
+/** Pickup radius (blocks, cubic) for Resonance Cores - mirror of ECHO_PICKUP_RADIUS */
+export const AMPLIFIER_PICKUP_RADIUS = 1.5;
+/** Resonance Cores are persistent (don't fade after placement) */
+export const RESONANCE_CORE_LIFETIME = 0;
+/** Per-Core amplifier unlock announcement */
+export const AMPLIFIER_UNLOCK_TEXT = Object.freeze({
+  [AMPLIFIER_AB]: 'Amplifier AB unlocked - Alpha<->Beta shifts cost less',
+  [AMPLIFIER_BG]: 'Amplifier BG unlocked - Beta<->Gamma shifts cost less',
+  [AMPLIFIER_AG]: 'Amplifier AG unlocked - Alpha<->Gamma shifts cost less',
+});
 
 
 // ── Tool Constants ───────────────────────────────────────────────

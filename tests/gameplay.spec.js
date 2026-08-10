@@ -1135,4 +1135,76 @@ test('placeBlock debug hook writes Stone at (x, y, z) in the current phase (Phas
     expect(r2.counterText).toMatch(/\d+\s*\/\s*\d+/);
   });
 
+  test('Resonance Core: forceSpawn + amplifier unlock + cost reduction (Phase 3.4)', async ({ page }) => {
+    // Phase 3.4 acceptance:
+    //   - Each Resonance Core unlocks one amplifier (AB / BG / AG).
+    //   - Amplifiers reduce the energy cost of phase shifts in
+    //     their transition.
+    //   - The HUD's #amplifier-status lights up the unlocked amp.
+    //   - The save blob round-trips the amplifier list (handled
+    //     in the §3.3 inventory.save path).
+    await page.waitForTimeout(500);
+
+    // 1) forceSpawnResonanceCore creates the world entry + the
+    //    amplifier mesh + a tracked key.
+    const r1 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const playerPos = ps.physicsManager.getPos();
+      const x = Math.floor(playerPos.x) + 1;
+      const z = Math.floor(playerPos.z) + 1;
+      const y = Math.floor(playerPos.y);
+      const r = ps.forceSpawnResonanceCore(x, y, z, 'amplifierAB', 6);
+      return {
+        ok: r && r.ok,
+        key: r && r.key,
+        amplifier: r && r.amplifier,
+        meshCount: ps.getResonanceCoreCount(),
+        keys: ps.getResonanceCoreKeys(),
+        isAt: ps.isResonanceCoreAt(r && r.key),
+      };
+    });
+    expect(r1.ok).toBe(true);
+    expect(r1.key).toBeTruthy();
+    expect(r1.amplifier).toBe('amplifierAB');
+    expect(r1.meshCount).toBeGreaterThanOrEqual(1);
+    expect(r1.keys).toContain(r1.key);
+    expect(r1.isAt).toBe(true);
+
+    // 2) Move player to the core + tick the loop -> collected.
+    const r2 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const keys = ps.getResonanceCoreKeys();
+      if (keys.length === 0) return { picked: false };
+      const key = keys[0];
+      const [cx, cy, cz] = key.split(',').map(Number);
+      ps.physicsManager.setPosition(cx + 0.5, cy, cz + 0.5);
+      ps.tickResonanceCoresPerFrame(0.1);
+      const inv = ps.getInventory();
+      return {
+        picked: inv.amplifierCount >= 1,
+        amplifierCount: inv.amplifierCount,
+        amplifiers: inv.amplifiers,
+        coreCount: ps.getResonanceCoreCount(),
+        statusText: ps.getAmplifierStatusText(),
+      };
+    });
+    expect(r2.picked).toBe(true);
+    expect(r2.amplifierCount).toBeGreaterThanOrEqual(1);
+    expect(r2.amplifiers).toContain('amplifierAB');
+    expect(r2.coreCount).toBeLessThanOrEqual(r1.meshCount);
+    expect(r2.statusText).toBeTruthy();
+    expect(r2.statusText).toMatch(/AB/);
+
+    // 3) getShiftCost returns the base cost minus the amplifier reduction
+    //    (5 - 1.5 = 3.5 for an AB shift with one AB amplifier).
+    const r3 = await page.evaluate(() => {
+      const ps = window.__phaseShifter__;
+      const base = ps.getShiftCost(0, 0); // same phase = no shift
+      const abCost = ps.getShiftCost(0, 1); // AB shift with AB amp
+      return { base, abCost };
+    });
+    expect(r3.abCost).toBeLessThan(5);
+    expect(r3.abCost).toBeCloseTo(3.5, 1);
+  });
+
 });

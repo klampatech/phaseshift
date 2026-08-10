@@ -1214,4 +1214,85 @@ export class World {
   applyResonanceState(cores) {
     this._resonanceCores = cores || [];
   }
+
+  // ── Phase 3.4: §3.4 Resonance Core API (Crystal Caverns amplifiers)
+  // The §3.4 work turns Crystal Caverns floating cores into
+  // collectible amplifier objects. Each core has:
+  //   - x/y/z (int)
+  //   - amplifier (string: AMPLIFIER_AB / AMPLIFIER_BG / AMPLIFIER_AG)
+  //   - biomeId (int)
+  //   - collected (bool - false until pickup)
+  //   - key (string - canonical "x,y,z")
+  // Mirror of the §3.3 Echo API for the same pick-up pattern.
+
+  /** Spawn a Resonance Core at the given coords. Idempotent unless
+   *  the existing core was collected, in which case the new spawn
+   *  wins (mirror of `spawnEcho`). */
+  spawnResonanceCore(x, y, z, amplifier, biomeId) {
+    const posKey = `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`;
+    if (!Array.isArray(this._resonanceCores)) this._resonanceCores = [];
+    const existing = this._resonanceCores.find(c =>
+      c.x === Math.floor(x) && c.y === Math.floor(y) && c.z === Math.floor(z)
+    );
+    if (existing && !existing.collected) return existing;
+    const core = {
+      type: 'resonance-core',
+      x: Math.floor(x), y: Math.floor(y), z: Math.floor(z),
+      amplifier: amplifier || 'amplifierAB',
+      biomeId: Number.isFinite(biomeId) ? biomeId : 0,
+      collected: false,
+      key: posKey,
+    };
+    if (existing) {
+      Object.assign(existing, core);
+      return existing;
+    }
+    this._resonanceCores.push(core);
+    return core;
+  }
+
+  /** Collect a Resonance Core by key. Returns the Core data (with
+   *  amplifier + key) or null if no uncollected Core exists. */
+  collectResonanceCore(key) {
+    if (typeof key !== 'string' || key.length === 0) return null;
+    if (!Array.isArray(this._resonanceCores)) return null;
+    const c = this._resonanceCores.find(cv => cv.key === key && !cv.collected);
+    if (!c) return null;
+    c.collected = true;
+    return { key: c.key, amplifier: c.amplifier, x: c.x, y: c.y, z: c.z, biomeId: c.biomeId };
+  }
+
+  /** Return all uncollected Resonance Cores as a plain array (the
+   *  shape the §3.4 pickup helper expects). */
+  listResonanceCores() {
+    if (!Array.isArray(this._resonanceCores)) return [];
+    return this._resonanceCores.filter(c => !c.collected).map(c => ({
+      key: c.key,
+      amplifier: c.amplifier,
+      x: c.x, y: c.y, z: c.z,
+      biomeId: c.biomeId,
+    }));
+  }
+
+  /** Return the total spawned Resonance Core count (collected + uncollected). */
+  getTotalResonanceCores() {
+    return Array.isArray(this._resonanceCores) ? this._resonanceCores.length : 0;
+  }
+
+  /** Return the count of uncollected Resonance Cores. */
+  getUncollectedResonanceCoreCount() {
+    if (!Array.isArray(this._resonanceCores)) return 0;
+    return this._resonanceCores.filter(c => !c.collected).length;
+  }
+
+  /** Return the count of collected Resonance Cores. */
+  getCollectedResonanceCoreCount() {
+    if (!Array.isArray(this._resonanceCores)) return 0;
+    return this._resonanceCores.filter(c => c.collected).length;
+  }
+
+  /** Clear all Resonance Cores (test reset path). */
+  clearResonanceCores() {
+    this._resonanceCores = [];
+  }
 }
