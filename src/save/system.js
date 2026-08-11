@@ -60,6 +60,7 @@ export class SaveSystem {
       echoesFound: Number.isFinite(s.echoesFound) ? s.echoesFound : 0,
       worldState: s.worldState || {},
       anchors: Array.isArray(s.anchors) ? s.anchors : [],
+      fuses: Array.isArray(s.fuses) ? s.fuses : [],
       inventory: (s.inventory && typeof s.inventory === 'object') ? s.inventory : { collectedEchoes: [], amplifiers: [] },
       velocity: this._coerceVelocity(s.velocity),
       lookYaw: Number.isFinite(s.lookYaw) ? s.lookYaw : 0,
@@ -139,6 +140,7 @@ export class SaveSystem {
       phase: Number.isFinite(state.phase) ? state.phase : 0,
       worldState: this._coerceWorldState(state.worldState),
       anchors: this._coerceAnchors(state.anchors),
+      fuses: this._coerceFuses(state.fuses),
       inventory: this._coerceInventory(state.inventory),
       velocity: this._coerceVelocity(state.velocity),
       lookYaw: Number.isFinite(state.lookYaw) ? state.lookYaw : 0,
@@ -160,6 +162,7 @@ export class SaveSystem {
       echoesFound: 0,
       worldState: {},
       anchors: [],
+      fuses: [],
       inventory: { collectedEchoes: [], amplifiers: [] },
       velocity: null,
       lookYaw: 0,
@@ -291,7 +294,7 @@ export class SaveSystem {
    * acceptance: "the player can save, quit, reload, and resume
    * exactly where they left off").
    */
-  saveSnapshot(x, y, z, phase, worldState, anchors, inventory, extras) {
+  saveSnapshot(x, y, z, phase, worldState, anchors, inventory, extras, fuses) {
     const e = (extras && typeof extras === 'object') ? extras : {};
     return this.saveGame(x, y, z, phase, {
       worldState: worldState || {},
@@ -302,7 +305,36 @@ export class SaveSystem {
       lookPitch: Number.isFinite(e.lookPitch) ? e.lookPitch : 0,
       energy: Number.isFinite(e.energy) ? Math.max(0, e.energy) : 100,
       fatigue: Number.isFinite(e.fatigue) ? Math.max(0, Math.min(1, e.fatigue)) : 0,
+      fuses: this._coerceFuses(fuses),
     });
+  }
+
+  /** Phase 10.2: coerce the fuse list from a save blob. Defensive —
+   * rejects non-arrays, non-finite / non-integer / out-of-range phase
+   * values so a tampered save can't poison the world. Mirrors
+   * `_coerceAnchors` for the fuse shape: `{ x, y, z, phase }`.
+   * Missing / null / non-array input returns an empty array
+   * (back-compat with §1.7 / §2.4 / §2.7 / §4.4 blobs that don't
+   * include fuses). */
+  _coerceFuses(value) {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    for (const entry of value) {
+      if (!entry || typeof entry !== 'object') continue;
+      const x = entry.x;
+      const y = entry.y;
+      const z = entry.z;
+      const phase = entry.phase;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+      if (!Number.isInteger(phase) || phase < 0 || phase > 2) continue;
+      out.push({
+        x: Math.floor(x),
+        y: Math.floor(y),
+        z: Math.floor(z),
+        phase,
+      });
+    }
+    return out;
   }
 
   /** Phase 4.4: coerce velocity { x, y, z } (defensive — returns null on bad input). */
@@ -334,6 +366,7 @@ export class SaveSystem {
       worldState: this._coerceWorldState(raw.worldState),
       anchors: this._coerceAnchors(raw.anchors),
       inventory: this._coerceInventory(raw.inventory),
+      fuses: this._coerceFuses(raw.fuses),
       velocity: this._coerceVelocity(raw.velocity),
       lookYaw: Number.isFinite(raw.lookYaw) ? raw.lookYaw : 0,
       lookPitch: Number.isFinite(raw.lookPitch) ? raw.lookPitch : 0,

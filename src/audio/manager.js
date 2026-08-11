@@ -303,6 +303,28 @@ export class AudioEngine {
     osc.stop(now + 0.08);
   }
 
+  // Phase 10.2: Phase Fuse sound — a soft golden chime.
+  // Two stacked tones (440 + 660 Hz) with a slow exponential decay.
+  // Distinct from the block place sound (800 Hz) so the player
+  // hears the difference between a fuse and a place.
+  playFuse() {
+    if (!this.initialized) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const freqs = [440, 660];
+    for (const f of freqs) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = f;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.05, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+      osc.connect(gain).connect(this.sfxGain);
+      osc.start(now);
+      osc.stop(now + 0.4);
+    }
+  }
+
   // Ambient procedural music
   startAmbientMusic(phase) {
     if (!this.initialized) return;

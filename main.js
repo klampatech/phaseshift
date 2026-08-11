@@ -17,6 +17,7 @@ import { resonateResults, resonateRadius, resonateCost, totalSwappedCount } from
 // the helper is the pure module.
 import { shouldPlayFootstep, materialFromBlock, footstepInterval, FOOTSTEP_MATERIALS, footstepVolumeForDensity, countNeighbors } from './src/audio/footsteps.js';
 import { placeAnchorAt, snapYForCell, cellUnderPlayer, anchorLifetime, ANCHOR_FILL_COLOR, ANCHOR_BORDER_COLOR } from './src/anchor/anchor.js';
+import { FUSE_COST, FUSE_HOLD_SECONDS, startFuse, tickFuse, cancelFuse, createFuseState, fuseKey } from './src/fuse/fuse.js';
 // Phase 3.1: per-biome color palette, fog density, label, and
 // smooth cross-biome transition tween. The pure module is the
 // single source of truth for the per-biome tints; the renderer's
@@ -88,6 +89,9 @@ let lens_insufficientNotifiedThisPress = false;
 let scanOverlay = null;
 let lastInteractedPos = null;
 let shiftKeyHeld = false;
+// Phase 10.2: Phase Fuse state (the Memory World pillar). The player
+// holds F against a block for 3s; the cost is debited on commit.
+let fuseState = createFuseState();
 let eKeyHeld = false;
 let qKeyHeld = false;
 // Phase 2.6: Resonance pulse state. The pulse group is owned by the
@@ -941,6 +945,10 @@ function gameLoop(time) {
   // Update phase manager
   phaseManager.update(deltaTime);
 
+  // Phase 10.2: Phase Fuse (F-key, 3s hold, 30 energy).
+  // Reads ctrlState.fusing; commits the fuse on progress == 1.
+  tickFusePerFrame(deltaTime);
+
   // Update HUD
   if (hud) hud.update(phaseManager, physicsManager, world);
 
@@ -1441,6 +1449,102 @@ function placeAnchor() {
       : `Anchor placed (${result.x}, ${result.y}, ${result.z})`;
     const color = created.refreshed ? '#ffcc00' : '#ffee88';
     hud.showNotification(msg, color);
+  }
+}
+
+// Phase 10.2: Phase Fuse (F-key, 3s hold, 30 energy). The Memory World
+// pillar — the player can permanently swap a block's phase presence by
+// holding F against it. The cost is debited on commit (not on press).
+//
+// The function is called every frame from the game loop. It reads
+// the `fusing` state from the Controls (true while F is held), the
+// `fuseState` module-level state machine, and the player's current
+// energy. On commit it:
+//
+//   1. Raycasts the targeted block (the same raycast as placeAnchor).
+//   2. Debits FUSE_COST energy from the PhaseManager.
+//   3. Applies the fuse override via world.applyFuse().
+//   4. Spawns a particle burst + plays the audio cue.
+//   5. Shows the HUD notification.
+//
+// Cancel: F released, cell changes, or energy drops below FUSE_COST.
+function tickFusePerFrame(deltaTime) {
+  if (!world || !phaseManager || !physicsManager) return;
+  const ctrlState = (typeof controls !== 'undefined' && controls && typeof controls.getState === 'function')
+    ? controls.getState() : null;
+  const fHeld = ctrlState && ctrlState.fusing === true;
+  const pos = physicsManager.getPos();
+  const dir = getCameraDirection();
+  const hit = raycastBlock(pos, dir);
+  const hitCell = hit ? { x: Math.floor(hit.blockX), y: Math.floor(hit.blockY), z: Math.floor(hit.blockZ) } : null;
+
+  // If F is released, cancel any in-progress fuse.
+  if (!fHeld) {
+    if (fuseState.active) {
+      cancelFuse(fuseState);
+    }
+    return;
+  }
+
+  // If F is held but we have no hit, cancel.
+  if (!hit) {
+    if (fuseState.active) cancelFuse(fuseState);
+    return;
+  }
+
+  // If the cell changed since the last tick, restart the fuse on the new cell.
+  if (fuseState.active && fuseState.target
+      && (fuseState.target.x !== hitCell.x || fuseState.target.y !== hitCell.y || fuseState.target.z !== hitCell.z)) {
+    cancelFuse(fuseState);
+  }
+
+  // Start a new fuse if we don't have one.
+  if (!fuseState.active) {
+    const energy = phaseManager.getEnergy();
+    if (energy < FUSE_COST) {
+      if (hud) hud.showNotification('Not enough energy to fuse (need 30)', '#ff6644');
+      return;
+    }
+    startFuse(fuseState, hitCell.x, hitCell.y, hitCell.z, energy);
+    if (hud) hud.showNotification('Fusing...', '#ddaa44');
+  }
+
+  // Tick the fuse.
+  const result = tickFuse(fuseState, deltaTime);
+  // Update the renderer overlay (the FuseOverlay reads fuseState.progress).
+  if (renderer && typeof renderer.showFuseProgress === 'function') {
+    renderer.showFuseProgress(fuseState.target, result.progress);
+  }
+
+  // Commit on progress == 1.
+  if (result.done && fuseState.active && fuseState.target) {
+    const targetCell = fuseState.target;
+    const overlayPhase = phaseManager.getCurrentPhase();
+    // Debit the energy (the cost is 30, the brief's value).
+    if (!phaseManager.consumeEnergy(FUSE_COST)) {
+      // Not enough energy mid-hold: cancel.
+      cancelFuse(fuseState);
+      if (hud) hud.showNotification('Not enough energy to fuse', '#ff6644');
+      return;
+    }
+    // Apply the fuse override (the Memory World write).
+    if (world.applyFuse(targetCell.x, targetCell.y, targetCell.z, overlayPhase)) {
+      if (hud) {
+        hud.showNotification(
+          `Fused (${targetCell.x}, ${targetCell.y}, ${targetCell.z}) — phase ${overlayPhase}`,
+          '#ddaa44'
+        );
+      }
+      // Audio cue.
+      if (audioManager && typeof audioManager.playFuse === 'function') {
+        audioManager.playFuse();
+      }
+    }
+    // Reset the fuse state.
+    cancelFuse(fuseState);
+    if (renderer && typeof renderer.clearFuseProgress === 'function') {
+      renderer.clearFuseProgress();
+    }
   }
 }
 
@@ -1946,6 +2050,7 @@ function saveGame() {
     ? player.fatigue
     : 0;
   saveSystem.saveSnapshot(pos.x, pos.y, pos.z, phase, worldState, anchors, inventorySnapshot, {
+    fuses,
     velocity: velocity ? { x: velocity.x, y: velocity.y, z: velocity.z } : null,
     lookYaw,
     lookPitch,

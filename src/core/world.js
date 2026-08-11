@@ -16,6 +16,11 @@ import {
   anchorKey, tickAnchors as _tickAnchorsPure, cellUnderPlayer as _cellUnderPlayerPure,
   ANCHOR_LIFETIME,
 } from '../anchor/anchor.js';
+import {
+  fuseKey, resolveFuseOverride, applyFuseOverride, removeFuseOverride,
+  listFuseOverrides, serializeFuseOverrides, deserializeFuseOverrides,
+  fuseOverrideCount,
+} from '../fuse/fuse.js';
 
 // Chunk data structure: 3 Uint8Arrays (one per phase)
 class Chunk {
@@ -81,6 +86,15 @@ export class World {
     // Date.now() for the expiry check; the new API uses a per-frame
     // dt accumulator so the lifetime is sandbox-safe.
     this._anchors = new Map();
+    // Phase 10.2: Phase Fuse (F-key, 3s hold, 30 energy) — the
+    // player-driven permanent phase swap. The Memory World pillar.
+    // Keyed by the canonical `${x},${y},${z}` string (no phase:
+    // a fuse is a one-shot edit, not a per-phase lock). Each
+    // entry stores the cell + the override phase + the fusedAt
+    // timestamp (for the renderer + UI). The fuse overrides
+    // win over the per-block phaseSolid mask at isBlockSolid
+    // lookup time.
+    this._fuseOverrides = new Map();
   }
 
   _globalKey(x, y, z, phase) {
@@ -376,6 +390,17 @@ export class World {
           if (l.expires > now) return true;
         }
       }
+    }
+    // Phase 10.2: Phase Fuse overrides win. The Memory World pillar —
+    // a player-fused cell is solid in the fused phase regardless of
+    // the block's default phaseSolid mask. The override is keyed by
+    // cell (no phase), so the cell is solid in the fused phase and
+    // non-solid in the other two phases.
+    if (this._fuseOverrides && this._fuseOverrides.size > 0) {
+      const override = resolveFuseOverride(this._fuseOverrides, x, y, z, phase);
+      if (override === true) return true;
+      if (override === false) return false;
+     // override === null: no fuse at this cell, fall through to default.
     }
     if (block === BLOCK_AIR) return false;
     const props = BLOCK_PROPERTIES[block];
@@ -981,6 +1006,104 @@ export class World {
    */
   clearAnchors() {
     this._anchors.clear();
+  }
+
+  // ── Phase 10.2: Phase Fuse (Memory World) ────────────────────────
+
+  /**
+   * Apply a Phase Fuse override at the given cell. The cell becomes
+   * solid in the given phase regardless of the block's default
+   * phaseSolid mask. Idempotent — re-fusing the same cell updates
+   * the phase. Returns `true` on success, `false` on invalid input.
+   *
+   * The override is keyed by cell (no phase). The Memory World
+   * pillar: the player can "leave a path" by fusing blocks in
+   * Beta to make a permanent bridge, etc.
+   */
+  applyFuse(x, y, z, phase) {
+    return applyFuseOverride(this._fuseOverrides, x, y, z, phase);
+  }
+
+  /**
+   * Remove a fuse override at the given cell. Returns `true` if
+   * the override was removed, `false` if the cell had no fuse.
+   */
+  removeFuse(x, y, z) {
+    return removeFuseOverride(this._fuseOverrides, x, y, z);
+  }
+
+  /**
+   * Check if a cell has a fuse override. Returns the override
+   * phase (0, 1, or 2) if present, `null` otherwise.
+   */
+  getFuseAt(x, y, z) {
+    if (!this._fuseOverrides || this._fuseOverrides.size === 0) return null;
+    const key = fuseKey(x, y, z);
+    const entry = this._fuseOverrides.get(key);
+    if (!entry || typeof entry !== 'object') return null;
+    return Number.isFinite(entry.phase) ? entry.phase : null;
+  }
+
+  /**
+   * List all fuse overrides as a flat array. Used by the renderer
+   * (FuseOverlay) and the save system.
+   */
+  listFuses() {
+    return listFuseOverrides(this._fuseOverrides);
+  }
+
+  /**
+   * Count of fuse overrides. Used by the HUD counter.
+   */
+  getFuseCount() {
+    return fuseOverrideCount(this._fuseOverrides);
+  }
+
+  /**
+   * Export the fuse overrides for save. Returns a JSON-safe array
+   * of `{ x, y, z, phase, fusedAt }` entries.
+   */
+  exportFuses() {
+    return serializeFuseOverrides(this._fuseOverrides);
+  }
+
+  /**
+   * Apply a saved fuse list. Defensive — rejects non-finite /
+   * non-integer / out-of-range phase values so a tampered save
+   * can't poison the world. Returns the number of fuses
+   * actually applied. Missing / non-array input clears the
+   * fuse list (back-compat with §1.7 / §2.4 / §2.7 save blobs
+   * that don't include fuses).
+   */
+  importFuses(snapshot) {
+    if (!Array.isArray(snapshot)) {
+      this._fuseOverrides.clear();
+      return 0;
+    }
+    let applied = 0;
+    for (const entry of snapshot) {
+      if (!entry || typeof entry !== 'object') continue;
+      const x = entry.x;
+      const y = entry.y;
+      const z = entry.z;
+      const phase = entry.phase;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+      if (!Number.isInteger(phase) || phase < PHASE_ALPHA || phase >= PHASE_COUNT) continue;
+      const key = fuseKey(x, y, z);
+      this._fuseOverrides.set(key, {
+        x: Math.floor(x), y: Math.floor(y), z: Math.floor(z), phase: Math.floor(phase),
+      });
+      applied++;
+    }
+    return applied;
+  }
+
+  /**
+   * Clear all fuse overrides. Used by the debug hook
+   * `clearFuses()` and on scene reload.
+   */
+  clearFuses() {
+    this._fuseOverrides.clear();
   }
 
   /** Find the nearest stabilizer block to a position */
