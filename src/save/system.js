@@ -67,7 +67,11 @@ export class SaveSystem {
       lookPitch: Number.isFinite(s.lookPitch) ? s.lookPitch : 0,
       fatigue: Number.isFinite(s.fatigue) ? Math.max(0, Math.min(1, s.fatigue)) : 0,
       newGamePlus: this._coerceNewGamePlus(s.newGamePlus),
-      timestamp: Date.now(),
+      // Preserve the input timestamp (saveGame / saveSnapshot
+      // stamp the state before calling save() so the return value
+      // matches what's persisted). Falls back to Date.now() for
+      // direct callers that pass a partial state without a stamp.
+      timestamp: Number.isFinite(s.timestamp) ? s.timestamp : Date.now(),
     };
 
     try {
