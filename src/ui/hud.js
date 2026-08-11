@@ -617,6 +617,148 @@ export class HUD {
     overlay.style.display = 'flex';
   }
 
+  /**
+   * Phase 10.10: render the Echo Hunter panel. Lists all 30+
+   * Echoes grouped by biome, with a per-biome "X / Y" count
+   * and a collected/missing indicator. The panel is the
+   * primary "collection goal" surface so the player can
+   * see which Echoes they have + which they're missing.
+   *
+   * The shape of the input is the output of
+   * `listEchoesByBiome()` from src/inventory/inventory.js:
+   *   {
+   *     byBiome: { [biomeId]: [{ key, lore, collected }] },
+   *     byBiomeCollected: { [biomeId]: number },
+   *     byBiomeTotal: { [biomeId]: number },
+   *     collected: number,
+   *     total: number,
+   *   }
+   *
+   * The biome names are looked up via the `biomeName` arg
+   * (a function: biomeId -> string). Defensive: missing
+   * `summary` renders a "No data" message; missing
+   * `biomeName` falls back to "Biome N".
+   */
+  showEchoHunter(summary, biomeName) {
+    // Phase 10.10: create or reuse a dedicated panel.
+    let panel = document.querySelector('#echo-hunter-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'echo-hunter-panel';
+      panel.style.cssText = `
+        position: absolute; top: 50%; left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(10, 10, 20, 0.94);
+        border: 1px solid rgba(255, 200, 100, 0.3);
+        border-radius: 8px;
+        padding: 20px 24px;
+        color: #ddd; font-size: 12px;
+        min-width: 480px; max-width: 720px;
+        max-height: 80vh; overflow-y: auto;
+        display: none; pointer-events: auto;
+        z-index: 95;
+      `;
+      if (this.container) this.container.appendChild(panel);
+    }
+    if (!panel) return;
+    panel.style.display = 'block';
+
+    const nameFor = (typeof biomeName === 'function') ? biomeName : (b) => `Biome ${b}`;
+    if (!summary || typeof summary !== 'object') {
+      panel.innerHTML = '<div style="color:#888;text-align:center;">No Echo data available.</div>';
+      return;
+    }
+
+    const collected = Number.isFinite(summary.collected) ? summary.collected : 0;
+    const total = Number.isFinite(summary.total) ? summary.total : 0;
+    const pct = total > 0 ? Math.round((collected / total) * 100) : 0;
+
+    let html = '<div style="color:#ffcc88;font-size:15px;font-weight:bold;margin-bottom:8px;text-align:center;letter-spacing:0.1em;">ECHO HUNTER</div>';
+    html += `<div style="color:#aaa;font-size:11px;margin-bottom:12px;text-align:center;">Discovered ${collected} / ${total} Echoes (${pct}%)</div>`;
+
+    // Per-biome breakdown.
+    const byBiome = summary.byBiome || {};
+    const byBiomeCollected = summary.byBiomeCollected || {};
+    const byBiomeTotal = summary.byBiomeTotal || {};
+    const allBiomeIds = Object.keys(byBiomeTotal).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+    for (const b of allBiomeIds) {
+      const cap = byBiomeTotal[b] || 0;
+      const got = byBiomeCollected[b] || 0;
+      const label = nameFor(b);
+      const isComplete = got >= cap && cap > 0;
+      const borderColor = isComplete ? 'rgba(120, 200, 120, 0.5)' : 'rgba(255, 200, 100, 0.4)';
+      html += `<div style="background:rgba(20,20,30,0.6);border:1px solid ${borderColor};border-radius:4px;padding:8px;margin-bottom:8px;">`;
+      html += `<div style="color:${isComplete ? '#88dd88' : '#ffcc88'};font-size:12px;font-weight:bold;margin-bottom:6px;">${label} (${got}/${cap})</div>`;
+      const entries = (byBiome[b] || []).slice();
+      // Pad with placeholder slots for missing Echoes.
+      for (let i = entries.length; i < cap; i++) {
+        entries.push({ key: null, lore: null, collected: false });
+      }
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        if (e.collected) {
+          html += `<div style="color:#aaffaa;font-size:10px;padding:2px 0;">✓ ${e.lore || '(unknown)'}</div>`;
+        } else {
+          html += `<div style="color:#555;font-size:10px;padding:2px 0;font-style:italic;">[?] ${label} Echo ${i + 1} of ${cap} — undiscovered</div>`;
+        }
+      }
+      html += '</div>';
+    }
+
+    html += '<div style="text-align:center;margin-top:8px;"><button id="echo-hunter-close" style="background:#222;color:#ffcc88;border:1px solid #664400;padding:6px 20px;cursor:pointer;font-family:monospace;font-size:12px;border-radius:4px;">Close</button></div>';
+    panel.innerHTML = html;
+    // Wire the close button.
+    const closeBtn = panel.querySelector('#echo-hunter-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        panel.style.display = 'none';
+      });
+    }
+  }
+
+  /**
+   * Phase 10.10: hide the Echo Hunter panel.
+   */
+  hideEchoHunter() {
+    const panel = document.querySelector('#echo-hunter-panel');
+    if (panel) panel.style.display = 'none';
+  }
+
+  /**
+   * Phase 10.10: show a brief "Zone: X/Y Echoes found" overlay
+   * when the player transitions biomes. The overlay fades out
+   * after `ttlMs` milliseconds (default 3000). Defensive: no-op
+   * if the HUD container is missing.
+   */
+  showBiomeZoneOverlay(zoneText, ttlMs) {
+    if (!this.container) return;
+    const ttl = Number.isFinite(ttlMs) ? Math.max(500, ttlMs) : 3000;
+    let overlay = document.querySelector('#biome-zone-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'biome-zone-overlay';
+      overlay.style.cssText = `
+        position: absolute; top: 25%; left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.7);
+        color: #ffcc88; font-family: monospace;
+        font-size: 18px; font-weight: bold;
+        padding: 12px 24px; border-radius: 6px;
+        border: 1px solid rgba(255, 200, 100, 0.4);
+        z-index: 70; pointer-events: none;
+        opacity: 0; transition: opacity 0.3s;
+      `;
+      this.container.appendChild(overlay);
+    }
+    if (typeof zoneText !== 'string' || zoneText.length === 0) return;
+    overlay.textContent = zoneText;
+    overlay.style.opacity = '1';
+    if (this._biomeZoneTimer) clearTimeout(this._biomeZoneTimer);
+    this._biomeZoneTimer = setTimeout(() => {
+      if (overlay) overlay.style.opacity = '0';
+    }, ttl);
+  }
+
   /** Show/hide the inventory panel. */
   showInventory(player, visible) {
     // Create panel on first call
@@ -718,7 +860,7 @@ export class HUD {
     // Echoes / Lore
     const echoes = player ? player.getEchoes() : [];
     html += '<div>';
-    html += '<div style="color:#aaa;font-size:11px;margin-bottom:6px;">ECHOES & LORE (${echoes.length} collected)</div>';
+    html += '<div style="color:#aaa;font-size:11px;margin-bottom:6px;">ECHOES & LORE (' + echoes.length + ' collected)</div>';
     if (echoes.length === 0) {
       html += '<div style="color:#555;font-size:11px;font-style:italic;padding:4px 0;">No echoes discovered yet.</div>';
     } else {
@@ -728,6 +870,8 @@ export class HUD {
         </div>`;
       });
     }
+    // Phase 10.10: open the dedicated Echo Hunter panel.
+    html += '<div style="margin-top:8px;text-align:center;"><button id="btn-open-echo-hunter" style="background:#222;color:#ffcc88;border:1px solid #664400;padding:6px 16px;cursor:pointer;font-family:monospace;font-size:11px;border-radius:4px;">Open Echo Hunter</button></div>';
     html += '</div>';
 
     panel.innerHTML = html;

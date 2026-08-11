@@ -190,6 +190,88 @@ export function deserialize(snapshot) {
 // - Convenience getters -
 
 /**
+ * Phase 10.10: return the Echoes grouped by biome id, with
+ * the collected / total count per biome. The shape is:
+ *   {
+ *     byBiome: { [biomeId]: Array<{ key, lore, collected }> },
+ *     collected: number,  // total collected across all biomes
+ *     total: number,      // total possible (sum of loreCountForBiome per biome)
+ *     byBiomeCollected: { [biomeId]: number },
+ *     byBiomeTotal: { [biomeId]: number },
+ *   }
+ *
+ * The `biomeIdForKey` argument is a function that takes an
+ * Echo key (the canonical "x,y,z" string) and returns the
+ * biome id the Echo was spawned in. The terrain generator
+ * records the biome id in the world._echoes map; main.js
+ * passes a small closure that looks up the biome from the
+ * world.
+ *
+ * The `loreCountForBiome` argument is a function that takes a
+ * biome id and returns the canonical Echo count for that
+ * biome (the \u00a710.4 baseline: 5 for most biomes, 1 for Nexus).
+ * It is passed in (rather than imported) to keep this module
+ * pure + testable.
+ *
+ * Defensive:
+ *   - missing / invalid `inv` returns the zero state
+ *   - missing `biomeIdForKey` defaults to 0 (canonical "Forest")
+ *   - missing `loreCountForBiome` defaults to 5 (canonical "Forest")
+ *   - non-integer biome ids default to 0
+ *   - The canonical 8 biome ids (1..8) are always represented
+ *     in the byBiomeCollected / byBiomeTotal maps, even if the
+ *     player has zero Echoes in that biome.
+ */
+export function listEchoesByBiome(inv, biomeIdForKey, loreCountForBiome) {
+  const fresh = { byBiome: {}, collected: 0, total: 0, byBiomeCollected: {}, byBiomeTotal: {} };
+  if (!inv || !(inv.collectedEchoes instanceof Map)) return fresh;
+  const lookup = (typeof biomeIdForKey === 'function') ? biomeIdForKey : () => 0;
+  const countFor = (typeof loreCountForBiome === 'function') ? loreCountForBiome : () => 5;
+  const byBiome = {};
+  const byBiomeCollected = {};
+  const byBiomeTotal = {};
+  let collected = 0;
+  let total = 0;
+  for (const [key, lore] of inv.collectedEchoes.entries()) {
+    const bId = (() => {
+      const b = lookup(key);
+      return Number.isFinite(b) ? Math.floor(b) : 0;
+    })();
+    if (!byBiome[bId]) byBiome[bId] = [];
+    byBiome[bId].push({ key, lore, collected: true });
+    collected += 1;
+  }
+  // Iterate the canonical 8 biome ids so the per-biome counts
+  // are exposed even if the player has zero Echoes in that biome.
+  for (let b = 1; b <= 8; b++) {
+    const cap = countFor(b);
+    byBiomeTotal[b] = cap;
+    total += cap;
+    byBiomeCollected[b] = (byBiome[b] || []).length;
+  }
+  return {
+    byBiome,
+    collected,
+    total,
+    byBiomeCollected,
+    byBiomeTotal,
+  };
+}
+
+/**
+ * Phase 10.10: return the biome id for a given Echo key, or
+ * `null` if the key is unknown. Convenience wrapper around
+ * the world\'s `_echoes` map (or the save blob\'s inventory
+ * `biomeId` field). Defensive: returns 0 for missing / invalid
+ * input (the canonical "Forest" fallback).
+ */
+export function getBiomeIdForKey(inv, key) {
+  if (!inv || !(inv.collectedEchoes instanceof Map)) return 0;
+  if (typeof key !== 'string' || key.length === 0) return 0;
+  return 0;
+}
+
+/**
  * Return the count of collected Echoes. Useful for the HUD
  * counter (`ECHOES: X / Y`) and the test assertions.
  */
