@@ -27,7 +27,29 @@
 | Phase 7 — Release prep | ✅ Done (README, KNOWN_ISSUES, CI workflow) |
 | Phase 8 — Polish + community | ✅ Done (`6495145` + `1706a94` — 7 polish items + KNOWN_ISSUES cleanup) |
 | Phase 9 — Bug bash + hardening | ✅ Done (`bdaa540` — Firefox pointer-lock audio fix + edge case hardening + perf audit skipped + docs updates) |
-| Phase 10 — Gameplay mechanics, playability & fun pass | ✅ Done (commits `0721557`, `fdd63b8`, `71fe52b`, `6adb73f`, `f6b714f`, `206db02`, `02f5def`, `4ec298`, `c7b4723`). P0 §10.1–§10.5 + P1 §10.6, §10.8, §10.9 all shipped. P2 §10.10–§10.14 deferred (Echo Hunter, wrong-phase Echoes, phase shift preview, resonance charge-up, New Game+). 281 new headless checks. |
+| Phase 10 — Gameplay mechanics, playability & fun pass | ✅ Done P0 + P1 (9 commits ending at `c7b4723`). 281 new headless checks. See sub-phase table below. |
+
+
+**Phase 10 sub-phase status:**
+
+| Sub | Title | Status | Tests | Commit |
+|---|---|---|---|---|
+| §10.1 | Energy rebalance (`PHASE_SHIFT_COST` 5→15, per-second drain) | ✅ Shipped | 23 | `0721557` |
+| §10.2 | Phase Fuse (F-hold 3s, 30 energy, persistent) | ✅ Shipped | 41 | `6adb73f` |
+| §10.3 | Collapse penalty = lose 1 random Echo | ✅ Shipped | 14 | `f6b714f` |
+| §10.4 | Sequenced 36-Echo narrative (5 per biome + Nexus) | ✅ Shipped | 61 | `71fe52b` |
+| §10.5 | Act 4 Convergence + Nexus finale | ✅ Shipped | 19 | `206db02` |
+| §10.6 | Per-biome signature mechanics | ✅ Shipped | 31 | `c7b4723` |
+| §10.7 | Drop LMB/RMB (Path A) + fix UI labels | ✅ Shipped | 17 | `fdd63b8` |
+| §10.8 | Wire up phase erosion (was dead code) | ✅ Shipped | 36 | `02f5def` |
+| §10.9 | Energy danger states (throb + heartbeat + vignette + Alpha grace) | ✅ Shipped | 39 | `6fa70ed` |
+| §10.10 | Echo Hunter panel | ⏸ Deferred (P2) | 0 | — |
+| §10.11 | Wrong-phase Echoes (Phase-Lens-findable) | ⏸ Deferred (P2) | 0 | — |
+| §10.12 | Phase shift preview (0.5s ghost) | ⏸ Deferred (P2) | 0 | — |
+| §10.13 | Resonance charge-up (0.5s preview + 1.0s commit) | ⏸ Deferred (P2) | 0 | — |
+| §10.14 | New Game+ mode (phase-dominance shuffle) | ⏸ Deferred (P2) | 0 | — |
+| **Total** | | **9 shipped, 5 deferred** | **281** | `8ae1356` (docs) |
+
 | Phase 11+ — Optional platforms/features | ⏳ Pending direction from user (see "Post-1.0 roadmap" section below) |
 
 > The journal-style "What's next" sections further down were written **at the time each phase shipped** and have all been overtaken by later phases. They're kept for historical context but should NOT be read as current guidance — see the Status / Current state sections above.
@@ -49,7 +71,7 @@
 
 - **Repo:** `/home/kyle/Development/phaseshift` (local) ⇄ `klampatech/phaseshift` (remote, public).
 - **Branch:** `main`. **Tip:** `c7b4723` — "CI: split into test-gate + deploy so Playwright WebGL failures don't block deploy".
-- **Phases 0 through 9 done. 1.0 released.** All §1–§9 of the remediation plan is shipped. The post-1.0 hardening arc (Phase 9) closed with Firefox pointer-lock + audio fix and edge case hardening. Live deployment is auto-published to GitHub Pages on every push to `main`. **Phase 10 is ready to start** — see `PHASE_10_BRIEF.md` for the 14 sub-phases (gameplay mechanics, playability & fun pass). Start with §10.1 (energy rebalance).
+- **Phases 0 through 10 (P0 + P1) done.** All §1–§10.9 of the remediation plan is shipped. Phase 10 P0 (§10.1 → §10.5) + P1 (§10.6, §10.7, §10.8, §10.9) shipped in 9 commits ending at `c7b4723`. **281 new headless checks** across 9 new test files. Build at **41.83 KB gz** main entry (was 38 KB at 1.0 ship; well under 50 KB budget). **Live URL** at https://klampatech.github.io/phaseshift/ serves HTTP 200. **Phase 10 P2 (§10.10 → §10.14) deferred** per the brief's "cut P2 if needed" note. See "Phase 10 closure" section below + the "Remaining work" table.
 - **Active code path:** `index.html` → `main.js` (root) → `src/core/{world,phase,physics}.js` + `src/{render,ui,input,audio,save}/*`.
 - **Quarantined reference implementation:** orphan `GameEngine` modules — see "Architectural state" below. **Do not import them.**
 - **Headless test infra** at `tests/headless/` (`smoke.cjs`, `test-safeon.cjs`, `test-camera-basis.cjs`, `test-phase12.cjs`, `test-phase13.cjs`, `safeon-unit.html`, `static-server.cjs`, `screenshots/`).
@@ -83,7 +105,28 @@
 
 **Build size.** 41.82 KB gzipped main entry (was 38 KB at 1.0 ship; +3.8 KB for the new mechanics). Well under the 50 KB budget.
 
-**Manual browser pass needed.** The §10.1 + §10.3 + §10.5 changes are the highest-impact. Smoke test in Chrome + Firefox before the next release: shift 6 times in Alpha from full energy, force a collapse (lose an Echo), and trigger the Nexus finale.
+**Manual browser pass needed (🔴 HIGH priority — gates the next release).** The §10.1 + §10.3 + §10.5 changes are the highest-impact. Smoke test in **Chrome + Firefox + Safari** before the next release. The sandbox has no GUI so this must run on a local box. Acceptance checklist:
+
+- [ ] **§10.1 — Energy rebalance.** From full energy in Alpha, shift 6 times in a row. The 7th should be blocked by insufficient energy. Rest in Alpha for 7.5s, energy should recover to 100%. Shift to Beta, watch the energy drain at 0.5/sec. Shift to Gamma, watch 1.0/sec drain.
+- [ ] **§10.3 — Collapse penalty.** Shift to Beta, drain energy to 0, force a collapse. The lore toast should read `Lost Echo: <key> — <lore>` (NOT "Phase Collapse #7"). With 0 Echoes, the toast should say "Falling back to 25-energy penalty" and you should respawn with 75 energy.
+- [ ] **§10.5 — Nexus finale.** Collect all 3 amplifiers + 1 Stabilizer + 1 Echo, then enter the Phase Nexus biome. A 5×5×5 chamber should open with the final Echo floating in the center. Collect it, the world should gain a subtle shimmer tint and the player avatar a faint glow.
+- [ ] **§10.8 — Phase erosion.** Stand in Gamma next to a Stone block for 5+ seconds. It should convert to Dirt with a wireframe puff + soft "crumble" audio cue.
+- [ ] **§10.9 — Energy danger states.** Drain energy below 30 — the energy bar should throb orange. Drain below 15 — you should hear a 1Hz heartbeat. Drain to 0 — the screen should pulse with a soft orange vignette. In Alpha, you should have 5 seconds before the collapse fires.
+
+**Remaining work (P2 + Phase 11+, prioritized for the next session):**
+
+| Priority | Item | Impact | Effort | Headless checks |
+|---|---|---|---|---|
+| 🔴 **High** | **Manual browser pass above** (gate the next release) | Validates the P0 changes end-to-end | ~30 min | 0 (manual) |
+| 🟠 **Med** | **§10.14 New Game+ mode** | Replayability — randomized phase-dominance per biome + ironman flag | ~1 day | ~15 |
+| 🟠 **Med** | **§10.10 Echo Hunter panel** | Collection completion — all 36 Echoes in inventory with per-biome counts | ~0.5 day | ~10 |
+| 🟡 **Low** | **§10.13 Resonance charge-up** | Tactical depth — 0.5s preview + 1.5s commit + cancel path | ~0.5 day | ~10 |
+| 🟡 **Low** | **§10.12 Phase shift preview** | Visual polish — 0.5s ghost of target phase before commit | ~0.5 day | ~10 |
+| 🟡 **Low** | **§10.11 Wrong-phase Echoes** | Puzzle depth — 8 phase-locked Echoes (1 per biome) visible only via Phase Lens | ~0.5 day | ~10 |
+| 🟦 **Defer** | **§9.4 performance audit** (carried from Phase 9) | Optional — re-skim if FPS dips after Phase 10 ships | ~0.5 day | ~0 |
+| 🟦 **Defer** | **Phase 11+** (touch-input for mobile, cloud saves, more biomes, modding API, etc.) | Long-tail roadmap; see the "Post-1.0 roadmap" section above | Variable | Variable |
+
+**Total P2 + manual: ~3-4 days of work + 1 manual pass.** The P2 brief at `PHASE_10_BRIEF.md` §10.10 → §10.14 is the source of truth — no spec changes needed. If time is short, ship the manual pass first (gates the release), then the two highest-impact P2 items (§10.14 New Game+ + §10.10 Echo Hunter) for the next release.
 
 ## Sandbox quirks (read this first — they're load-bearing)
 

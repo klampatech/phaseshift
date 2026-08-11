@@ -1,6 +1,6 @@
 # Known Issues
 
-This document tracks known issues, intentional limitations, and out-of-scope items for Phase Shifter. Items are grouped by severity:
+This document tracks known issues, intentional limitations, and out-of-scope items for Phase Shifter. **Current state:** Phase 10 P0 + P1 shipped (9 sub-phases, 281 new headless checks). P2 (§10.10 → §10.14) deferred. Items are grouped by severity:
 
 - 🟥 **Critical** — game-breaking; tracked here so they're not lost.
 - 🟧 **Major** — significant UX or feature gap; will fix in a future phase.
@@ -10,7 +10,7 @@ This document tracks known issues, intentional limitations, and out-of-scope ite
 
 ## 🟥 Critical
 
-_None currently tracked as of the 1.0 release (Phase 8)._ All 🟧 Major and 🟨 Minor items are resolved — see commits `6495145` and `1706a94` for the Phase 8 polish arc.
+_None currently tracked as of the Phase 10 P0+P1 release._ All 🟧 Major and 🟨 Minor items from the 1.0 + Phase 8 era are resolved. The 🟧 "Gameplay mechanics (Phase 10 P2 — deferred)" section below tracks the 5 P2 sub-phases still pending from Phase 10.
 
 ## 🟧 Major
 
