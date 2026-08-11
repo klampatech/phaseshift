@@ -31,10 +31,15 @@ export function createCollapseState() {
     reason: null,
     targetPos: null,
     inputSuppressed: false,
+    // Phase 10.3: the lost Echo on collapse. The actual removal
+    // (and the lore toast) is done by the game loop on `result.done`,
+    // but we track the chosen key here so the renderer can preview
+    // the loss during the collapse animation.
+    lostEcho: null,
   };
 }
 
-export function startCollapse(state, reason, targetPos, source) {
+export function startCollapse(state, reason, targetPos, source, lostEcho) {
   const s = (state && typeof state === 'object') ? state : createCollapseState();
   s.isCollapsing = true;
   s.collapseTimer = 0;
@@ -43,6 +48,11 @@ export function startCollapse(state, reason, targetPos, source) {
     ? { x: targetPos.x, y: targetPos.y, z: targetPos.z, source: source || targetPos.source || 'stabilizer' }
     : null;
   s.inputSuppressed = true;
+  // Phase 10.3: track the lost Echo (the key + lore). Defensive:
+  // null / non-object inputs are stored as null.
+  s.lostEcho = (lostEcho && typeof lostEcho === 'object' && typeof lostEcho.key === 'string')
+    ? { key: lostEcho.key, lore: typeof lostEcho.lore === 'string' ? lostEcho.lore : '' }
+    : null;
   return s;
 }
 
@@ -61,6 +71,7 @@ export function tickCollapse(state, dt) {
         targetPos: s.targetPos,
         source: s.targetPos ? s.targetPos.source : null,
         progress: 1.0,
+        lostEcho: s.lostEcho,
       };
     }
     return {
@@ -69,6 +80,7 @@ export function tickCollapse(state, dt) {
       targetPos: s.targetPos,
       source: s.targetPos ? s.targetPos.source : null,
       progress: s.collapseTimer / COLLAPSE_DURATION,
+      lostEcho: s.lostEcho,
     };
   }
   return {
@@ -87,6 +99,11 @@ export function clearCollapse(state) {
   s.reason = null;
   s.targetPos = null;
   s.inputSuppressed = false;
+  // Phase 10.3: also clear the lost Echo so the next collapse
+  // starts fresh. The actual removal happens in the game loop
+  // before clearCollapse is called (the order is: lose the Echo,
+  // then clearCollapse).
+  s.lostEcho = null;
   return s;
 }
 

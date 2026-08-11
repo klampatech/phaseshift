@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_STABILIZER, MINIMUM_RESPAWN_ENERGY, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL, PHASE_SHIFT_COST } from './src/core/constants.js';
+import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_STABILIZER, MINIMUM_RESPAWN_ENERGY, FALLBACK_ENERGY_PENALTY, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL, PHASE_SHIFT_COST } from './src/core/constants.js';
 import { World } from './src/core/world.js';
 import { PhaseManager } from './src/core/phase.js';
 import { PhysicsManager } from './src/core/physics.js';
@@ -2324,6 +2324,24 @@ function tickResonanceCoresPerFrame(dt) {
   }
 }
 
+// Phase 10.3: pick a random Echo from the player's inventory to
+// lose on collapse. Returns `{ key, lore }` or `null` if the
+// player has no Echoes. The actual removal happens in the
+// `result.done` branch of tickCollapsePerFrame — this helper
+// just selects which Echo to lose.
+function pickRandomEchoToLose() {
+  const inv = playerInventory && playerInventory.collectedEchoes instanceof Map
+    ? playerInventory
+    : null;
+  if (!inv || inv.collectedEchoes.size === 0) return null;
+  const keys = Array.from(inv.collectedEchoes.keys());
+  if (keys.length === 0) return null;
+  const idx = Math.floor(Math.random() * keys.length);
+  const key = keys[idx];
+  const lore = inv.collectedEchoes.get(key) || '';
+  return { key, lore };
+}
+
 // Phase 3.2: tickCollapsePerFrame(dt).
 function tickCollapsePerFrame(dt) {
   if (!collapseState || !collapseState.isCollapsing) {
@@ -2366,11 +2384,33 @@ function tickCollapsePerFrame(dt) {
         physicsManager.setPosition(spawnPoint.x, spawnPoint.y, spawnPoint.z);
       }
     }
+    // Phase 10.3: lose the picked Echo on collapse resolution.
+    // The lostEcho is on the collapseState (set by startCollapse
+    // at the trigger time). If no Echo was picked (player has no
+    // Echoes), fall back to a 25-energy penalty (deducted from
+    // the respawn energy of 30, so the player respawns with 5).
+    const lostEcho = result.lostEcho || (collapseState && collapseState.lostEcho) || null;
+    let respawnEnergy = MINIMUM_RESPAWN_ENERGY;
+    if (lostEcho && playerInventory && playerInventory.collectedEchoes instanceof Map
+        && playerInventory.collectedEchoes.has(lostEcho.key)) {
+      playerInventory.collectedEchoes.delete(lostEcho.key);
+      if (hud && typeof hud.showNotification === 'function') {
+        const lore = lostEcho.lore ? ` — ${lostEcho.lore}` : '';
+        hud.showNotification(`Lost Echo: ${lostEcho.key}${lore}`, '#ff8844');
+      }
+    } else {
+      // Phase 10.3: no Echoes to lose — apply the 25-energy penalty
+      // by reducing the respawn energy.
+      respawnEnergy = Math.max(0, MINIMUM_RESPAWN_ENERGY - FALLBACK_ENERGY_PENALTY);
+      if (hud && typeof hud.showNotification === 'function') {
+        hud.showNotification(`Phase Collapse — energy penalty ${FALLBACK_ENERGY_PENALTY}`, '#ffaa66');
+      }
+    }
     if (phaseManager && typeof phaseManager.setEnergy === 'function') {
-      phaseManager.setEnergy(MINIMUM_RESPAWN_ENERGY);
+      phaseManager.setEnergy(respawnEnergy);
     } else if (phaseManager && typeof phaseManager.consumeEnergy === 'function') {
       const cur = phaseManager.getEnergy();
-      const delta = cur - MINIMUM_RESPAWN_ENERGY;
+      const delta = cur - respawnEnergy;
       if (delta > 0) phaseManager.consumeEnergy(delta);
     }
     if (tp && tp.source === 'spawn' && !fallbackWarnedForCurrentCollapse) {
@@ -2719,7 +2759,12 @@ if (typeof window !== 'undefined') {
       // CURRENT position (the collapse point) + the world's
       // stabilizer list. The fallback is the original spawn point.
       const target = computeRespawnTarget(physicsManager.getPos());
-      startCollapse(collapseState, COLLAPSE_REASONS.FORCED, target, target ? target.source : null);
+      // Phase 10.3: pick a random Echo to lose from the player's
+      // inventory. The pick is a "loss preview" — the actual removal
+      // happens on the `result.done` branch in tickCollapsePerFrame
+      // so the lore toast can fire consistently with the new flow.
+      const lostEcho = pickRandomEchoToLose();
+      startCollapse(collapseState, COLLAPSE_REASONS.FORCED, target, target ? target.source : null, lostEcho);
       inputSuppressed = true;
       collapseNotifyPending = true;
       fallbackWarnedForCurrentCollapse = false;

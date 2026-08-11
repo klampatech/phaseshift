@@ -251,6 +251,11 @@ export const RENDER_DISTANCE = CHUNK_RENDER_DIST;
 export const SAVE_CHUNK_DIST = 2;
 export const UNLOAD_CHUNK_DIST = 1;
 export const INITIAL_CHUNKS = 1;
+// Phase 10.3: 25-energy penalty when the player collapses with no
+// Echoes to lose (still hurts, but recoverable). The collapse cost
+// is energy recovery + the invuln window — the 25-energy penalty
+// is on top of those (deducted from the PhaseManager).
+export const FALLBACK_ENERGY_PENALTY = 25;
 export const MINIMUM_RESPAWN_ENERGY = 30;
 // Phase 3.3: Echo pickup radius (blocks, cubic). The §3.3 acceptance
 // is "walking within 2 blocks of an Echo collects it"; 1.5 gives
