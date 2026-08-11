@@ -165,8 +165,8 @@ function check(label, ok, extra = '') {
 
   // ── World.js API ──────────────────────────────────────────────────
   check(
-    'World.createAnchor(x, y, z, phase) is defined',
-    /createAnchor\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*\)/.test(worldText)
+    'World.createAnchor(x, y, z, phase, lifetime) is defined',
+    /createAnchor\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*phase\s*(?:,\s*lifetime)?\s*\)/.test(worldText)
   );
   check(
     'World.removeAnchor(x, y, z, phase) is defined',
@@ -262,8 +262,8 @@ function check(label, ok, extra = '') {
   );
   check(
     'main.js#saveGame passes world.exportAnchors() to saveSnapshot',
-    /function\s+saveGame[\s\S]{0,1000}?world\.exportAnchors\s*\(/.test(mainText) &&
-    /function\s+saveGame[\s\S]{0,1500}?saveSystem\.saveSnapshot\s*\(\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*anchors\s*(?:,\s*[^)]+)?\s*\)/.test(mainText)
+    /function\s+saveGame[\s\S]{0,1500}?world\.exportAnchors\s*\(/.test(mainText) &&
+    /function\s+saveGame[\s\S]{0,2500}?saveSystem\.saveSnapshot\s*\(\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*[^,]+,\s*anchors\s*(?:,\s*[^)]+)?\s*\)/.test(mainText)
   );
   check(
     'main.js init() imports saved anchors via world.importAnchors',

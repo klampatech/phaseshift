@@ -1322,14 +1322,29 @@ export class World {
 
   // ── Echo System ──────────────────────────────────────────────────
 
-  /** Register an Echo object in the world */
+  /** Register an Echo object in the world.
+   *  Phase 10.11 follow-up: writes a `key` field (synthesized from
+   *  the floored (x,y,z)) so every Echo — whether from terrain
+   *  generation via addEcho, the new `spawnEcho` path, or
+   *  `applyEchoState` reload — shares the same shape. The listEchoes
+   *  helper, the §3.3 pickup loop, and the §10.11 hidden-Echo
+   *  visibility check all read `e.key`; the legacy `addEcho` path
+   *  leaving it undefined was a long-standing test debt (Phase 3.3
+   *  behavior tests for listEchoes.length were failing because
+   *  terrain-gen echoes contributed an unbounded count). */
   addEcho(type, x, y, z, lore) {
     // Check for existing echo at this position (don't duplicate)
     const existing = this._echoes.find(e =>
       e.x === x && e.y === y && e.z === z && !e.collected
     );
     if (existing) return existing;
-    const echo = { type, x, y, z, lore, collected: false };
+    const echo = {
+      type, x, y, z, lore,
+      key: `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`,
+      loreKey: `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`,
+      biomeId: 0,
+      collected: false,
+    };
     this._echoes.push(echo);
     return echo;
   }

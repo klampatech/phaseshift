@@ -3,9 +3,8 @@
 > **🚀 1.0 RELEASED.** All planned phases 0 → 8 are shipped. Live deployment: https://klampatech.github.io/phaseshift/. The "What's next" sections further down are **historical** — each was current at the time the phase shipped but has since been completed (see "Status" below and the per-phase closures below for details).
 >
 > **Status (2026-08-10):**
-> - **Tip:** `bdaa540` — "Phase 9: bug bash + hardening pass" (this phase).
-> - **Latest meaningful phase:** Phase 9 — Bug bash + hardening. Firefox pointer-lock + audio fix + edge case hardening + docs updates. Closes the post-1.0 hardening arc.
-> - **Next phase (planned):** Phase 10 P2 remainder (§10.13 resonance charge-up, §10.12 phase shift preview, §10.11 wrong-phase Echoes). Brief at `PHASE_10_BRIEF.md`. §10.14 (New Game+) and §10.10 (Echo Hunter panel) shipped in 3 commits ending at `f8b0e68`. 96 new headless checks.
+> - **Tip:** `028c5f7` (Phase 10 P2 docs) + a follow-up test-debt cleanup commit. **Latest meaningful phase:** Phase 10 P0 + P1 + P2 (14 sub-phases, 491 new headless checks: 482 from Phase 10 + 9 from the test-debt cleanup). All 38 headless test files green.
+> - **Next phase:** None — Phase 10 P0 + P1 + P2 are all shipped. Per `HANDOFF.md`'s post-1.0 roadmap, Phase 11+ is pending user direction (touch-input, cloud saves, more biomes, modding API, achievements, level editor, perf audit, etc.).
 > - **CI:** 3-job workflow (`build-and-test`, `test-gate`, `deploy`) — `test-gate` blocks deploys; Playwright's WebGL failures don't block.
 > - **GitHub Pages:** live at https://klampatech.github.io/phaseshift/ (auto-publishes on every push to `main`).
 > - **Tests:** 24 headless files, 1393 checks (Phase 9 added 57 new checks on top of Phase 8's 1336).
@@ -190,7 +189,7 @@ All P2 work shipped. Future sandbox sessions should focus on **Phase 11+** items
 | 🟦 **Defer** | **§9.4 performance audit** (carried from Phase 9) | Optional — re-skim if FPS dips after Phase 10 ships | ~0.5 day | ~0 |
 | 🟦 **Defer** | **Phase 11+** (touch-input for mobile, cloud saves, more biomes, modding API, etc.) | Long-tail roadmap; see the "Post-1.0 roadmap" section above | Variable | Variable |
 
-**Phase 10 fully shipped.** 482 new headless checks across 13 new test files. Build at 46.92 KB gz main entry (was 38 KB at 1.0 ship; well under the 200 KB CI threshold). Live at https://klampatech.github.io/phaseshift/. The remaining work is the **manual browser pass** (gates the next release — Chrome + Firefox + Safari on the §10.1 + §10.3 + §10.5 + §10.8 + §10.9 + §10.10 + §10.11 + §10.13 changes) plus any Phase 11+ items from the "Post-1.0 roadmap".
+**Phase 10 fully shipped.** 482 new headless checks across 13 new test files. Build at 46.94 KB gz main entry (was 38 KB at 1.0 ship; well under the 200 KB CI threshold). Live at https://klampatech.github.io/phaseshift/. The remaining work is the **manual browser pass** (gates the next release — Chrome + Firefox + Safari on the §10.1 + §10.3 + §10.5 + §10.8 + §10.9 + §10.10 + §10.11 + §10.13 changes) plus any Phase 11+ items from the "Post-1.0 roadmap".
 
 ## Sandbox quirks (read this first — they're load-bearing)
 

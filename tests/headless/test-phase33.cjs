@@ -355,7 +355,13 @@ function check(label, ok, extra = '') {
   console.log('\n=== Phase 3.3 behavior - World echo API ===');
   const { World } = await import(worldPath.replace(/^.*\/(.*\.js)$/, 'file://' + worldPath.replace(/\\/g, '/')));
   const w = new World(() => {});
+  // Drain any terrain-gen echoes loaded by `updateChunks(0, 0)` so
+  // the API contract tests below operate on a clean world. The
+  // §10.11 follow-up made `addEcho` write a `key` field so terrain
+  // echoes are well-formed; but the API tests want deterministic
+  // counts, so we clear first.
   w.updateChunks(0, 0);
+  w.clearEchoes();
   check('World.spawnEcho creates an echo', w.spawnEcho(5, 5, 5, '5,5,5', 4) !== null);
   check('World.listEchoes returns uncollected echoes',
     w.listEchoes().length === 1 && w.listEchoes()[0].key === '5,5,5');

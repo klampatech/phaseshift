@@ -191,7 +191,7 @@ function check(label, ok, extra = '') {
   );
   check(
     'main.js#tickBiomesPerFrame calls lerpBiomeTints',
-    /function\s+tickBiomesPerFrame[\s\S]{0,2000}?lerpBiomeTints\s*\(/.test(mainText)
+    /function\s+tickBiomesPerFrame[\s\S]{0,3000}?lerpBiomeTints\s*\(/.test(mainText)
   );
   check(
     'main.js#tickBiomesPerFrame drives scene.background',

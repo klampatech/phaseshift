@@ -159,7 +159,7 @@ The initial main entry is **36 KB gzipped**, well under the 200 KB target.
 
 ### Headless (no browser, no WebGL — runs anywhere)
 
-Pure-Node unit tests cover the pure modules + the World API. 37 files, **1893 checks** total.
+Pure-Node unit tests cover the pure modules + the World API. 38 files, **1903 checks** total (all green — 9 pre-existing test regexes fixed; see commit "Test debt: fix 9 pre-existing headless test failures").
 
 ```bash
 node tests/headless/test-phase12.cjs   #  17 checks

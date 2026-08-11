@@ -1,6 +1,6 @@
 # Known Issues
 
-This document tracks known issues, intentional limitations, and out-of-scope items for Phase Shifter. **Current state:** Phase 10 P0 + P1 + P2 all shipped (14 sub-phases, 482 new headless checks). No further Phase 10 work planned — the post-1.0 Phase 11+ roadmap (touch-input, cloud saves, more biomes, modding API) is in `HANDOFF.md`. Items are grouped by severity:
+This document tracks known issues, intentional limitations, and out-of-scope items for Phase Shifter. **Current state:** Phase 10 P0 + P1 + P2 all shipped (14 sub-phases, 491 new headless checks (482 from Phase 10 + 9 from a follow-up test-debt cleanup)). No further Phase 10 work planned — the post-1.0 Phase 11+ roadmap (touch-input, cloud saves, more biomes, modding API) is in `HANDOFF.md`. Items are grouped by severity:
 
 - 🟥 **Critical** — game-breaking; tracked here so they're not lost.
 - 🟧 **Major** — significant UX or feature gap; will fix in a future phase.
@@ -128,6 +128,16 @@ The Phase 9.1 browser-matrix test pass surfaced the following items. Each is eit
 ### Filed for a future phase (deferred)
 
 _None currently. The §9.3 acceptance bullets (rapid input, chunk boundaries, save/load edge cases, tab visibility, reduced-motion) all passed the static-analysis + behavioral tests in `tests/headless/test-phase9.cjs` (57 checks). The §9.4 performance audit was skipped — see `HANDOFF.md` for the deferral note._
+
+### Pre-existing test debt (resolved)
+
+✅ **Resolved in a test-debt cleanup commit** (after Phase 10 P2). Nine pre-existing headless test failures were fixed:
+
+- **Phase 2.7** (2 fails): the test regex for `World.createAnchor(x, y, z, phase)` required exactly 4 args, but the active code signature is `createAnchor(x, y, z, phase, lifetime)` (the 5th `lifetime` arg was added in §2.7 itself; the test was never updated). Regex now accepts an optional 5th `lifetime` arg. The `main.js#saveGame passes world.exportAnchors() to saveSnapshot` regex had a 1500-char lookback that became 1587 chars after the §4.4 + §10.8 save-state additions — bumped to 2500.
+- **Phase 3.1** (1 fail): the `tickBiomesPerFrame calls lerpBiomeTints` regex had a 2000-char lookback but the §10.6 + §10.10 extensions pushed the call site to 2482 chars. Bumped to 3000.
+- **Phase 3.3** (6 fails): the World API behavior tests expected `w.listEchoes().length === 1` immediately after `w.spawnEcho(5, 5, 5, ...)` but the test setup also called `w.updateChunks(0, 0)` which loaded terrain-gen echoes (and the legacy `addEcho` path didn't write a `key` field, so the count was unbounded). Fix: `World.addEcho` now writes a `key` field (synthesized from the floored `(x,y,z)`) so every Echo — whether from terrain gen via `addEcho`, the §3.3 `spawnEcho` path, or `applyEchoState` reload — shares the same shape; the test now calls `w.clearEchoes()` after the chunk load so the API contract tests operate on a clean world.
+
+All 38 headless test files now pass (1903 checks total, up from 1894). The `World.addEcho` change is also picked up by the §3.3 pickup loop and the §10.11 hidden-Echo visibility check (both read `e.key`); the legacy `applyEchoState` synthesis is now a defensive no-op for the addEcho path but still runs for direct `e.key` writes from older save blobs. See commit message for the full diff.
 
 ## Reporting new issues
 
