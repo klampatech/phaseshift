@@ -11,7 +11,9 @@
 > - **Tests:** 24 headless files, 1393 checks (Phase 9 added 57 new checks on top of Phase 8's 1336).
 > - **Build:** `npm run build` produces a 38.19 KB gzipped main entry (well under the 200 KB CI threshold).
 > - **Session goal:** Phase 10 P0 + P1 gameplay-mechanics pass shipped. §10.1 energy rebalance, §10.2 Phase Fuse (Memory World), §10.3 collapse penalty (Echo loss), §10.4 sequenced 36-Echo narrative, §10.5 Act 4 Convergence + Nexus finale, §10.6 per-biome signature mechanics, §10.7 drop LMB/RMB + UI labels, §10.8 wire up phase erosion, §10.9 energy danger states (HUD throb + audio heartbeat + vignette + 5s Alpha grace). P2 deferred. 281 new headless checks across 9 new test files.
-> - **Last completed (summary):** Phase 9 — Firefox pointer-lock audio fix (§9.2: deferred resume + first-input fallback), edge case hardening (§9.3: PhysicsManager y-clamp, reduced-motion-color-pulse, forceCyclePhase spam guard, collapse dt clamp, World.setBlock GC-safety), Tested-browsers matrix in README, KNOWN_ISSUES Platform section updated, "🟫 Discovered in Phase 9.1" section. 57 new headless checks in `tests/headless/test-phase9.cjs` + Firefox pointer-lock Playwright test in `tests/firefox-pointer-lock.spec.js`. §9.4 performance audit was skipped (no perf complaints from §9.1). **Post-1.0 gameplay-mechanics review** completed; brief at `PHASE_10_BRIEF.md` covers the 14 recommended sub-phases.
+> - **Last completed (summary):** Phase 9 — Firefox pointer-lock audio fix (§9.2: deferred resume + first-input fallback), edge case hardening (§9.3: PhysicsManager y-clamp, reduced-motion-color-pulse, forceCyclePhase spam guard, collapse dt clamp, World.setBlock GC-safety), Tested-browsers matrix in README, KNOWN_ISSUES Platform section updated, "🟫 Discovered in Phase 9.1" section. 57 new headless checks in `tests/headless/test-phase9.cjs` + Firefox pointer-lock Playwright test in `tests/firefox-pointer-lock.spec.js`. §9.4 performance audit was skipped (no perf complaints from §9.1).
+>
+> - **🚀 NEXT SESSION (read this first):** See the **"Recommendation for next session"** section below. TL;DR — 3-step plan: (1) 🔴 manual browser pass on §10.1/§10.3/§10.5/§10.8/§10.9 (~30 min, gates the release), then (2) 🟠 §10.14 New Game+ mode (~1 day, ~15 checks), then (3) 🟠 §10.10 Echo Hunter panel (~0.5 day, ~10 checks). If time remains, the remaining P2 items are §10.13, §10.12, §10.11 in priority order. The §9.4 performance audit + Phase 11+ items are explicitly deferred.
 
 ## Current state (snapshot)
 
@@ -104,6 +106,75 @@
 **Test count.** 281 new headless checks across 9 new test files: `test-phase10-energy.cjs` (23), `test-phase10-blockedit.cjs` (17), `test-phase10-lore.cjs` (61), `test-phase10-fuse.cjs` (41), `test-phase10-collapse.cjs` (14), `test-phase10-nexus.cjs` (19), `test-phase10-biomes.cjs` (31), `test-phase10-erosion.cjs` (36), `test-phase10-energy-states.cjs` (39).
 
 **Build size.** 41.82 KB gzipped main entry (was 38 KB at 1.0 ship; +3.8 KB for the new mechanics). Well under the 50 KB budget.
+
+## Recommendation for next session
+
+The next session should follow this **3-step plan**, in order. Total estimated effort: **3-4 days + 1 manual pass**. The plan is designed so the highest-value work happens first and the release can ship even if the lower-priority items slip.
+
+### Step 1 (🔴 HIGH — gates the release) — Manual browser pass, ~30 min
+
+**Why first:** the sandbox has no GUI. Headless tests verify the math + the wiring, but they can't verify the visual feel, animation timing, or audio cues. The §10.1 / §10.3 / §10.5 changes are the most impactful in the entire Phase 10 pass — they need a human eye on them before the next release. **This step must run on a local box**, not in this sandbox.
+
+**Acceptance checklist** (5 sub-checks, each with a pass/fail):
+
+- [ ] **§10.1 — Energy rebalance.** From full energy in Alpha, shift 6 times in a row. The 7th should be blocked by insufficient energy. Rest in Alpha for 7.5s, energy should recover to 100%. Shift to Beta, watch the energy drain at 0.5/sec. Shift to Gamma, watch 1.0/sec drain.
+- [ ] **§10.3 — Collapse penalty.** Shift to Beta, drain energy to 0, force a collapse. The lore toast should read `Lost Echo: <key> — <lore>` (NOT "Phase Collapse #7"). With 0 Echoes, the toast should say "Falling back to 25-energy penalty" and you should respawn with 75 energy.
+- [ ] **§10.5 — Nexus finale.** Collect all 3 amplifiers + 1 Stabilizer + 1 Echo, then enter the Phase Nexus biome. A 5×5×5 chamber should open with the final Echo floating in the center. Collect it, the world should gain a subtle shimmer tint and the player avatar a faint glow.
+- [ ] **§10.8 — Phase erosion.** Stand in Gamma next to a Stone block for 5+ seconds. It should convert to Dirt with a wireframe puff + soft "crumble" audio cue.
+- [ ] **§10.9 — Energy danger states.** Drain energy below 30 — the energy bar should throb orange. Drain below 15 — you should hear a 1Hz heartbeat. Drain to 0 — the screen should pulse with a soft orange vignette. In Alpha, you should have 5 seconds before the collapse fires.
+
+**Test on Chrome + Firefox + Safari.** If any check fails, write up a bug in `KNOWN_ISSUES.md` and decide whether to fix it before the release or defer to Phase 10.5.1.
+
+### Step 2 (🟠 MED) — §10.14 New Game+ mode, ~1 day, ~15 headless checks
+
+**Why second:** the brief's only "addictive" mechanic. Without it the game has no reason to play twice — and the 36-Echo narrative + 8 biome signatures give the player a *lot* to explore. NG+ randomizes the phase-dominance per biome (Forest might be Beta-heavy, Crystal Cavern might be Alpha-heavy, etc.) so the second playthrough feels different without rewriting the terrain generator.
+
+**Fix shape** (per `PHASE_10_BRIEF.md` §10.14):
+
+1. New `phaseDominanceSeed` in `GameState`.
+2. New `pickPhaseDominance(phaseDominanceSeed, biomeId)` helper returning a permutation of `[0, 1, 2]`.
+3. Extend `BIOME_DATA` in `src/gen/terrain.js` with `phaseDominance` per biome.
+4. New `startNewGamePlus()` in `src/save/system.js`.
+5. Pause menu button "Start New Game+".
+6. Optional ironman mode: no manual saves, no Stabilizer respawns.
+
+**Test file:** `tests/headless/test-phase10-newgameplus.cjs` (~15 checks). Pattern: static-analysis + behavioral imports (the same pattern as `test-phase10-fuse.cjs` / `test-phase10-erosion.cjs`).
+
+### Step 3 (🟠 MED) — §10.10 Echo Hunter panel, ~0.5 day, ~10 headless checks
+
+**Why third:** the §10.4 narrative is dense (36 Echoes across 8 biomes) but currently invisible. Players can see the per-biome counter in the HUD but there's no way to see *which* Echoes they have + *which* they're missing. A dedicated inventory tab turns the 36-Echo narrative into a collection goal.
+
+**Fix shape** (per `PHASE_10_BRIEF.md` §10.10):
+
+1. New `EchoHunterPanel` in `src/ui/hud.js`.
+2. Extend `src/inventory/inventory.js` with `listEchoesByBiome()` helper.
+3. New biome-transition hook in `main.js#tickBiomesPerFrame` that fires a "Zone: 12/15 Echoes found" overlay briefly when the player transitions biomes.
+4. New `INV_ECHOES` tab in the inventory panel.
+
+**Test file:** `tests/headless/test-phase10-inventory.cjs` (~10 checks).
+
+### If time remains (🟡 LOW) — §10.13, §10.12, §10.11
+
+In priority order:
+
+- **§10.13 Resonance charge-up** (0.5s preview + 1.5s commit + cancel path). Tactical depth. `test-phase10-resonance-charge.cjs` (~10 checks). `RESONANCE_CHARGE_SECONDS = 0.5`, `RESONANCE_PULSE_DURATION = 1.5`, `RESONATE_COST = 25`.
+- **§10.12 Phase shift preview** (0.5s ghost of target phase before commit). Visual polish. `test-phase10-preview.cjs` (~10 checks). Post-processing pass in `src/render/renderer.js`.
+- **§10.11 Wrong-phase Echoes** (8 phase-locked Echoes visible only via Phase Lens). Puzzle depth. `test-phase10-hidden-echoes.cjs` (~10 checks). New `WrongPhaseEcho` block type + `world.getEchoVisibility(key, currentPhase)`.
+
+### Do NOT (🟦 DEFER) — §9.4 + Phase 11+
+
+- **§9.4 performance audit** — no perf complaints from §9.1. Re-skim if FPS dips after Phase 10 ships.
+- **Phase 11+** (touch-input, cloud saves, more biomes, modding API) — long-tail roadmap. See the "Post-1.0 roadmap" section above.
+
+### If the user wants to start coding in the sandbox instead of waiting for the manual pass
+
+The sandbox can implement Step 2 + Step 3 immediately — the headless tests don't need a GUI. The recommendation is to do **Step 2 first** (§10.14 NG+ is the highest-impact P2 item + has the cleanest spec) and **Step 3 second** (§10.10 Echo Hunter is the second-highest-impact). Defer §10.13 / §10.12 / §10.11 unless the user explicitly asks for them.
+
+### If the user says "do it all"
+
+Then go in this exact order: §10.14 → §10.10 → §10.13 → §10.12 → §10.11. The headless test pattern is well-established (see `test-phase10-fuse.cjs` for the canonical shape). Expected output: **5 new commits, ~55 new headless checks** (matches the brief's P2 estimate of "~55 headless checks"). After all 5 ship, the next release can drop the "P2 deferred" note from `KNOWN_ISSUES.md` and the §10 row in `PROJECT_REMEDIATION_PLAN.md` becomes "✅ Done (P0 + P1 + P2)".
+
+---
 
 **Manual browser pass needed (🔴 HIGH priority — gates the next release).** The §10.1 + §10.3 + §10.5 changes are the highest-impact. Smoke test in **Chrome + Firefox + Safari** before the next release. The sandbox has no GUI so this must run on a local box. Acceptance checklist:
 
