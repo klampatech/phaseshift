@@ -1,6 +1,6 @@
 # Known Issues
 
-This document tracks known issues, intentional limitations, and out-of-scope items for Phase Shifter. **Current state:** Phase 10 P0 + P1 shipped (9 sub-phases, 281 new headless checks). P2 (§10.10 → §10.14) deferred. Items are grouped by severity:
+This document tracks known issues, intentional limitations, and out-of-scope items for Phase Shifter. **Current state:** Phase 10 P0 + P1 + first P2 slice (§10.10 Echo Hunter panel + §10.14 New Game+ mode) shipped (11 sub-phases, 377 new headless checks). P2 remainder (§10.11 wrong-phase Echoes, §10.12 phase shift preview, §10.13 resonance charge-up) deferred. Items are grouped by severity:
 
 - 🟥 **Critical** — game-breaking; tracked here so they're not lost.
 - 🟧 **Major** — significant UX or feature gap; will fix in a future phase.
@@ -46,11 +46,11 @@ _None currently tracked as of the Phase 10 P0+P1 release._ All 🟧 Major and �
 
 ## 🟧 Gameplay mechanics (Phase 10 P2 — deferred)
 
-The following Phase 10 sub-phases were **deferred** per the `PHASE_10_BRIEF.md` "cut P2 if needed" note. P0 (§10.1 → §10.5) and P1 (§10.6, §10.8, §10.9) shipped in commits `0721557` → `c7b4723`; these five P2 items remain in the brief as the source of truth if revisited.
+The following Phase 10 sub-phases remain **deferred** per the `PHASE_10_BRIEF.md` "cut P2 if needed" note. P0 (§10.1 → §10.5) and P1 (§10.6, §10.8, §10.9) shipped in commits `0721557` → `c7b4723`; P2 first slice (§10.10 Echo Hunter panel in `7a880ac`, §10.14 New Game+ in `77b3935`) also shipped. These three P2 remainder items stay in the brief as the source of truth if revisited.
 
-### Echo Hunter panel (Phase 10.10) — deferred
+### Echo Hunter panel (Phase 10.10) — shipped
 
-The inventory panel doesn't yet show a dedicated "Echoes" tab with all 30+ Echoes + per-biome breakdown. Players can still see the per-biome counter via `#echo-counter` in the HUD; the full panel would show `[?] The Architect's Dream (Forest 1/5)` slots and a `Forest 3/5 · Ruins 0/5 · …` breakdown. Estimated ~10 headless checks.
+✅ **Shipped in Phase 10.10** (commit `7a880ac`). The inventory panel now exposes a dedicated **Echo Hunter** tab with a per-biome breakdown of all 36 Echoes (5 per biome + 1 Nexus final). New `listEchoesByBiome()` helper in `src/inventory/inventory.js` collects `byBiome` / `collected` / `total` / `byBiomeCollected` / `byBiomeTotal`. New HUD methods `showEchoHunter(summary, biomeName)` + `hideEchoHunter()` + `showBiomeZoneOverlay(zoneText, ttlMs)`. The "Open Echo Hunter" button lives inside the inventory panel. **Bonus latent-bug fix:** the inventory panel's per-biome counter was previously rendered via a broken single-quoted template (always showed the static length) — now reads from the `collectedEchoes` Map correctly.
 
 ### "Wrong phase" Echoes (Phase 10.11) — deferred
 
@@ -64,11 +64,11 @@ There's no 0.5s "ghost" of the target phase before the shift commits. The existi
 
 Resonance (Q) still fires the 1.0s sphere pulse without a 0.5s charge-up + cancel path. The current 15-energy cost is a single debit on press; the charge-up would make it a tactical decision (preview + commit-or-cancel). Estimated ~10 headless checks.
 
-### New Game+ mode (Phase 10.14) — deferred
+### New Game+ mode (Phase 10.14) — shipped
 
-There's no NG+ from the pause menu (randomized phase-dominance per biome) or ironman flag. The 1.0 save blob would need `phaseDominanceSeed` + an ironman bit. Estimated ~15 headless checks.
+✅ **Shipped in Phase 10.14** (commit `77b3935`). The pause menu now exposes a **Start New Game+** button (gold styling) that rolls a fresh `phaseDominanceSeed` (Fisher-Yates shuffle of `[PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA]` per non-Nexus biome) and optionally toggles an `ironman` flag in the save blob. The pause-menu button calls `saveSystem.startNewGamePlus()`, which clears anchors / fuses / echoes / cores, resets player position + phase, and persists the new state. New `phaseDominanceSeed` is stored in the save blob so reloads keep the shuffle. The Phase Nexus biome is always locked to identity permutation (the §10.5 finale is deterministic). Seed=0 also returns the identity permutation (no shuffle on first playthrough = full back-compat). `__phaseShifter__.newGamePlus` debug surface (`seed` / `ironman` / `permutation` / `isShuffled` getters; `setSeed` / `setIronman` / `forceStartNewGamePlus` methods). 69 new headless checks in `tests/headless/test-phase10-newgameplus.cjs`.
 
-**Total P2 deferred:** ~55 headless checks. The brief remains the source of truth.
+**P2 remainder (~30 headless checks):** §10.11 wrong-phase Echoes (Phase-Lens-findable), §10.12 phase shift preview (0.5s ghost before commit), §10.13 resonance charge-up (0.5s preview + 1.0s commit + cancel path). The brief at `PHASE_10_BRIEF.md` remains the source of truth.
 
 ## 🟦 Platform
 
