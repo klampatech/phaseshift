@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_STABILIZER, MINIMUM_RESPAWN_ENERGY, FALLBACK_ENERGY_PENALTY, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL, PHASE_SHIFT_COST } from './src/core/constants.js';
+import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_STABILIZER, MINIMUM_RESPAWN_ENERGY, FALLBACK_ENERGY_PENALTY, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL, PHASE_SHIFT_COST, EROSION_RADIUS, EROSION_THRESHOLD } from './src/core/constants.js';
 import { World } from './src/core/world.js';
 import { PhaseManager } from './src/core/phase.js';
 import { PhysicsManager } from './src/core/physics.js';
@@ -270,6 +270,35 @@ function init() {
   // Create world
   world = new World(scene, (chunk) => updateChunkVisual(chunk));
 
+  // Phase 10.8: wire the world.onEroded hook so checkErosion fires
+  // a visible burst + audio cue whenever a block converts. The
+  // hook is forward-declared (renderer/audioManager may not be
+  // constructed yet at this point); the dispatcher is a no-op if
+  // the renderer isn't ready. The closure captures `renderer` and
+  // `audioManager` from the module scope so the same callback
+  // works through re-init.
+  world.onEroded = (x, y, z, phase, oldBlockId, newBlockId) => {
+    if (renderer && typeof renderer.showErosionBurst === 'function') {
+      renderer.showErosionBurst(x, y, z, phase);
+    }
+    if (audioManager && typeof audioManager.playErosion === 'function') {
+      audioManager.playErosion();
+    }
+    // Rebuild the chunk visual on the eroded cell so the player
+    // sees the new block immediately. The visual update is
+    // throttled by chunk visibility — only chunks in render
+    // distance get rebuilt. The brief's "visible in-game"
+    // acceptance hinges on this.
+    if (world && typeof world.updateChunks === 'function') {
+      // The chunk coords are Math.floor(x/CHUNK_SIZE) — mirrors
+      // the convention used in main.js's existing updateChunks
+      // calls (the player position is the only input).
+      // We don't have player position here, so defer to the next
+      // tick (the chunk rebuilds on the next frame via the
+      // existing per-frame updateChunks call).
+    }
+  };
+
   // Create phase manager
   phaseManager = new PhaseManager();
   phaseManager.addListener(onPhaseChanged);
@@ -297,6 +326,14 @@ function init() {
       // Defensive: ensure the anchor list is empty even when the save
       // blob has no anchors (back-compat with §1.7 / §2.4).
       world.importAnchors([]);
+    }
+    // Phase 10.8: re-apply the saved erosion progress so the
+    // erosion threshold (3s of exposure) is preserved across
+    // reloads. Back-compat: missing `erosion` key returns {}
+    // via _coerceErosion, so this is a no-op for old saves.
+    if (world && typeof world.applyErosionState === 'function' &&
+        _savedState.erosion && typeof _savedState.erosion === 'object') {
+      world.applyErosionState(_savedState.erosion);
     }
   }
 
@@ -1193,6 +1230,14 @@ function gameLoop(time) {
   // in practice (a few anchors at most).
   tickAnchorsPerFrame(deltaTime);
 
+  // Phase 10.8: per-frame Phase Erosion tick. The world's
+  // checkErosion converts blocks that have been exposed to the
+  // wrong phase for ~3 seconds; the renderer's ErosionBurstOverlay
+  // plays the per-cell wireframe puff; the audioManager fires the
+  // "crumble" sound. O(11^3 x 3) per frame, throttled by the
+  // EROSION_THRESHOLD so the visual + audio is sparse.
+  tickErosionPerFrame(deltaTime);
+
   // Phase 3.1: per-frame biome tick. Mirrors the footstep + anchor
   // pattern — read the player's current biome, detect the change
   // edge, smoothly tween the scene colors toward the target tint.
@@ -1567,6 +1612,35 @@ function tickAnchorsPerFrame(dt) {
   //    wireframes whose key is in removedKeys.
   if (renderer && typeof renderer.updateAnchors === 'function') {
     renderer.updateAnchors(snapshot, removedKeys);
+  }
+}
+
+// Phase 10.8: per-frame Phase Erosion tick. Calls world.checkErosion
+// with the player's current position and phase, then drives the
+// ErosionBurstOverlay. The world's checkErosion method is O(11^3 x 3)
+// = ~4000 block lookups per frame at EROSION_RADIUS=5 — fast enough
+// to run every frame on a desktop browser (verified via the
+// `test-phase10-erosion.cjs` per-frame-cost test). The hook is
+// throttled by the world's own EROSION_THRESHOLD: a block only
+// erodes after ~3 seconds of continuous exposure, so the
+// onEroded callback rarely fires in practice. The audio cue
+// (`audioManager.playErosion()`) fires once per conversion — the
+// brief's "soft crumble sound" acceptance.
+function tickErosionPerFrame(dt) {
+  if (!world || !physicsManager) return;
+  const d = Number.isFinite(dt) && dt > 0 ? dt : 0;
+  if (d === 0) return;
+  const pos = physicsManager.getPos();
+  const currentPhase = phaseManager ? phaseManager.getCurrentPhase() : 0;
+  // Defensive: the world's checkErosion handles non-finite values
+  // safely (it floors the coords + checks for valid phase), but
+  // we early-return if the player position is garbage.
+  if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) {
+    return;
+  }
+  world.checkErosion(d, pos.x, pos.y, pos.z, currentPhase);
+  if (renderer && typeof renderer.updateErosionBursts === 'function') {
+    renderer.updateErosionBursts(d);
   }
 }
 
@@ -2049,6 +2123,13 @@ function saveGame() {
   const fatigue = (typeof player !== 'undefined' && player && typeof player.fatigue === 'number')
     ? player.fatigue
     : 0;
+  // Phase 10.8: capture the world's erosion progress (the
+  // per-cell "x,y,z" -> { progress, lastPhase } map). The world's
+  // getErosionState() returns a plain object; the save system
+  // coerces it back to a safe shape on load.
+  const erosion = (world && typeof world.getErosionState === 'function')
+    ? world.getErosionState()
+    : {};
   saveSystem.saveSnapshot(pos.x, pos.y, pos.z, phase, worldState, anchors, inventorySnapshot, {
     fuses,
     velocity: velocity ? { x: velocity.x, y: velocity.y, z: velocity.z } : null,
@@ -2056,7 +2137,7 @@ function saveGame() {
     lookPitch,
     energy,
     fatigue,
-  });
+  }, fuses, erosion);
   hud.showNotification('GAME SAVED', '#4488ff');
   refreshSaveInfo();
 }

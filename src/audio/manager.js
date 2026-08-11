@@ -325,6 +325,33 @@ export class AudioEngine {
     }
   }
 
+  // Phase 10.8: Erosion "crumble" sound. A short low-pass noise
+  // burst that suggests stone degrading. Tuned subtle (gain 0.06)
+  // because the burst can fire many times in a single frame in
+  // a busy chunk — we want a soft patter, not a cement-mixer.
+  playErosion() {
+    if (!this.initialized) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const bufferSize = Math.floor(ctx.sampleRate * 0.12);
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      // Decaying noise: starts loud, fades fast
+      data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.04));
+    }
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 350;  // low rumble, not a crack
+    const gain = ctx.createGain();
+    gain.gain.value = 0.06;        // soft patter
+    source.connect(filter).connect(gain).connect(this.sfxGain);
+    source.start(now);
+    source.stop(now + 0.12);
+  }
+
   // Ambient procedural music
   startAmbientMusic(phase) {
     if (!this.initialized) return;

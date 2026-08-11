@@ -793,8 +793,20 @@ export class World {
 
   /** Apply erosion state from save */
   applyErosionState(erosionData) {
+    // Defensive: back-compat with pre-§10.8 saves (the `erosion`
+    // key is missing, so the call site passes null/undefined).
+    // We no-op rather than throw so the load path stays safe.
+    if (!erosionData || typeof erosionData !== 'object' || Array.isArray(erosionData)) return;
     for (const [key, data] of Object.entries(erosionData)) {
-      this._erosionState.set(key, data);
+      // Defensive per-entry validation: only accept objects with
+      // finite numeric progress + integer phase in [0, 2]. Anything
+      // else is treated as tampered-blob garbage and skipped.
+      if (!data || typeof data !== 'object') continue;
+      const progress = data.progress;
+      const lastPhase = data.lastPhase;
+      if (typeof progress !== 'number' || !Number.isFinite(progress)) continue;
+      if (!Number.isInteger(lastPhase) || lastPhase < 0 || lastPhase > 2) continue;
+      this._erosionState.set(key, { progress: Math.max(0, progress), lastPhase });
     }
   }
 

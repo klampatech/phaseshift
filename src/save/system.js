@@ -294,7 +294,7 @@ export class SaveSystem {
    * acceptance: "the player can save, quit, reload, and resume
    * exactly where they left off").
    */
-  saveSnapshot(x, y, z, phase, worldState, anchors, inventory, extras, fuses) {
+  saveSnapshot(x, y, z, phase, worldState, anchors, inventory, extras, fuses, erosion) {
     const e = (extras && typeof extras === 'object') ? extras : {};
     return this.saveGame(x, y, z, phase, {
       worldState: worldState || {},
@@ -306,7 +306,36 @@ export class SaveSystem {
       energy: Number.isFinite(e.energy) ? Math.max(0, e.energy) : 100,
       fatigue: Number.isFinite(e.fatigue) ? Math.max(0, Math.min(1, e.fatigue)) : 0,
       fuses: this._coerceFuses(fuses),
+      // Phase 10.8: persist erosion progress (the world's
+      // _erosionState Map keyed by "x,y,z"). Stored as a plain
+      // object (serializable). If the snapshot has no erosion
+      // key (legacy blob), `_coerceErosion` returns {} and the
+      // world's applyErosionState short-circuits.
+      erosion: this._coerceErosion(erosion),
     });
+  }
+
+  /**
+   * Phase 10.8: coerce the erosion state from a save blob. The
+   * shape mirrors the world's `getErosionState` return:
+   * `{ "<x>,<y>,<z>": { progress, lastPhase } }`. Defensive —
+   * rejects non-objects, non-finite / out-of-range values, and
+   * non-integer phases. Returns `{}` for missing / null /
+   * non-object input (back-compat with pre-§10.8 blobs).
+   */
+  _coerceErosion(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const out = {};
+    for (const [key, data] of Object.entries(value)) {
+      if (typeof key !== 'string' || !key.length) continue;
+      if (!data || typeof data !== 'object') continue;
+      const progress = data.progress;
+      const lastPhase = data.lastPhase;
+      if (typeof progress !== 'number' || !Number.isFinite(progress)) continue;
+      if (!Number.isInteger(lastPhase) || lastPhase < 0 || lastPhase > 2) continue;
+      out[key] = { progress: Math.max(0, progress), lastPhase };
+    }
+    return out;
   }
 
   /** Phase 10.2: coerce the fuse list from a save blob. Defensive —
@@ -367,6 +396,9 @@ export class SaveSystem {
       anchors: this._coerceAnchors(raw.anchors),
       inventory: this._coerceInventory(raw.inventory),
       fuses: this._coerceFuses(raw.fuses),
+      // Phase 10.8: load the erosion progress (back-compat: missing
+      // `erosion` key returns {} via _coerceErosion).
+      erosion: this._coerceErosion(raw.erosion),
       velocity: this._coerceVelocity(raw.velocity),
       lookYaw: Number.isFinite(raw.lookYaw) ? raw.lookYaw : 0,
       lookPitch: Number.isFinite(raw.lookPitch) ? raw.lookPitch : 0,

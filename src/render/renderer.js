@@ -1557,6 +1557,105 @@ export class ResonanceCoreOverlay {
   }
 }
 
+// Phase 10.8: ErosionBurst (a brief yellow puff on each block that
+// erodes). Mirrors the ResonancePulse pattern — a self-contained
+// THREE.Group, a Map of active bursts, and a per-frame `update` that
+// auto-disposes expired entries. The burst is intentionally simple:
+// a single 1.1-cube wireframe that pulses up + fades out over 0.5s.
+// That gives the player a visible cue (a soft "ping" on the eroded
+// cell) without spending much on per-frame work or relying on a real
+// particle system (which would need THREE.Points + a geometry
+// pipeline + a material lifecycle). The brown-tinted color matches
+// the §10.8 brief's "stone degrading" visual.
+const EROSION_BURST_DURATION = 0.5; // seconds
+const EROSION_BURST_COLOR = 0x996644; // warm brown — the dirt end of the stone->dirt erosion map
+
+/**
+ * Phase 10.8: ErosionBurst overlay. The brief calls for a "subtle
+ * particle burst" when a block erodes. We use a single-wireframe
+ * pulse (the cheapest "particle-like" cue) so the renderer doesn't
+ * grow a real particle pipeline just for erosion. The map keys are
+ * the canonical `${x},${y},${z},${phase}` so two simultaneous
+ * erodes at the same cell collapse to one burst (the player will
+ * see the visual anyway because the audio also fires).
+ */
+export class ErosionBurstOverlay {
+  constructor(scene) {
+    this.scene = scene;
+    this.group = new THREE.Group();
+    this.group.name = 'erosionBurstOverlay';
+    this.scene.add(this.group);
+    /** Map<key, { wire, mat, geom, age, duration }> */
+    this._bursts = new Map();
+  }
+
+  /**
+   * Show a brief burst at (x, y, z) in the given phase. Idempotent:
+   * if a burst already exists for the same key, the existing entry
+   * is reset to the start of the animation (the audio cue still
+   * fires because main.js's onEroded handler calls playErosion
+   * independently).
+   */
+  showErosionBurst(x, y, z, phase) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+    if (typeof phase !== 'number' || phase < 0 || phase > 2) return;
+    const key = `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)},${phase}`;
+    this._disposeKey(key);
+    const geom = new THREE.BoxGeometry(1.05, 1.05, 1.05);
+    const mat = new THREE.LineBasicMaterial({
+      color: EROSION_BURST_COLOR,
+      transparent: true,
+      opacity: 0.9,
+    });
+    const wire = new THREE.LineSegments(new THREE.EdgesGeometry(geom), mat);
+    wire.position.set(Math.floor(x) + 0.5, Math.floor(y) + 0.5, Math.floor(z) + 0.5);
+    this.group.add(wire);
+    this._bursts.set(key, { wire, mat, geom, age: 0, duration: EROSION_BURST_DURATION });
+  }
+
+  /**
+   * Per-frame tick. Advances each burst's age, scales the wireframe
+   * up (1.0 -> 1.4), fades the opacity, and auto-disposes on expiry.
+   * Called from main.js's `tickErosionPerFrame`.
+   */
+  updateErosionBursts(dt) {
+    const d = (typeof dt === 'number' && Number.isFinite(dt) && dt > 0) ? dt : 0;
+    if (d === 0) return;
+    for (const [key, entry] of this._bursts) {
+      entry.age += d;
+      const t = Math.min(1, entry.age / entry.duration);
+      // Scale up from 1.0 to 1.4 over the burst lifetime (a soft "puff").
+      const scale = 1.0 + 0.4 * t;
+      entry.wire.scale.set(scale, scale, scale);
+      // Opacity fades from 0.9 to 0.0 over the same window.
+      entry.mat.opacity = 0.9 * (1.0 - t);
+      if (t >= 1) {
+        this._disposeKey(key);
+      }
+    }
+  }
+
+  /**
+   * Clear all active bursts (used on scene reset). Mirrors the
+   * AnchorOverlay's `clearAnchors` pattern.
+   */
+  clearErosionBursts() {
+    for (const key of [...this._bursts.keys()]) {
+      this._disposeKey(key);
+    }
+  }
+
+  _disposeKey(key) {
+    const entry = this._bursts.get(key);
+    if (!entry) return;
+    if (entry.wire && entry.wire.parent) entry.wire.parent.remove(entry.wire);
+    if (entry.mat) entry.mat.dispose();
+    if (entry.geom) entry.geom.dispose();
+    if (entry.wire && entry.wire.geometry) entry.wire.geometry.dispose();
+    this._bursts.delete(key);
+  }
+}
+
 export class Renderer {
   constructor(world, scene, camera, phaseManager, webglRenderer) {
     this.world = world;
@@ -1631,6 +1730,13 @@ export class Renderer {
     // Lock cell - the §3.5 port of the orphan PhaseLockManager).
     this.lockOverlay = new LockOverlay();
     scene.add(this.lockOverlay.group);
+    // Phase 10.8: ErosionBurstOverlay (warm-brown wireframe puff on
+    // each block that erodes). Independent THREE.Group so the chunk
+    // mesh, Phase Lens, Resonance pulse, Anchor overlay, and the
+    // other overlays are untouched. The brief calls for a "subtle
+    // particle burst" — we use a wireframe pulse (the cheapest
+    // "particle-like" cue) plus the §10.8 audio cue.
+    this.erosionBurstOverlay = new ErosionBurstOverlay(scene);
   }
 
   // Phase 2.6: thin wrappers over the ResonancePulse so main.js has
@@ -1694,6 +1800,23 @@ export class Renderer {
     if (!this.checkpointOverlay) return false;
     const keys = this.checkpointOverlay.getCheckpointKeys();
     return keys.indexOf(key) >= 0;
+  }
+
+  // Phase 10.8: ErosionBurst dispatcher. main.js's
+  // `world.onEroded` hook calls this whenever the world's
+  // `checkErosion` converts a block (stone -> dirt, etc.). The
+  // per-frame `updateErosionBursts` advances the wireframes and
+  // auto-disposes expired entries.
+  showErosionBurst(x, y, z, phase) {
+    if (this.erosionBurstOverlay) this.erosionBurstOverlay.showErosionBurst(x, y, z, phase);
+  }
+
+  updateErosionBursts(dt) {
+    if (this.erosionBurstOverlay) this.erosionBurstOverlay.updateErosionBursts(dt);
+  }
+
+  clearErosionBursts() {
+    if (this.erosionBurstOverlay) this.erosionBurstOverlay.clearErosionBursts();
   }
 
   // Phase 3.2: Phase Collapse overlay driver.
