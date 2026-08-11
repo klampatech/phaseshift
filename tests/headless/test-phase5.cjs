@@ -38,8 +38,12 @@ async function main() {
   check('ACT_FIND_FIRST_ECHO defined', goals.ACT_FIND_FIRST_ECHO === 'act1_find_first_echo');
   check('ACT_REACH_PHASE_NEXUS defined', goals.ACT_REACH_PHASE_NEXUS === 'act2_reach_phase_nexus');
   check('ACT_MASTER_ALL_PHASES defined', goals.ACT_MASTER_ALL_PHASES === 'act3_master_all_phases');
-  check('ACT_ORDER has 3 entries', goals.ACT_ORDER.length === 3);
-  check('ACT_OBJECTIVES has 3 strings', Object.keys(goals.ACT_OBJECTIVES).length === 3);
+  // Phase 10.5: ACT_ORDER grew from 3 → 4 entries (Act 4 Convergence
+  // is the new finale; the existing 3 acts are unchanged). The
+  // Acceptance bullet for §10.5: "After Convergence, the world gains
+  // a subtle shimmer tint and the player avatar a faint glow."
+  check('ACT_ORDER has 4 entries (Act 1-3 + Act 4 Convergence)', goals.ACT_ORDER.length === 4);
+  check('ACT_OBJECTIVES has 4 strings (one per act)', Object.keys(goals.ACT_OBJECTIVES).length === 4);
 
   // actCompleted predicates
   check('Act 1 incomplete when no echoes',
@@ -75,33 +79,56 @@ async function main() {
     goals.currentAct({ collectedEchoCount: 1 }) === goals.ACT_REACH_PHASE_NEXUS);
   check('currentAct returns ACT_MASTER_ALL_PHASES after act 2',
     goals.currentAct({ collectedEchoCount: 1, hasVisitedPhaseNexus: true }) === goals.ACT_MASTER_ALL_PHASES);
+  // Phase 10.5: "all complete" now requires convergenceUnlocked=true
+  // (the §10.5 finale isn't free — the player must walk into the
+  // Nexus chamber after meeting the Act 3 conditions).
   check('currentAct returns null when all complete',
     goals.currentAct({
       collectedEchoCount: 5,
       hasVisitedPhaseNexus: true,
       amplifiers: ['amplifierAB', 'amplifierBG', 'amplifierAG'],
       stabilizerCount: 1,
+      convergenceUnlocked: true,
     }) === null);
 
   // currentObjective
   check('currentObjective returns the act 1 string',
     goals.currentObjective({ collectedEchoCount: 0 }) === goals.ACT_OBJECTIVES[goals.ACT_FIND_FIRST_ECHO]);
-  check('currentObjective returns "complete" when done',
+  // Phase 10.5: once Convergence is unlocked, currentObjective returns
+  // the "phases remember you" line instead of the legacy "explore
+  // freely" line. The legacy line is still shown if Convergence is
+  // NOT unlocked but everything else is complete.
+  check('currentObjective returns Convergence text when all complete',
     goals.currentObjective({
       collectedEchoCount: 5,
       hasVisitedPhaseNexus: true,
       amplifiers: ['amplifierAB', 'amplifierBG', 'amplifierAG'],
       stabilizerCount: 1,
-    }) === 'All complete — explore freely.');
+      convergenceUnlocked: true,
+    }) === goals.ACT_OBJECTIVES[goals.ACT_CONVERGENCE]);
 
   // objectiveColor
   check('objectiveColor returns cyan for active', goals.objectiveColor({}) === '#88ccff');
-  check('objectiveColor returns green for complete', goals.objectiveColor({
-    collectedEchoCount: 5,
-    hasVisitedPhaseNexus: true,
-    amplifiers: ['amplifierAB', 'amplifierBG', 'amplifierAG'],
-    stabilizerCount: 1,
-  }) === '#88ff88');
+  // Phase 10.5: green is still the "complete" color, but only when
+  // the player has unlocked Convergence. While Act 4 is still locked
+  // (i.e. the player has all amps + stabilizer + Echo + visited the
+  // Nexus but hasn't walked into the Nexus chamber), the color is
+  // gold (#ddaa44) — the §10.5 finale-call color.
+  check('objectiveColor returns gold while Convergence is locked',
+    goals.objectiveColor({
+      collectedEchoCount: 5,
+      hasVisitedPhaseNexus: true,
+      amplifiers: ['amplifierAB', 'amplifierBG', 'amplifierAG'],
+      stabilizerCount: 1,
+    }) === '#ddaa44');
+  check('objectiveColor returns green for complete (Convergence unlocked)',
+    goals.objectiveColor({
+      collectedEchoCount: 5,
+      hasVisitedPhaseNexus: true,
+      amplifiers: ['amplifierAB', 'amplifierBG', 'amplifierAG'],
+      stabilizerCount: 1,
+      convergenceUnlocked: true,
+    }) === '#88ff88');
 
   // markerKey
   // Math.floor(-2.5) === -3 in JS (rounds toward -Infinity)
