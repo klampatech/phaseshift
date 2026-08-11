@@ -1668,6 +1668,90 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
   console.log('\n=== Phase 9 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase9, null, 2));
 
+  // ── Phase 10.14 (New Game+ mode) ─────────────────────────────
+  // §10.14 acceptance: phase-dominance seed, permutation picker,
+  // ironman flag, save/load round-trip, World API, pause menu
+  // button, terrain.js BIOME_DATA phaseDominance field, main.js
+  // debug surface.
+  const ngPath = path.resolve(__dirname, '..', '..', 'src', 'newgameplus', 'newgameplus.js');
+  const ngText = fs2.existsSync(ngPath) ? fs2.readFileSync(ngPath, 'utf8') : '';
+  const phase10_14 = {
+    ng_module_exports_DEFAULT_PHASE_DOMINANCE_SEED: /export\s+const\s+DEFAULT_PHASE_DOMINANCE_SEED\s*=\s*0\b/.test(ngText),
+    ng_module_exports_DEFAULT_IRONMAN: /export\s+const\s+DEFAULT_IRONMAN\s*=\s*false\b/.test(ngText),
+    ng_module_exports_NEXUS_DOMINANCE: /export\s+const\s+NEXUS_DOMINANCE\s*=\s*Object\.freeze\(\[/.test(ngText),
+    ng_module_exports_SHUFFLABLE_BIOMES: /export\s+const\s+SHUFFLABLE_BIOMES\s*=\s*Object\.freeze\(\[/.test(ngText),
+    ng_module_exports_pickPhaseDominance: /export\s+function\s+pickPhaseDominance\s*\(/.test(ngText),
+    ng_module_exports_pickDominantPhase: /export\s+function\s+pickDominantPhase\s*\(/.test(ngText),
+    ng_module_exports_dominanceWeights: /export\s+function\s+dominanceWeights\s*\(/.test(ngText),
+    ng_module_exports_createNewGamePlusState: /export\s+function\s+createNewGamePlusState\s*\(/.test(ngText),
+    ng_module_exports_setIronman: /export\s+function\s+setIronman\s*\(/.test(ngText),
+    ng_module_exports_isIronman: /export\s+function\s+isIronman\s*\(/.test(ngText),
+    ng_module_exports_isShuffled: /export\s+function\s+isShuffled\s*\(/.test(ngText),
+    ng_module_exports_serialize: /export\s+function\s+serialize\s*\(/.test(ngText),
+    ng_module_exports_deserialize: /export\s+function\s+deserialize\s*\(/.test(ngText),
+    ng_seed_zero_returns_identity: /pickPhaseDominance[\s\S]{0,500}?s\s*===\s*0[\s\S]{0,500}?return\s+NEXUS_DOMINANCE/.test(ngText),
+    ng_nexus_special_case: /pickPhaseDominance[\s\S]{0,800}?b\s*===\s*BIOME_PHASE_NEXUS[\s\S]{0,200}?return\s+NEXUS_DOMINANCE/.test(ngText),
+    ng_fisher_yates_shuffle: /Fisher-Yates/.test(ngText),
+    // GameState has newGamePlus.
+    game_state_has_newGamePlus: /this\.newGamePlus\s*=\s*\{/.test(fs2.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'gen', 'gameState.js'), 'utf8')),
+    // World API.
+    world_has_getPhaseDominanceSeed: /getPhaseDominanceSeed\s*\(\s*\)/.test(worldText),
+    world_has_getPhaseDominancePermutation: /getPhaseDominancePermutation\s*\(\s*biomeId\s*\)/.test(worldText),
+    world_has_getDominantPhase: /getDominantPhase\s*\(\s*biomeId\s*\)/.test(worldText),
+    world_has_getDominanceWeights: /getDominanceWeights\s*\(\s*biomeId\s*\)/.test(worldText),
+    world_has_setPhaseDominanceSeed: /setPhaseDominanceSeed\s*\(\s*seed\s*\)/.test(worldText),
+    world_constructor_accepts_seed: /constructor\s*\(\s*scene\s*,\s*onChunkUpdated\s*,\s*seed\s*,\s*phaseDominanceSeed\s*\)/.test(worldText),
+    // Save system.
+    save_has_coerceNewGamePlus: /_coerceNewGamePlus\s*\(value\)/.test(fs2.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'save', 'system.js'), 'utf8')),
+    save_has_startNewGamePlus: /startNewGamePlus\s*\(\s*existingState\s*,\s*options\s*\)/.test(fs2.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'save', 'system.js'), 'utf8')),
+    save_normalize_includes_newGamePlus: /_normalizeState[\s\S]{0,2000}?_coerceNewGamePlus/.test(fs2.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'save', 'system.js'), 'utf8')),
+    save_save_includes_newGamePlus: /save\s*\(gameState\)[\s\S]{0,2000}?_coerceNewGamePlus/.test(fs2.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'save', 'system.js'), 'utf8')),
+    save_loadGame_includes_newGamePlus: /loadGame\s*\(\s*\)[\s\S]{0,2000}?_coerceNewGamePlus/.test(fs2.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'save', 'system.js'), 'utf8')),
+    // terrain.js.
+    terrain_biome_data_has_phaseDominance: /\[BIOME_FOREST\]:[\s\S]{0,3000}?phaseDominance:\s*\[/.test(fs2.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'gen', 'terrain.js'), 'utf8')),
+    terrain_constructor_accepts_phaseDominanceSeed: /constructor\s*\(\s*seed\s*,\s*phaseDominanceSeed\s*\)/.test(fs2.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'gen', 'terrain.js'), 'utf8')),
+    terrain_generateChunk_returns_phaseDominance: /phaseDominance:\s*\{[\s\S]{0,500}?permutation[\s\S]{0,200}?dominantPhase/.test(fs2.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'gen', 'terrain.js'), 'utf8')),
+    // main.js.
+    main_has_btn_newgameplus: /id="btn-newgameplus"/.test(srcText),
+    main_wires_btn_newgameplus_handler: /safeOn\s*\(\s*['"]btn-newgameplus['"]/.test(srcText),
+    main_click_handler_calls_startNewGamePlus: /safeOn\s*\(\s*['"]btn-newgameplus['"][\s\S]{0,1500}?startNewGamePlus/.test(srcText),
+    main_exports_newGamePlus_debug_hook: /newGamePlus:\s*\{[\s\S]{0,500}?get seed/.test(srcText),
+    main_imports_newGamePlus_helpers: /from\s+['"]\.\/src\/newgameplus\/newgameplus\.js['"]/.test(srcText),
+    main_saveSnapshot_passes_newGamePlus: /saveSnapshot[\s\S]{0,1000}?newGamePlusState/.test(srcText),
+  };
+  const phase10_14Ok = Object.values(phase10_14).every(Boolean);
+  console.log('\n=== Phase 10.14 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase10_14, null, 2));
+
+  // ── Phase 10.10 (Echo Hunter panel) ──────────────────────────
+  // §10.10 acceptance: listEchoesByBiome helper, HUD showEchoHunter
+  // + hideEchoHunter + showBiomeZoneOverlay methods, main.js wires
+  // the open-echo-hunter button + zone overlay, buildEchoHunterSummary
+  // helper, __phaseShifter__.echoHunter debug surface.
+  const invText2_1010 = fs2.existsSync(path.resolve(__dirname, '..', '..', 'src', 'inventory', 'inventory.js')) ? fs2.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'inventory', 'inventory.js'), 'utf8') : '';
+  const hudText2_1010 = fs2.existsSync(path.resolve(__dirname, '..', '..', 'src', 'ui', 'hud.js')) ? fs2.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'ui', 'hud.js'), 'utf8') : '';
+  const phase10_10 = {
+    inv_exports_listEchoesByBiome: /export\s+function\s+listEchoesByBiome\s*\(/.test(invText2_1010),
+    inv_exports_getBiomeIdForKey: /export\s+function\s+getBiomeIdForKey\s*\(/.test(invText2_1010),
+    inv_listEchoesByBiome_returns_byBiome: /listEchoesByBiome[\s\S]{0,2000}?byBiome[\s\S]{0,500}?byBiomeTotal/.test(invText2_1010),
+    inv_listEchoesByBiome_handles_null: /listEchoesByBiome[\s\S]{0,2000}?fresh\s*=\s*\{[\s\S]{0,500}?byBiome:\s*\{\}/.test(invText2_1010),
+    hud_has_showEchoHunter: /showEchoHunter\s*\(\s*summary\s*,\s*biomeName\s*\)/.test(hudText2_1010),
+    hud_has_hideEchoHunter: /hideEchoHunter\s*\(\s*\)/.test(hudText2_1010),
+    hud_has_showBiomeZoneOverlay: /showBiomeZoneOverlay\s*\(\s*zoneText\s*,\s*ttlMs\s*\)/.test(hudText2_1010),
+    hud_inventory_has_open_echo_hunter_btn: /id="btn-open-echo-hunter"/.test(hudText2_1010),
+    hud_fixes_broken_template_literal: /ECHOES & LORE \(\$\{echoes\.length/.test(hudText2_1010) === false,
+    main_imports_listEchoesByBiome: /import\s*\{[^}]*listEchoesByBiome[^}]*\}\s*from\s+['"]\.\/src\/inventory\/inventory\.js['"]/.test(srcText),
+    main_wires_btn_open_echo_hunter: /safeOn\s*\(\s*['"]btn-open-echo-hunter['"]/.test(srcText),
+    main_has_buildEchoHunterSummary: /function\s+buildEchoHunterSummary\s*\(/.test(srcText),
+    main_buildEchoHunterSummary_uses_listEchoesByBiome: /buildEchoHunterSummary[\s\S]{0,2000}?listEchoesByBiome/.test(srcText),
+    main_tickBiomesPerFrame_shows_zone_overlay: /tickBiomesPerFrame[\s\S]{0,4000}?showBiomeZoneOverlay/.test(srcText),
+    main_exports_echoHunter_debug_hook: /echoHunter:\s*\{[\s\S]{0,500}?openPanel/.test(srcText),
+    main_getEchoes_reads_collectedEchoes: /getEchoes:[^}]*collectedEchoes\s+instanceof\s+Map/.test(srcText),
+  };
+  const phase10_10Ok = Object.values(phase10_10).every(Boolean);
+  console.log('\n=== Phase 10.10 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase10_10, null, 2));
+
   // ── Phase 4 (Polish: HUD-owns-DOM + Settings + Minimap + Save/load) ─
   // Phase 4 work: §4.1 (HUD owns its DOM), §4.2 (Settings menu with
   // localStorage persistence + live-apply), §4.3 (Minimap reads actual
@@ -1868,7 +1952,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase28Ok &&
     phase31Ok &&
     phase32Ok &&
-    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok && phase6Ok && phase9Ok ? 0 : 1
+    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok && phase6Ok && phase9Ok && phase10_14Ok && phase10_10Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);
