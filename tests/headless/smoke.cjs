@@ -1806,6 +1806,49 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
   console.log('\n=== Phase 10.13 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase10_13, null, 2));
 
+  // ── Phase 10.12 (Phase shift preview) ─────────────────────
+  // §10.12 acceptance: PREVIEW_SECONDS = 0.5, PHASE_SHIFT_DURATION =
+  // 1.5, PEAK_PREVIEW_AMOUNT = 0.6, preview module exports the
+  // pure helpers, renderer setupPostProcessing wires a previewPass
+  // + an updatePhaseShiftPreview(amount, color) method, main.js
+  // drives the shader pass via updatePhaseShiftPreviewPerFrame +
+  // exposes __phaseShifter__.phaseShiftPreview debug hooks.
+  const pvPath2 = path.resolve(__dirname, '..', '..', 'src', 'render', 'phaseShiftPreview.js');
+  const pvText = fs2.existsSync(pvPath2) ? fs2.readFileSync(pvPath2, 'utf8') : '';
+  const phase10_12 = {
+    pv_module_exists: pvText.length > 0,
+    pv_exports_PHASE_SHIFT_DURATION: /export\s+const\s+PHASE_SHIFT_DURATION\s*=\s*1\.5\b/.test(pvText),
+    pv_exports_PREVIEW_SECONDS: /export\s+const\s+PREVIEW_SECONDS\s*=\s*0\.5\b/.test(pvText),
+    pv_exports_PEAK_PREVIEW_AMOUNT: /export\s+const\s+PEAK_PREVIEW_AMOUNT\s*=/.test(pvText),
+    pv_exports_previewAmount: /export\s+function\s+previewAmount\s*\(/.test(pvText),
+    pv_exports_previewColorFromHex: /export\s+function\s+previewColorFromHex\s*\(/.test(pvText),
+    pv_exports_previewColor: /export\s+function\s+previewColor\s*\(/.test(pvText),
+    pv_exports_shouldRunPreview: /export\s+function\s+shouldRunPreview\s*\(/.test(pvText),
+    pv_previewAmount_returns_0_at_0: /previewAmount[\s\S]{0,500}?Number\.isFinite[\s\S]{0,500}?return\s+0/.test(pvText),
+    pv_previewAmount_fadeIn_curve: /previewAmount[\s\S]{0,1500}?p\s*<\s*fadeIn[\s\S]{0,500}?PEAK_PREVIEW_AMOUNT\s*\*\s*k/.test(pvText),
+    pv_previewAmount_fadeOut_curve: /previewAmount[\s\S]{0,2500}?p\s*<\s*fadeOut[\s\S]{0,500}?PEAK_PREVIEW_AMOUNT\s*\*\s*\(1\s*-\s*k\)/.test(pvText),
+    // Renderer.
+    renderer_has_previewPass: /previewPass\s*=\s*new\s+ShaderPass\(previewShader\)/.test(rendererText),
+    renderer_has_uPreviewAmount: /uPreviewAmount:\s*\{\s*value:\s*0\.0\s*\}/.test(rendererText),
+    renderer_has_uPreviewColor: /uPreviewColor:\s*\{\s*value:\s*new\s+THREE\.Vector3/.test(rendererText),
+    renderer_returns_previewPass: /return\s*\{[\s\S]{0,400}?previewPass,/.test(rendererText),
+    renderer_updatePhaseShiftPreview_signature: /updatePhaseShiftPreview\s*\(\s*amount\s*,\s*color\s*\)/.test(rendererText),
+    renderer_updatePhaseShiftPreview_sets_uPreviewAmount: /updatePhaseShiftPreview[\s\S]{0,500}?uPreviewAmount\.value\s*=/.test(rendererText),
+    renderer_shader_mixes_with_uPreviewColor: /uPreviewColor[\s\S]{0,500}?mix\(/.test(rendererText),
+    // main.js.
+    main_imports_pv_module: /from\s+['"]\.\/src\/render\/phaseShiftPreview\.js['"]/.test(srcText),
+    main_imports_previewAmount: /import\s*\{[^}]*previewAmount[^}]*\}\s*from\s+['"]\.\/src\/render\/phaseShiftPreview\.js['"]/.test(srcText),
+    main_has_updatePhaseShiftPreviewPerFrame: /function\s+updatePhaseShiftPreviewPerFrame\s*\(/.test(srcText),
+    main_game_loop_calls_updatePhaseShiftPreviewPerFrame: /updatePhaseShiftPreviewPerFrame\s*\(\s*\)/.test(srcText),
+    main_updatePhaseShiftPreviewPerFrame_uses_isShifting: /updatePhaseShiftPreviewPerFrame[\s\S]{0,1500}?_isShifting/.test(srcText),
+    main_updatePhaseShiftPreviewPerFrame_uses_previewAmount: /updatePhaseShiftPreviewPerFrame[\s\S]{0,1500}?previewAmount\(/.test(srcText),
+    main_exports_phaseShiftPreview_debug_hook: /phaseShiftPreview:\s*\{[\s\S]{0,2000}?getProgress/.test(srcText),
+    main_phaseShiftPreview_forcePreviewForTest: /phaseShiftPreview:\s*\{[\s\S]{0,2000}?forcePreviewForTest/.test(srcText),
+  };
+  const phase10_12Ok = Object.values(phase10_12).every(Boolean);
+  console.log('\n=== Phase 10.12 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase10_12, null, 2));
+
   // ── Phase 4 (Polish: HUD-owns-DOM + Settings + Minimap + Save/load) ─
   // Phase 4 work: §4.1 (HUD owns its DOM), §4.2 (Settings menu with
   // localStorage persistence + live-apply), §4.3 (Minimap reads actual
@@ -2006,7 +2049,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase28Ok &&
     phase31Ok &&
     phase32Ok &&
-    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok && phase6Ok && phase9Ok && phase10_14Ok && phase10_10Ok && phase10_13Ok ? 0 : 1
+    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok && phase6Ok && phase9Ok && phase10_14Ok && phase10_10Ok && phase10_12Ok && phase10_13Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

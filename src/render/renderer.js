@@ -308,13 +308,70 @@ export function setupPostProcessing(renderer, scene, camera) {
   phasePass.name = 'phase';
   composer.addPass(phasePass);
 
+  // Phase 10.12: phase-shift preview pass. Runs after the phase
+  // pass; reads the `uPreviewAmount` + `uPreviewColor` uniforms
+  // and mixes the current frame with a desaturated + tinted
+  // version. Default `uPreviewAmount = 0` so the pass is a no-op
+  // unless the game loop actively drives it.
+  const previewShader = {
+    uniforms: {
+      tDiffuse: { value: null },
+      uPreviewAmount: { value: 0.0 },
+      uPreviewColor: { value: new THREE.Vector3(1.0, 1.0, 1.0) },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D tDiffuse;
+      uniform float uPreviewAmount;
+      uniform vec3 uPreviewColor;
+      varying vec2 vUv;
+
+      // Desaturate a color by averaging the RGB channels.
+      vec3 desaturate(vec3 c) {
+        float avg = (c.r + c.g + c.b) / 3.0;
+        return vec3(avg);
+      }
+
+      void main() {
+        vec4 color = texture2D(tDiffuse, vUv);
+        if (uPreviewAmount > 0.001) {
+          // Ghost: desaturated + tinted with the target phase color.
+          vec3 desat = desaturate(color.rgb);
+          vec3 tinted = mix(desat, desat * uPreviewColor, 0.65);
+          color.rgb = mix(color.rgb, tinted, uPreviewAmount);
+        }
+        gl_FragColor = color;
+      }
+    `,
+  };
+  const previewPass = new ShaderPass(previewShader);
+  previewPass.name = 'phaseShiftPreview';
+  composer.addPass(previewPass);
+
   return {
     composer,
     bloomPass,
     phasePass,
+    previewPass,
     updatePhase(phase, resonating) {
       phasePass.uniforms.uPhase.value = phase;
       phasePass.uniforms.uResonating.value = resonating ? 1.0 : 0.0;
+    },
+    // Phase 10.12: drive the preview pass uniforms from the game
+    // loop. `amount` is in [0, 1] (0 = pass is a no-op, 1 = full
+    // ghost). `color` is `{ r, g, b }` normalized to [0, 1].
+    updatePhaseShiftPreview(amount, color) {
+      const a = (Number.isFinite(amount) && amount > 0) ? Math.min(1, amount) : 0;
+      previewPass.uniforms.uPreviewAmount.value = a;
+      if (color && Number.isFinite(color.r) && Number.isFinite(color.g) && Number.isFinite(color.b)) {
+        previewPass.uniforms.uPreviewColor.value.set(color.r, color.g, color.b);
+      }
     },
     // Phase 2.1 alias — main.js#onPhaseChanged calls setPhase(phase) on a
     // cycle completion so the shader tint updates at the exact moment of

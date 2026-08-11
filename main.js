@@ -4,6 +4,7 @@ import { World } from './src/core/world.js';
 import { PhaseManager } from './src/core/phase.js';
 import { PhysicsManager } from './src/core/physics.js';
 import { setupLighting, createPlayerMesh, createSkybox, ChunkVisual, setupPostProcessing, ScanOverlay, ResonancePulse, AnchorOverlay, CheckpointOverlay, CollapseOverlay } from './src/render/renderer.js';
+import { previewAmount, previewColor, shouldRunPreview, PREVIEW_SECONDS, PHASE_SHIFT_DURATION } from './src/render/phaseShiftPreview.js';
 import { Controls } from './src/input/controls.js';
 import { placeBlock as placeBlockAtTarget } from './src/input/placeBlock.js';
 import { HUD } from './src/ui/hud.js';
@@ -1399,6 +1400,13 @@ function gameLoop(time) {
   // Update phase-based post-processing
   postProcessing.updatePhase(phaseManager.getCurrentPhase(), ctrlState.resonating);
 
+  // Phase 10.12: drive the phase-shift preview shader pass. While
+  // the PhaseManager is mid-shift the preview pass blends a
+  // desaturated + tinted ghost of the target phase into the frame
+  // (the §10.12 visual). Idle / post-shift: uPreviewAmount = 0
+  // (the shader pass is a no-op).
+  updatePhaseShiftPreviewPerFrame();
+
   // Phase 2.1: drive the full-screen color pulse during a shift so the
   // player gets a visible ~1.5s color pulse (rgba(targetPhaseColor,
   // 1 - shiftProgress) per the brief). The overlay is transparent when
@@ -1417,6 +1425,40 @@ function gameLoop(time) {
 // pulse are skipped, but the game is still playable"). When reduced-motion
 // is on, the overlay stays transparent through the entire shift so the
 // color pulse is suppressed.
+// Phase 10.12: drive the §10.12 phase-shift preview shader
+// pass. While the PhaseManager is mid-shift (`_isShifting === true`
+// and `getPhaseShiftProgress() < 1`) the preview pass blends a
+// desaturated + tinted ghost of the target phase into the frame.
+// After the shift completes (progress >= 1) the preview amount
+// resets to 0 so the pass is a no-op.
+//
+// The preview duration is 0.5s of the 1.5s shift animation. During
+// the first 0.5s the ghost fades in (previewAmount returns a value
+// approaching PEAK_PREVIEW_AMOUNT); during the next 1.0s it fades
+// out as the world commits to the target phase.
+function updatePhaseShiftPreviewPerFrame() {
+  if (!postProcessing || typeof postProcessing.updatePhaseShiftPreview !== 'function') {
+    return;
+  }
+  if (!phaseManager || !phaseManager._isShifting) {
+    postProcessing.updatePhaseShiftPreview(0, { r: 1, g: 1, b: 1 });
+    return;
+  }
+  const progress = phaseManager.getPhaseShiftProgress
+    ? phaseManager.getPhaseShiftProgress()
+    : 0;
+  if (!shouldRunPreview(progress)) {
+    postProcessing.updatePhaseShiftPreview(0, { r: 1, g: 1, b: 1 });
+    return;
+  }
+  const targetPhase = phaseManager.getTargetPhase
+    ? phaseManager.getTargetPhase()
+    : phaseManager.getCurrentPhase();
+  const amount = previewAmount(progress);
+  const color = previewColor(targetPhase);
+  postProcessing.updatePhaseShiftPreview(amount, color);
+}
+
 function updatePhaseShiftOverlay() {
   const overlay = document.getElementById('phase-shift-overlay');
   if (!overlay) return;
@@ -3040,6 +3082,55 @@ if (typeof window !== 'undefined') {
     // Phase 10.13: §10.13 charge-up debug hooks. The Playwright test
     // uses these to introspect the charge state machine + force the
     // transition edges without needing a 0.5s real-time wait.
+    // Phase 10.12: phase-shift preview debug hooks. The Playwright
+    // test uses these to introspect the preview state machine +
+    // force the transition edges without needing a real-time wait.
+    phaseShiftPreview: {
+      getProgress() {
+        if (!phaseManager) return 0;
+        return phaseManager.getPhaseShiftProgress
+          ? phaseManager.getPhaseShiftProgress()
+          : 0;
+      },
+      getPreviewAmount() {
+        if (!phaseManager || !phaseManager._isShifting) return 0;
+        const p = phaseManager.getPhaseShiftProgress
+          ? phaseManager.getPhaseShiftProgress()
+          : 0;
+        return previewAmount(p);
+      },
+      getTargetPhase() {
+        if (!phaseManager) return 0;
+        return phaseManager.getTargetPhase
+          ? phaseManager.getTargetPhase()
+          : phaseManager.getCurrentPhase();
+      },
+      isRunning() {
+        if (!phaseManager) return false;
+        return shouldRunPreview(
+          phaseManager.getPhaseShiftProgress
+            ? phaseManager.getPhaseShiftProgress()
+            : 0,
+        );
+      },
+      forcePreviewForTest(progress) {
+        // Directly drive the preview pass for visual regression
+        // tests that don't want to wait for a real phase shift.
+        if (!postProcessing || typeof postProcessing.updatePhaseShiftPreview !== 'function') {
+          return null;
+        }
+        const p = (Number.isFinite(progress) && progress >= 0 && progress <= 1)
+          ? progress
+          : 0;
+        const targetPhase = phaseManager.getTargetPhase
+          ? phaseManager.getTargetPhase()
+          : phaseManager.getCurrentPhase();
+        const amount = previewAmount(p);
+        const color = previewColor(targetPhase);
+        postProcessing.updatePhaseShiftPreview(amount, color);
+        return { progress: p, amount, color };
+      },
+    },
     resonanceCharge: {
       getState() {
         return {
