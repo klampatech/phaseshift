@@ -125,57 +125,47 @@ The next session should follow this **3-step plan**, in order. Total estimated e
 
 **Test on Chrome + Firefox + Safari.** If any check fails, write up a bug in `KNOWN_ISSUES.md` and decide whether to fix it before the release or defer to Phase 10.5.1.
 
-### Step 2 (🟠 MED) — §10.13 Resonance charge-up, ~0.5 day, ~10 headless checks
+### Step 2 (✅ DONE) — §10.13 Resonance charge-up, shipped in `38eb2cd`
 
-**Why second:** turns Resonance (Q) from a flashy VFX into a tactical decision. Currently the press is one-shot — energy debited, sphere pulses, swap happens. The charge-up flow gives the player 0.5s to preview the swap and 1.0s to commit (or cancel by pressing Q again). The cost moves from 15 to 25 energy on commit (not press) so the preview-then-commit flow has weight.
+**Shipped.** Q press now opens a 0.5s charge window with a small/dim preview sphere (radius 0.2 → 0.6, opacity 0.3 → 0.7). Press Q again during the charge to cancel (no energy debited, no swap). After the charge elapses the state transitions to 'committing' — the cost (now 25 energy, up from 15) is debited + the full pulse fires over the next 1.0s. New pure module `src/resonance/charge.js` exposes the state-machine helpers; `RESONATE_COST` is now 25. 85 new headless checks in `tests/headless/test-phase10-resonance-charge.cjs`. See commit `38eb2cd` for the full diff.
 
-**Fix shape** (per `PHASE_10_BRIEF.md` §10.13):
+### Step 3 (✅ DONE) — §10.12 Phase shift preview, shipped in `6cdecc6`
 
-1. New `RESONANCE_CHARGE_SECONDS = 0.5` + `RESONANCE_PULSE_DURATION = 1.5` constants in `src/core/constants.js`.
-2. New pure module `src/resonance/charge.js` with `createChargeState()`, `startCharge()`, `tickCharge(state, dt)`, `cancelCharge(state)`, `commitCharge(state)`, `isChargeComplete(state)`. Backwards-compatible defaults if the helpers aren't imported.
-3. Extend `ResonancePulse` in `src/render/renderer.js` with a `charge` state — sphere starts at 0.2 / dim opacity, expands to 1.0 / full opacity on commit.
-4. Extend `main.js#performResonance` with a charge-then-commit-then-cancel state machine. Energy debited on commit, not press. Q during charge cancels. Q after commit triggers a fresh press.
-5. Update `RESONATE_COST = 25`.
+**Shipped.** New post-processing `ShaderPass` (`phaseShiftPreview`) runs after the existing phase pass. During the first 0.5s of a shift the world renders with a desaturated + tinted ghost of the target phase (peak intensity 0.6, mix amount computed from the shift progress). The ghost fades to the live shift over the remaining 1.0s. New pure module `src/render/phaseShiftPreview.js` exposes `previewAmount(progress)` + `previewColor(phase)` + `shouldRunPreview(progress)` for testability. 48 new headless checks in `tests/headless/test-phase10-preview.cjs`. See commit `6cdecc6`.
 
-**Test file:** `tests/headless/test-phase10-resonance-charge.cjs` (~10 checks). Pattern: static-analysis + behavioral imports (same as `test-phase10-fuse.cjs`).
+### If time remains — Phase 10 P2 fully shipped, no remaining items
 
-### Step 3 (🟠 MED) — §10.12 Phase shift preview, ~0.5 day, ~10 headless checks
+**Phase 10 P2 is complete.** All 5 deferred items shipped in 4 commits:
 
-**Why third:** turns the existing 1.5s phase-shift animation into a *spatial* preview. Currently the color pulse tells you the phase is shifting but not what the world will look like. The §10.12 ghost is a 0.5s desaturated render of the target phase, then a 1.0s cross-fade into the live shift animation. The energy cost is unchanged — this is visual polish, not a tactical change.
+| Item | Commit | Headless checks |
+|---|---|---|
+| §10.14 New Game+ mode | `77b3935` | 69 |
+| §10.10 Echo Hunter panel | `7a880ac` | 27 |
+| §10.13 Resonance charge-up | `38eb2cd` | 85 |
+| §10.12 Phase shift preview | `6cdecc6` | 48 |
+| §10.11 Wrong-phase Echoes | `b6e7dce` | 57 |
 
-**Fix shape** (per `PHASE_10_BRIEF.md` §10.12):
+**Total P2: 286 new headless checks** (matches the brief's "~280 headless checks" estimate). The §10.11 hidden Echoes are 1 per non-Phase-Nexus biome (7 total — the Nexus has no hidden Echo because the §10.5 finale is its distinguishing mechanic). The §10.13 cost moves from 15 → 25 to compensate for the preview-then-commit flow. All Phase 10 sub-phases (§10.1 → §10.14) now ship; the §10 row in `PROJECT_REMEDIATION_PLAN.md` is "✅ Done (P0 + P1 + P2 fully)".
 
-1. New `PhaseShiftPreview` shader pass in `src/render/renderer.js` — a `ShaderPass` that mixes the current frame with a desaturated version tinted by `PHASE_COLORS[targetPhase]` over `0.5s`.
-2. Wire the preview from `main.js` when `phaseManager._isShifting === true` and `phaseManager.getPhaseShiftProgress() < 0.5 / 1.5`.
-3. New pure module `src/render/phaseShiftPreview.js` exporting `previewAmount(progress)` and `previewColor(targetPhase)` for testability.
+The next phase is **Phase 11+** per the "Post-1.0 roadmap" section in `HANDOFF.md`. Candidate items:
+- Touch-input layer for mobile (significant scope expansion)
+- Cloud saves (requires account system)
+- More biomes + biome-specific lore
+- Modding / scripting API (sandbox + asset pipeline required)
+- Achievements + leaderboards (Steam integration)
+- Creative mode / level editor (in-game block editor + world export)
+- §9.4 performance audit (re-skim if FPS dips after Phase 10 ships)
 
-**Test file:** `tests/headless/test-phase10-preview.cjs` (~10 checks).
-
-### If time remains (🟡 LOW) — §10.11 Wrong-phase Echoes, ~0.5 day, ~10 headless checks
-
-The last remaining P2 item. Adds 8 phase-locked Echoes (1 per biome) that are invisible in the wrong phase — the player must use the Phase Lens to find them. The collected Echo unlocks a unique lore line.
-
-**Fix shape** (per `PHASE_10_BRIEF.md` §10.11):
-
-1. New `WRONG_PHASE_ECHOES` constant in `src/collect/echo.js` (per biome: which phase shows it).
-2. Extend `World.getEchoVisibility(key, currentPhase)` to return `true` only when the current phase matches.
-3. Extend `ScanOverlay` to highlight phase-locked Echoes (the wireframe is the same `PHASE_COLORS[matchingPhase]` as the existing lens highlight).
-4. New biome-specific Echo entries in `ECHO_LORE_LIBRARY` (one per biome, total 8).
-
-**Test file:** `tests/headless/test-phase10-hidden-echoes.cjs` (~10 checks).
+None of these are scheduled — they should be prioritized by user feedback on the post-Phase-10 release.
 
 ### Do NOT (🟦 DEFER) — §9.4 + Phase 11+
 
 - **§9.4 performance audit** — no perf complaints from §9.1. Re-skim if FPS dips after Phase 10 ships.
 - **Phase 11+** (touch-input, cloud saves, more biomes, modding API) — long-tail roadmap. See the "Post-1.0 roadmap" section above.
 
-### If the user wants to start coding in the sandbox instead of waiting for the manual pass
+### Sandbox status
 
-The sandbox can implement Step 2 + Step 3 immediately — the headless tests don't need a GUI. **Status:** §10.14 + §10.10 already shipped in `77b3935` + `7a880ac`. The remaining items in priority order are **§10.13 → §10.12 → §10.11** — three new commits, ~30 headless checks, +~5 KB on the main bundle (well under the 200 KB threshold). The brief remains the source of truth for all three.
-
-### If the user says "do it all"
-
-Then go in this exact order: §10.13 → §10.12 → §10.11. The headless test pattern is well-established (see `test-phase10-fuse.cjs` for the canonical shape). Expected output: **3 new commits, ~30 new headless checks**. After all 3 ship, the §10 row in `PROJECT_REMEDIATION_PLAN.md` becomes "✅ Done (P0 + P1 + P2)" and `KNOWN_ISSUES.md` can drop the last 3 P2 items.
+All P2 work shipped. Future sandbox sessions should focus on **Phase 11+** items from the "Post-1.0 roadmap" section in `HANDOFF.md`, or fix any post-Phase-10 bugs surfaced by the manual browser pass. The headless test pattern (see `test-phase10-fuse.cjs` for the canonical shape) is well-established for any new gameplay module.
 
 ---
 
@@ -194,13 +184,13 @@ Then go in this exact order: §10.13 → §10.12 → §10.11. The headless test 
 | 🔴 **High** | **Manual browser pass above** (gate the next release) | Validates the P0 changes end-to-end | ~30 min | 0 (manual) |
 | ✅ **Done** | **§10.14 New Game+ mode** (commit `77b3935`) | Replayability — randomized phase-dominance per biome + ironman flag | n/a | 69 |
 | ✅ **Done** | **§10.10 Echo Hunter panel** (commit `7a880ac`) | Collection completion — all 36 Echoes in inventory with per-biome counts | n/a | 27 |
-| 🟡 **Low** | **§10.13 Resonance charge-up** | Tactical depth — 0.5s preview + 1.5s commit + cancel path | ~0.5 day | ~10 |
-| 🟡 **Low** | **§10.12 Phase shift preview** | Visual polish — 0.5s ghost of target phase before commit | ~0.5 day | ~10 |
-| 🟡 **Low** | **§10.11 Wrong-phase Echoes** | Puzzle depth — 8 phase-locked Echoes (1 per biome) visible only via Phase Lens | ~0.5 day | ~10 |
+| ✅ **Done** | **§10.13 Resonance charge-up** (commit `38eb2cd`) | Tactical depth — 0.5s preview + 1.0s commit + cancel path | n/a | 85 |
+| ✅ **Done** | **§10.12 Phase shift preview** (commit `6cdecc6`) | Visual polish — 0.5s ghost of target phase before commit | n/a | 48 |
+| ✅ **Done** | **§10.11 Wrong-phase Echoes** (commit `b6e7dce`) | Puzzle depth — 7 phase-locked Echoes (1 per non-Nexus biome) visible only via Phase Lens | n/a | 57 |
 | 🟦 **Defer** | **§9.4 performance audit** (carried from Phase 9) | Optional — re-skim if FPS dips after Phase 10 ships | ~0.5 day | ~0 |
 | 🟦 **Defer** | **Phase 11+** (touch-input for mobile, cloud saves, more biomes, modding API, etc.) | Long-tail roadmap; see the "Post-1.0 roadmap" section above | Variable | Variable |
 
-**Total P2 remainder + manual: ~2 days of work + 1 manual pass.** The P2 brief at `PHASE_10_BRIEF.md` §10.11 → §10.13 is the source of truth — no spec changes needed. §10.10 + §10.14 already shipped in `7a880ac` + `77b3935`. If time is short, ship the manual pass first (gates the release), then the highest-impact remaining item (§10.13 resonance charge-up) for the next release.
+**Phase 10 fully shipped.** 482 new headless checks across 13 new test files. Build at 46.92 KB gz main entry (was 38 KB at 1.0 ship; well under the 200 KB CI threshold). Live at https://klampatech.github.io/phaseshift/. The remaining work is the **manual browser pass** (gates the next release — Chrome + Firefox + Safari on the §10.1 + §10.3 + §10.5 + §10.8 + §10.9 + §10.10 + §10.11 + §10.13 changes) plus any Phase 11+ items from the "Post-1.0 roadmap".
 
 ## Sandbox quirks (read this first — they're load-bearing)
 

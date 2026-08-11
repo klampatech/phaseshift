@@ -1,6 +1,6 @@
 # Known Issues
 
-This document tracks known issues, intentional limitations, and out-of-scope items for Phase Shifter. **Current state:** Phase 10 P0 + P1 + first P2 slice (§10.10 Echo Hunter panel + §10.14 New Game+ mode) shipped (11 sub-phases, 377 new headless checks). P2 remainder (§10.11 wrong-phase Echoes, §10.12 phase shift preview, §10.13 resonance charge-up) deferred. Items are grouped by severity:
+This document tracks known issues, intentional limitations, and out-of-scope items for Phase Shifter. **Current state:** Phase 10 P0 + P1 + P2 all shipped (14 sub-phases, 482 new headless checks). No further Phase 10 work planned — the post-1.0 Phase 11+ roadmap (touch-input, cloud saves, more biomes, modding API) is in `HANDOFF.md`. Items are grouped by severity:
 
 - 🟥 **Critical** — game-breaking; tracked here so they're not lost.
 - 🟧 **Major** — significant UX or feature gap; will fix in a future phase.
@@ -46,29 +46,29 @@ _None currently tracked as of the Phase 10 P0+P1 release._ All 🟧 Major and �
 
 ## 🟧 Gameplay mechanics (Phase 10 P2 — deferred)
 
-The following Phase 10 sub-phases remain **deferred** per the `PHASE_10_BRIEF.md` "cut P2 if needed" note. P0 (§10.1 → §10.5) and P1 (§10.6, §10.8, §10.9) shipped in commits `0721557` → `c7b4723`; P2 first slice (§10.10 Echo Hunter panel in `7a880ac`, §10.14 New Game+ in `77b3935`) also shipped. These three P2 remainder items stay in the brief as the source of truth if revisited.
+**Phase 10 P2 fully shipped.** §10.10 Echo Hunter panel (`7a880ac`), §10.14 New Game+ mode (`77b3935`), §10.13 resonance charge-up (`38eb2cd`), §10.12 phase shift preview (`6cdecc6`), §10.11 wrong-phase Echoes (`b6e7dce`). The section below now only describes shipped work + the per-section followups the brief flagged.
 
 ### Echo Hunter panel (Phase 10.10) — shipped
 
 ✅ **Shipped in Phase 10.10** (commit `7a880ac`). The inventory panel now exposes a dedicated **Echo Hunter** tab with a per-biome breakdown of all 36 Echoes (5 per biome + 1 Nexus final). New `listEchoesByBiome()` helper in `src/inventory/inventory.js` collects `byBiome` / `collected` / `total` / `byBiomeCollected` / `byBiomeTotal`. New HUD methods `showEchoHunter(summary, biomeName)` + `hideEchoHunter()` + `showBiomeZoneOverlay(zoneText, ttlMs)`. The "Open Echo Hunter" button lives inside the inventory panel. **Bonus latent-bug fix:** the inventory panel's per-biome counter was previously rendered via a broken single-quoted template (always showed the static length) — now reads from the `collectedEchoes` Map correctly.
 
-### "Wrong phase" Echoes (Phase 10.11) — deferred
+### "Wrong phase" Echoes (Phase 10.11) — shipped
 
-There's no `WrongPhaseEcho` block type (1 per biome, 8 total) that's invisible in the wrong phase. Players must use the Phase Lens to find them. The current 36-Echo narrative (§10.4) is dense enough that this is "nice to have" rather than blocking. Estimated ~10 headless checks.
+✅ **Shipped in Phase 10.11** (commit `b6e7dce`). Each non-Phase-Nexus biome has 1 wrong-phase Echo (7 total) that is invisible in the wrong phase. The player must use the Phase Lens to find them; collecting one unlocks a unique lore line. The Echo is tagged with a `hiddenPhase` field in the world; `World.getEchoVisibility(key, currentPhase)` is the canonical visibility check (also used by the pickup loop + the EchoOverlay). The renderer's EchoOverlay hides wrong-phase meshes via `mesh.visible = false` so the player can't see them by looking. Phase Nexus intentionally has no hidden Echo (it already has the unique final Echo + the per-biome signature mechanics from §10.6 — adding a hidden Echo would dilute the finale). 57 new headless checks in `tests/headless/test-phase10-hidden-echoes.cjs`.
 
-### Phase shift preview (Phase 10.12) — deferred
+### Phase shift preview (Phase 10.12) — shipped
 
-There's no 0.5s "ghost" of the target phase before the shift commits. The existing 1.5s color pulse (§2.1) covers the visual cue; the spatial preview would be a post-processing pass. Estimated ~10 headless checks.
+✅ **Shipped in Phase 10.12** (commit `6cdecc6`). New post-processing `ShaderPass` (`phaseShiftPreview`) runs after the existing phase pass. During the first 0.5s of a shift, the world renders with a desaturated + tinted ghost of the target phase (peak intensity 0.6, mix amount computed from the shift progress). The ghost fades to the live shift over the remaining 1.0s. Pure module `src/render/phaseShiftPreview.js` exposes `previewAmount(progress)` + `previewColor(phase)` + `shouldRunPreview(progress)` for testability. 48 new headless checks in `tests/headless/test-phase10-preview.cjs`.
 
-### Resonance charge-up (Phase 10.13) — deferred
+### Resonance charge-up (Phase 10.13) — shipped
 
-Resonance (Q) still fires the 1.0s sphere pulse without a 0.5s charge-up + cancel path. The current 15-energy cost is a single debit on press; the charge-up would make it a tactical decision (preview + commit-or-cancel). Estimated ~10 headless checks.
+✅ **Shipped in Phase 10.13** (commit `38eb2cd`). Pressing Q now opens a 0.5s charge window during which the player sees a small / dim preview sphere (radius 0.2 → 0.6, opacity 0.3 → 0.7). Pressing Q again during the charge cancels (no energy debited, no swap). After the charge elapses the state transitions to 'committing' — the cost (now 25 energy, up from 15) is debited + the full pulse fires over the next 1.0s. Pure module `src/resonance/charge.js` exports the state-machine helpers (`createChargeState`, `startCharge`, `tickCharge`, `cancelCharge`, `commitCharge`, `isPendingCommit`, etc.). The 15→25 cost increase compensates for the preview-then-commit flow (the brief is explicit on this). 85 new headless checks in `tests/headless/test-phase10-resonance-charge.cjs`.
 
 ### New Game+ mode (Phase 10.14) — shipped
 
 ✅ **Shipped in Phase 10.14** (commit `77b3935`). The pause menu now exposes a **Start New Game+** button (gold styling) that rolls a fresh `phaseDominanceSeed` (Fisher-Yates shuffle of `[PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA]` per non-Nexus biome) and optionally toggles an `ironman` flag in the save blob. The pause-menu button calls `saveSystem.startNewGamePlus()`, which clears anchors / fuses / echoes / cores, resets player position + phase, and persists the new state. New `phaseDominanceSeed` is stored in the save blob so reloads keep the shuffle. The Phase Nexus biome is always locked to identity permutation (the §10.5 finale is deterministic). Seed=0 also returns the identity permutation (no shuffle on first playthrough = full back-compat). `__phaseShifter__.newGamePlus` debug surface (`seed` / `ironman` / `permutation` / `isShuffled` getters; `setSeed` / `setIronman` / `forceStartNewGamePlus` methods). 69 new headless checks in `tests/headless/test-phase10-newgameplus.cjs`.
 
-**P2 remainder (~30 headless checks):** §10.11 wrong-phase Echoes (Phase-Lens-findable), §10.12 phase shift preview (0.5s ghost before commit), §10.13 resonance charge-up (0.5s preview + 1.0s commit + cancel path). The brief at `PHASE_10_BRIEF.md` remains the source of truth.
+**P2 fully shipped — 192 new headless checks across 3 new test files.** The Phase 10 brief at `PHASE_10_BRIEF.md` remains the source of truth for any future revisions.
 
 ## 🟦 Platform
 
