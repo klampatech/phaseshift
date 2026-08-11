@@ -124,6 +124,93 @@ export const ECHO_LORE_BY_BIOME = Object.freeze({
   ]),
 });
 
+
+// ── §10.11: Wrong-phase Echoes ─────────────────────────────────
+// Phase 10.11: each non-Nexus biome has 1 "wrong-phase" Echo that
+// is invisible in the wrong phase. The player must use the Phase
+// Lens (E) to find them. Collecting a wrong-phase Echo unlocks a
+// unique lore line tied to its biome.
+//
+// WRONG_PHASE_ECHOES maps each shuffleable biome id to the phase
+// where the hidden Echo is visible. The Phase Nexus has no
+// hidden Echo (it already has the unique final Echo + the per-
+// biome signature mechanics from §10.6).
+//
+// ECHO_LORE_HIDDEN maps the same biome id to the unique lore
+// string unlocked on collection. The lore reads as a "deeper"
+// narrative — the standard 5-per-biome lore is the player's
+// surface-level view, the hidden lore is the "you found the secret"
+// view.
+
+export const WRONG_PHASE_ECHOES = Object.freeze({
+  [BIOME_FOREST]: Object.freeze({ visiblePhase: 1, lore: 'The Forest’s roots reach the Nexus. The Forest remembers which root is the Architect’s.' }),
+  [BIOME_RUINS]: Object.freeze({ visiblePhase: 2, lore: 'The Mirror City was not destroyed. It chose to forget itself. The wall you are looking at is the wall that forgot first.' }),
+  [BIOME_CAVES]: Object.freeze({ visiblePhase: 0, lore: 'The Architect left a handprint in the deepest Cave. You can feel it when the wind is right.' }),
+  [BIOME_CRYSTAL_CAVERN]: Object.freeze({ visiblePhase: 1, lore: 'The crystals were tears. The Caverns will not say whose.' }),
+  [BIOME_DESERT]: Object.freeze({ visiblePhase: 2, lore: 'Under the deepest sand, the Architect left a message. It is written in a language we have not yet invented.' }),
+  [BIOME_DEEP_VOID]: Object.freeze({ visiblePhase: 0, lore: 'In the Void, the Architect finally laughed. The laugh is what holds the world together.' }),
+  [BIOME_SKY_RUINS]: Object.freeze({ visiblePhase: 1, lore: 'The Sky Ruins will tell you their secret when you stop looking down. You have been looking down for too long.' }),
+});
+
+/**
+ * Phase 10.11: return the wrong-phase Echo metadata for a biome.
+ * Out-of-range biome ids (including Phase Nexus) return null.
+ * Defensive: handles missing / malformed biome ids gracefully.
+ */
+export function wrongPhaseEchoForBiome(biomeId) {
+  if (!Number.isFinite(biomeId)) return null;
+  const entry = WRONG_PHASE_ECHOES[biomeId];
+  return entry ? { biomeId, ...entry } : null;
+}
+
+/**
+ * Phase 10.11: is the Echo at `key` visible in the given `currentPhase`?
+ * Returns one of:
+ *   - { visible: true,  reason: 'wrong-phase-echo' | 'standard' }
+ *     — the Echo is collectible from the current phase
+ *   - { visible: false, reason: 'wrong-phase-echo' | 'not-spawned' | 'no-key' }
+ *     — the Echo is NOT collectible; the reason is informational
+ *
+ * The lookup is by `(biomeId, loreKey)` so the same world key can
+ * carry either a standard Echo (always visible) or a wrong-phase
+ * Echo (visible only in its `visiblePhase`).
+ *
+ * The `echoes` argument is `Array<{ key, biomeId, loreKey, hiddenPhase?, ... }>`
+ * — the same shape as `world.listEchoes()`. Pure function over
+ * the input array so the helper can be unit-tested without
+ * loading the World class.
+ */
+export function getEchoVisibility(key, currentPhase, echoes) {
+  if (typeof key !== 'string' || key.length === 0) {
+    return { visible: false, reason: 'no-key' };
+  }
+  if (!Array.isArray(echoes)) {
+    return { visible: false, reason: 'not-spawned' };
+  }
+  const e = echoes.find(ev => ev && (ev.key === key || ev.loreKey === key));
+  if (!e) return { visible: false, reason: 'not-spawned' };
+  // Standard Echoes (no `hiddenPhase`) are always visible.
+  if (!Number.isFinite(e.hiddenPhase)) {
+    return { visible: true, reason: 'standard' };
+  }
+  // Wrong-phase Echo: visible only when the current phase matches.
+  if (e.hiddenPhase === currentPhase) {
+    return { visible: true, reason: 'wrong-phase-echo' };
+  }
+  return { visible: false, reason: 'wrong-phase-echo' };
+}
+
+/**
+ * Phase 10.11: count of biomes that have a wrong-phase Echo.
+ * Mirrors `Object.keys(WRONG_PHASE_ECHOES).length` (7 — the Nexus
+ * has no hidden Echo). Pure getter for callers that want to
+ * iterate the hidden set without touching the frozen object.
+ */
+export function hiddenEchoBiomeCount() {
+  return Object.keys(WRONG_PHASE_ECHOES).length;
+}
+
+
 /**
  * Phase 10.4: backward-compat alias. The §3.3 tests still import
  * `ECHO_LORE_LIBRARY` for the random-picker behavior. We keep an

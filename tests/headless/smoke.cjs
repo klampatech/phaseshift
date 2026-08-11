@@ -1849,6 +1849,49 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
   console.log('\n=== Phase 10.12 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase10_12, null, 2));
 
+  // ── Phase 10.11 (Wrong-phase Echoes) ──────────────────────
+  // §10.11 acceptance: WRONG_PHASE_ECHOES constant maps each non-
+  // Nexus biome to its visible phase + unique lore string.
+  // getEchoVisibility returns { visible, reason } for an Echo key.
+  // World exposes getEchoVisibility / listHiddenEchoes /
+  // spawnHiddenEcho / getHiddenEchoForBiome. EchoOverlay.updateEchoes
+  // accepts currentPhase and hides wrong-phase Echoes.
+  const echoText = fs2.existsSync(path.resolve(__dirname, '..', '..', 'src', 'collect', 'echo.js')) ? fs2.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'collect', 'echo.js'), 'utf8') : '';
+  const phase10_11 = {
+    echo_exports_WRONG_PHASE_ECHOES: /export\s+const\s+WRONG_PHASE_ECHOES\s*=\s*Object\.freeze\(\{/.test(echoText),
+    echo_exports_wrongPhaseEchoForBiome: /export\s+function\s+wrongPhaseEchoForBiome\s*\(/.test(echoText),
+    echo_exports_getEchoVisibility: /export\s+function\s+getEchoVisibility\s*\(/.test(echoText),
+    echo_exports_hiddenEchoBiomeCount: /export\s+function\shiddenEchoBiomeCount\s*\(/.test(echoText),
+    echo_WRONG_PHASE_ECHOES_has_7_entries: /hiddenEchoBiomeCount\s*\(\s*\)\s*\{[\s\S]{0,200}?Object\.keys\(WRONG_PHASE_ECHOES\)\.length/.test(echoText),
+    echo_getEchoVisibility_returns_standard_for_no_hidden: /getEchoVisibility[\s\S]{0,1500}?Number\.isFinite\(\s*e\.hiddenPhase\s*\)/.test(echoText),
+    echo_getEchoVisibility_returns_no_key: /getEchoVisibility[\s\S]{0,500}?no-key/.test(echoText),
+    echo_getEchoVisibility_returns_not_spawned: /getEchoVisibility[\s\S]{0,1000}?not-spawned/.test(echoText),
+    // World.
+    world_imports_getEchoVisibility: /import\s*\{[^}]*getEchoVisibility[^}]*\}\s*from\s+['"]\.\.\/collect\/echo\.js['"]/.test(worldText),
+    world_has_spawnHiddenEcho: /spawnHiddenEcho\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*hiddenPhase\s*,\s*lore\s*,\s*biomeId\s*\)/.test(worldText),
+    world_has_getEchoVisibility: /getEchoVisibility\s*\(\s*key\s*,\s*currentPhase\s*\)/.test(worldText),
+    world_has_listHiddenEchoes: /listHiddenEchoes\s*\(\s*\)/.test(worldText),
+    world_has_getHiddenEchoForBiome: /getHiddenEchoForBiome\s*\(\s*biomeId\s*\)/.test(worldText),
+    world_initializes_hiddenEchoes: /this\._hiddenEchoes\s*=\s*new\s+Map\(\)/.test(worldText),
+    world_getEchoState_includes_hiddenPhase: /getEchoState\(\)\s*\{[\s\S]{0,800}?hiddenPhase:/.test(worldText),
+    world_applyEchoState_restores_hiddenPhase: /applyEchoState[\s\S]{0,2500}?hiddenPhase:\s*e\.hiddenPhase/.test(worldText),
+    // Renderer.
+    renderer_EchoOverlay_updateEchoes_takes_currentPhase: /updateEchoes\s*\(\s*dt\s*,\s*snapshot\s*,\s*currentPhase\s*\)/.test(rendererText),
+    renderer_hides_via_mesh_visible: /mesh\.visible\s*=\s*!isHidden/.test(rendererText),
+    renderer_computes_isHidden: /hiddenPhase\s*!==\s*null[\s\S]{0,500}?hiddenPhase\s*!==\s*phase/.test(rendererText),
+    renderer_Renderer_class_wrapper: /updateEchoes\s*\(\s*dt\s*,\s*snapshot\s*,\s*currentPhase\s*\)\s*\{[\s\S]{0,300}?echoOverlay\.updateEchoes/.test(rendererText),
+    // main.js.
+    main_imports_getEchoVisibility: /import\s*\{[^}]*getEchoVisibility[^}]*\}\s*from\s+['"]\.\/src\/collect\/echo\.js['"]/.test(srcText),
+    main_imports_wrongPhaseEchoForBiome: /import\s*\{[^}]*wrongPhaseEchoForBiome[^}]*\}\s*from\s+['"]\.\/src\/collect\/echo\.js['"]/.test(srcText),
+    main_tickEchoesPerFrame_checks_visibility: /tickEchoesPerFrame[\s\S]{0,3000}?getEchoVisibility/.test(srcText),
+    main_passes_currentPhase_to_renderer: /renderer\.updateEchoes\(\s*dt\s*,\s*snapshot\s*,\s*currentPhase\s*\)/.test(srcText),
+    main_exports_hiddenEchoes_debug_hook: /hiddenEchoes:\s*\{[\s\S]{0,2000}?list/.test(srcText),
+    main_hiddenEchoes_spawnHidden: /hiddenEchoes:\s*\{[\s\S]{0,2000}?spawnHidden/.test(srcText),
+  };
+  const phase10_11Ok = Object.values(phase10_11).every(Boolean);
+  console.log('\n=== Phase 10.11 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase10_11, null, 2));
+
   // ── Phase 4 (Polish: HUD-owns-DOM + Settings + Minimap + Save/load) ─
   // Phase 4 work: §4.1 (HUD owns its DOM), §4.2 (Settings menu with
   // localStorage persistence + live-apply), §4.3 (Minimap reads actual
@@ -2049,7 +2092,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase28Ok &&
     phase31Ok &&
     phase32Ok &&
-    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok && phase6Ok && phase9Ok && phase10_14Ok && phase10_10Ok && phase10_12Ok && phase10_13Ok ? 0 : 1
+    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok && phase6Ok && phase9Ok && phase10_14Ok && phase10_10Ok && phase10_11Ok && phase10_12Ok && phase10_13Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

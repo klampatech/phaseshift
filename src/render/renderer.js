@@ -1418,11 +1418,21 @@ export class EchoOverlay {
     }
   }
 
-  updateEchoes(dt, snapshot) {
+  /**
+   * Phase 3.3: per-frame Echo update. The snapshot is the same
+   * shape as `world.listEchoes()`. Each Echo mesh bobs +
+   * rotates. Phase 10.11: a `currentPhase` argument (optional)
+   * controls visibility for wrong-phase Echoes — when a hidden
+   * Echo's `hiddenPhase` doesn't match `currentPhase` the mesh
+   * is set to invisible (rather than removed) so the player can
+   * still find it via the Phase Lens.
+   */
+  updateEchoes(dt, snapshot, currentPhase) {
     const d = (typeof dt === 'number' && Number.isFinite(dt)) ? dt : 0;
     this._animTime += d;
     const presentKeys = new Set();
     const list = Array.isArray(snapshot) ? snapshot : [];
+    const phase = Number.isFinite(currentPhase) ? Math.floor(currentPhase) : null;
     for (const e of list) {
       if (!e || typeof e !== 'object' || !e.key) continue;
       if (!this.entries.has(e.key)) {
@@ -1434,6 +1444,14 @@ export class EchoOverlay {
       const entry = this.entries.get(e.key);
       if (!entry) continue;
       presentKeys.add(e.key);
+      // Phase 10.11: hide wrong-phase Echoes when the player is
+      // not in the matching phase. We set `mesh.visible = false`
+      // rather than removing the mesh so the player can still
+      // find it via the Phase Lens (the lens highlights it).
+      const hiddenPhase = (e && Number.isFinite(e.hiddenPhase))
+        ? e.hiddenPhase : null;
+      const isHidden = (hiddenPhase !== null && phase !== null && hiddenPhase !== phase);
+      if (entry.mesh) entry.mesh.visible = !isHidden;
       // Bob + rotate animation
       const t = this._animTime;
       const ph = (entry.mesh.userData && Number.isFinite(entry.mesh.userData.phase))
@@ -2013,8 +2031,16 @@ export class Renderer {
     if (this.echoOverlay) this.echoOverlay.showEcho(x, y, z, key, color);
   }
 
-  updateEchoes(dt, snapshot) {
-    if (this.echoOverlay) this.echoOverlay.updateEchoes(dt, snapshot);
+  /**
+   * Phase 10.11: extended to accept a `currentPhase` argument so
+   * the overlay can hide wrong-phase Echoes. The argument is
+   * optional — when omitted (or NaN), the overlay treats every
+   * Echo as visible (matches the legacy behavior).
+   */
+  updateEchoes(dt, snapshot, currentPhase) {
+    if (this.echoOverlay) {
+      this.echoOverlay.updateEchoes(dt, snapshot, currentPhase);
+    }
   }
 
   clearEcho(key) {

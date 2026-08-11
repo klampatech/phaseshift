@@ -25,6 +25,7 @@ import {
   pickPhaseDominance, pickDominantPhase, dominanceWeights,
   DEFAULT_PHASE_DOMINANCE_SEED,
 } from '../newgameplus/newgameplus.js';
+import { getEchoVisibility, wrongPhaseEchoForBiome } from '../collect/echo.js';
 
 // Chunk data structure: 3 Uint8Arrays (one per phase)
 class Chunk {
@@ -96,8 +97,14 @@ export class World {
     this._erosionState = new Map();
     // Stabilizer tracking: key = `${x},${y},${z}` → { x, y, z }
     this._stabilizerPositions = new Map();
-    // Echo objects: world collectibles with lore
+    // Echo objects: world collectibles with lore. Phase 10.11 also
+    // tracks a `_hiddenEchoes` map (key -> { hiddenPhase, lore })
+    // for the wrong-phase Echoes.
     this._echoes = [];
+    // Phase 10.11: wrong-phase Echoes map (key -> { hiddenPhase,
+    // lore, biomeId }). Mirrors the standard `_echoes` array so
+    // save/load can round-trip the hidden-phase tag.
+    this._hiddenEchoes = new Map();
     // Resonance cores (amplifiers)
     this._resonanceCores = [];
     // Phase 2.7: Phase Anchor (Shift+LMB) — the player-placed lock
@@ -1368,23 +1375,54 @@ export class World {
     return this._echoes.length;
   }
 
-  /** Save echo state to world state */
+  /**
+   * Save echo state to world state. Phase 10.11 also persists the
+   * `hiddenPhase` tag so a save blob round-trips a wrong-phase
+   * Echo correctly (the chunk-generation hook re-spawns the
+   * hidden Echo at the same coords; the tag tells the world
+   * this is the hidden variant).
+   */
   getEchoState() {
     return this._echoes.map(e => ({
       type: e.type, x: e.x, y: e.y, z: e.z, lore: e.lore, collected: e.collected,
+      hiddenPhase: Number.isFinite(e.hiddenPhase) ? e.hiddenPhase : null,
     }));
   }
 
-  /** Load echo state from save */
+  /**
+   * Load echo state from save. Phase 10.11: re-applies the
+   * `hiddenPhase` tag so the loaded Echo stays hidden in the
+   * wrong phase. The `_hiddenEchoes` map is rebuilt from the
+   * tagged entries.
+   */
   applyEchoState(echoes) {
     for (const e of echoes) {
       this.addEcho(e.type, e.x, e.y, e.z, e.lore);
       if (e.collected) {
-        // Find and mark as collected
         const found = this._echoes.find(ev =>
           ev.x === e.x && ev.y === e.y && ev.z === e.z
         );
         if (found) found.collected = true;
+      }
+      // Phase 10.11: re-apply the hiddenPhase tag if the save
+      // blob has it. The legacy `addEcho` doesn't write a `key`
+      // field, so we synthesize one from the (x,y,z) here so
+      // the `_hiddenEchoes` map stays consistent.
+      if (e && Number.isFinite(e.hiddenPhase)) {
+        const found = this._echoes.find(ev =>
+          ev.x === e.x && ev.y === e.y && ev.z === e.z
+        );
+        if (found) {
+          found.hiddenPhase = e.hiddenPhase;
+          if (!found.key) {
+            found.key = `${Math.floor(found.x)},${Math.floor(found.y)},${Math.floor(found.z)}`;
+          }
+          this._hiddenEchoes.set(found.key, {
+            hiddenPhase: e.hiddenPhase,
+            lore: found.lore || e.lore || '',
+            biomeId: Number.isFinite(found.biomeId) ? found.biomeId : 0,
+          });
+        }
       }
     }
   }
@@ -1415,6 +1453,10 @@ export class World {
       biomeId: Number.isFinite(biomeId) ? biomeId : 0,
       collected: false,
       key: posKey,
+      // Phase 10.11: a wrong-phase Echo is tagged with its visible
+      // phase (`hiddenPhase`). The field is `undefined` for standard
+      // Echoes (which are always visible).
+      hiddenPhase: undefined,
     };
     if (existing) {
       // overwrite in place
@@ -1423,6 +1465,92 @@ export class World {
     }
     this._echoes.push(echo);
     return echo;
+  }
+
+  /**
+   * Phase 10.11: spawn a wrong-phase Echo. Identical to
+   * `spawnEcho` but the entry is tagged with `hiddenPhase` (the
+   * phase where the Echo is visible). The Echo's `lore` field
+   * holds the unique lore string unlocked on collection. The
+   * `_hiddenEchoes` map mirrors the standard `_echoes` array so
+   * save/load can round-trip without losing the hidden-phase tag.
+   *
+   * The world doesn't enforce visibility — the renderer / game
+   * loop reads `getEchoVisibility(key, currentPhase)` to decide
+   * whether the Echo should be drawn + whether it can be picked
+   * up. This keeps the world storage single-source-of-truth.
+   */
+  spawnHiddenEcho(x, y, z, hiddenPhase, lore, biomeId) {
+    const echo = this.spawnEcho(x, y, z, lore, biomeId);
+    if (!echo) return null;
+    if (Number.isFinite(hiddenPhase)) {
+      echo.hiddenPhase = Math.floor(hiddenPhase);
+    }
+    this._hiddenEchoes.set(echo.key, {
+      hiddenPhase: Number.isFinite(hiddenPhase) ? Math.floor(hiddenPhase) : null,
+      lore: lore || '',
+      biomeId: Number.isFinite(biomeId) ? biomeId : 0,
+    });
+    return echo;
+  }
+
+  /**
+   * Phase 10.11: get the visibility report for an Echo key. The
+   * helper delegates to the pure `getEchoVisibility` from
+   * `src/collect/echo.js`; this is the thin world wrapper so the
+   * game loop doesn't have to know about the echoes array shape.
+   *
+   * Returns `{ visible, reason, hiddenPhase, lore }`:
+   *   - `visible: true`  — Echo can be picked up from the current phase
+   *   - `visible: false` — Echo is hidden (wrong phase or not spawned)
+   *   - `reason`         — 'standard' | 'wrong-phase-echo' |
+   *                        'not-spawned' | 'no-key'
+   *   - `hiddenPhase`    — the phase where the Echo is visible (if any)
+   *   - `lore`           — the unique lore unlocked on collection
+   */
+  getEchoVisibility(key, currentPhase) {
+    const reports = this._echoes.map(e => ({
+      key: e.key,
+      loreKey: e.loreKey || e.key,
+      biomeId: e.biomeId,
+      hiddenPhase: Number.isFinite(e.hiddenPhase) ? e.hiddenPhase : undefined,
+    }));
+    const result = getEchoVisibility(key, currentPhase, reports);
+    if (!result) return { visible: false, reason: 'not-spawned' };
+    const echoEntry = this._echoes.find(e => e.key === key || e.loreKey === key);
+    return Object.assign({}, result, {
+      hiddenPhase: echoEntry && Number.isFinite(echoEntry.hiddenPhase)
+        ? echoEntry.hiddenPhase
+        : null,
+      lore: echoEntry ? echoEntry.lore : '',
+    });
+  }
+
+  /**
+   * Phase 10.11: list the wrong-phase Echoes (for the Echo Hunter
+   * panel + Phase Lens highlight). Returns an array of
+   * `{ key, hiddenPhase, lore, biomeId, collected }`.
+   */
+  listHiddenEchoes() {
+    return this._echoes
+      .filter(e => Number.isFinite(e.hiddenPhase))
+      .map(e => ({
+        key: e.key,
+        hiddenPhase: e.hiddenPhase,
+        lore: e.lore,
+        biomeId: e.biomeId,
+        collected: e.collected,
+      }));
+  }
+
+  /**
+   * Phase 10.11: convenience: get the wrong-phase Echo for a
+   * biome (used by the terrain generator to spawn one hidden Echo
+   * per non-Nexus biome). Returns `{ biomeId, visiblePhase, lore }`
+   * or null for the Phase Nexus (no hidden Echo).
+   */
+  getHiddenEchoForBiome(biomeId) {
+    return wrongPhaseEchoForBiome(biomeId);
   }
 
   /** Collect an Echo by key. Returns the Echo data (with lore) or

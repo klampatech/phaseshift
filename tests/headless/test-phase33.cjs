@@ -177,7 +177,7 @@ function check(label, ok, extra = '') {
   check('Renderer.showEcho forwards to echoOverlay.showEcho',
     /showEcho\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*key\s*,\s*color\s*\)\s*\{[\s\S]*?this\.echoOverlay\.showEcho/.test(rendererText));
   check('Renderer.updateEchoes forwards to echoOverlay.updateEchoes',
-    /updateEchoes\s*\(\s*dt\s*,\s*snapshot\s*\)\s*\{[\s\S]*?this\.echoOverlay\.updateEchoes/.test(rendererText));
+    /updateEchoes\s*\(\s*dt\s*,\s*snapshot(?:\s*,\s*currentPhase)?\s*\)\s*\{[\s\S]*?this\.echoOverlay\.updateEchoes/.test(rendererText));
   check('Renderer.clearEcho forwards to echoOverlay.clearEcho',
     /clearEcho\s*\(\s*key\s*\)\s*\{[\s\S]*?this\.echoOverlay\.clearEcho/.test(rendererText));
 
@@ -229,7 +229,7 @@ function check(label, ok, extra = '') {
   check('main.js#tickEchoesPerFrame calls renderer.clearEcho on hit',
     /function\s+tickEchoesPerFrame[\s\S]{0,2000}?renderer\.clearEcho\s*\(/.test(mainText));
   check('main.js#tickEchoesPerFrame calls hud.setEchoCounter',
-    /function\s+tickEchoesPerFrame[\s\S]{0,2000}?hud\.setEchoCounter\s*\(/.test(mainText));
+    /function\s+tickEchoesPerFrame[\s\S]{0,4000}?hud\.setEchoCounter\s*\(/.test(mainText));
 
   // ── main.js save/load wiring ──────────────────────────────────
   check('main.js saveGame serializes the inventory',

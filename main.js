@@ -46,6 +46,7 @@ import { COLLAPSE_DURATION, COLLAPSE_BANNER_TEXT, FALLBACK_WARNING_TEXT, COLLAPS
 // pure module owns the §3.3 contract; main.js is the dispatcher.
 import { PICKUP_RADIUS as ECHO_PICKUP_RADIUS, ECHO_LORE_LIBRARY, echoLoreForKey, pickupResult as echoPickupResult, echoKey, echoColorForBiome } from './src/collect/echo.js';
 import { PICKUP_RADIUS as AMPLIFIER_PICKUP_RADIUS, resonanceCoreKey, resonanceCoreColorForBiome, pickAmplifierForKey, pickupResult as resonancePickupResult, amplifierApplies } from './src/collect/resonance.js';
+import { getEchoVisibility, wrongPhaseEchoForBiome, hiddenEchoBiomeCount } from './src/collect/echo.js';
 import { AMPLIFIER_SHIFT_REDUCTION, AMPLIFIER_TRANSITIONS, AMPLIFIER_AB, AMPLIFIER_BG, AMPLIFIER_AG, AMPLIFIER_PICKUP_RADIUS as _AMP_R, AMPLIFIER_UNLOCK_TEXT } from './src/core/constants.js';
 import { LOCK_DURATION, LOCK_RADIUS, lockKey, createLock as createLockData, tickLocks as tickLocksPure, isLocked as isLockedPure, lockRegion, createGliderState, startGlider as startGliderPure, tickGlider as tickGliderPure, clearGlider as clearGliderPure, PHASE_GLIDER_SPEED } from './src/phase/lock.js';
 import { TUTORIAL_RADIUS, TUTORIAL_HINT_DURATION, TUTORIAL_TOTAL_DURATION, TUTORIAL_HINT_TEXTS, createTutorialState, startTutorial as startTutorialPure, tickTutorial as tickTutorialPure, clearTutorial as clearTutorialPure, getHint, tutorialPositions, isWithinTutorialRing, clearTutorialAndHide as clearTutorialAndHidePure } from './src/tutorial/tutorial.js';
@@ -2578,7 +2579,8 @@ function tickEchoesPerFrame(dt) {
   if (!world || typeof world.listEchoes !== 'function') return;
   const snapshot = world.listEchoes();
   if (renderer && typeof renderer.updateEchoes === 'function') {
-    renderer.updateEchoes(dt, snapshot);
+    const currentPhase = phaseManager ? phaseManager.getCurrentPhase() : 0;
+    renderer.updateEchoes(dt, snapshot, currentPhase);
   }
   if (!physicsManager || typeof physicsManager.getPos !== 'function') return;
   const pos = physicsManager.getPos();
@@ -2588,6 +2590,20 @@ function tickEchoesPerFrame(dt) {
   if (!playerPos) return;
   const hit = echoPickupResult(playerPos, snapshot, ECHO_PICKUP_RADIUS);
   if (hit && hit.key) {
+    // Phase 10.11: skip wrong-phase Echoes when the current phase
+    // doesn't match their visible phase. The pickup loop still
+    // walks past them (the renderer hides them visually) so the
+    // player can't accidentally pick one up by walking through it.
+    const currentPhase = phaseManager ? phaseManager.getCurrentPhase() : 0;
+    const visibility = world.getEchoVisibility
+      ? world.getEchoVisibility(hit.key, currentPhase)
+      : { visible: true };
+    if (visibility && visibility.visible === false) {
+      // Wrong phase: skip pickup. Continue the loop (we don't
+      // return — the player might walk into a standard Echo
+      // immediately after).
+      return;
+    }
     const lore = hit.lore || echoLoreForKey(hit.key);
     const added = addEcho(playerInventory, hit.key, lore);
     if (added) {
@@ -3082,6 +3098,32 @@ if (typeof window !== 'undefined') {
     // Phase 10.13: §10.13 charge-up debug hooks. The Playwright test
     // uses these to introspect the charge state machine + force the
     // transition edges without needing a 0.5s real-time wait.
+    // Phase 10.11: wrong-phase Echoes debug hooks. The Playwright
+    // test uses these to introspect the visibility report + force
+    // spawn a hidden Echo for visual regression testing.
+    hiddenEchoes: {
+      list() {
+        if (!world || typeof world.listHiddenEchoes !== 'function') return [];
+        return world.listHiddenEchoes();
+      },
+      getVisibility(key) {
+        if (!world || typeof world.getEchoVisibility !== 'function' || !phaseManager) {
+          return { visible: false, reason: 'not-spawned' };
+        }
+        return world.getEchoVisibility(key, phaseManager.getCurrentPhase());
+      },
+      forBiome(biomeId) {
+        if (!world || typeof world.getHiddenEchoForBiome !== 'function') return null;
+        return world.getHiddenEchoForBiome(biomeId);
+      },
+      spawnHidden(x, y, z, hiddenPhase, lore, biomeId) {
+        if (!world || typeof world.spawnHiddenEcho !== 'function') return null;
+        return world.spawnHiddenEcho(x, y, z, hiddenPhase, lore, biomeId);
+      },
+      biomeCount() {
+        return hiddenEchoBiomeCount();
+      },
+    },
     // Phase 10.12: phase-shift preview debug hooks. The Playwright
     // test uses these to introspect the preview state machine +
     // force the transition edges without needing a real-time wait.
