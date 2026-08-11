@@ -66,6 +66,7 @@ export class SaveSystem {
       lookYaw: Number.isFinite(s.lookYaw) ? s.lookYaw : 0,
       lookPitch: Number.isFinite(s.lookPitch) ? s.lookPitch : 0,
       fatigue: Number.isFinite(s.fatigue) ? Math.max(0, Math.min(1, s.fatigue)) : 0,
+      newGamePlus: this._coerceNewGamePlus(s.newGamePlus),
       timestamp: Date.now(),
     };
 
@@ -147,6 +148,7 @@ export class SaveSystem {
       lookPitch: Number.isFinite(state.lookPitch) ? state.lookPitch : 0,
       energy: Number.isFinite(state.energy) ? Math.max(0, state.energy) : 100,
       fatigue: Number.isFinite(state.fatigue) ? Math.max(0, Math.min(1, state.fatigue)) : 0,
+      newGamePlus: this._coerceNewGamePlus(state.newGamePlus),
       timestamp: Number.isFinite(state.timestamp) ? state.timestamp : Date.now(),
     };
   }
@@ -168,6 +170,7 @@ export class SaveSystem {
       lookYaw: 0,
       lookPitch: 0,
       fatigue: 0,
+      newGamePlus: { phaseDominanceSeed: 0, ironman: false },
       timestamp: Date.now(),
     };
   }
@@ -294,7 +297,7 @@ export class SaveSystem {
    * acceptance: "the player can save, quit, reload, and resume
    * exactly where they left off").
    */
-  saveSnapshot(x, y, z, phase, worldState, anchors, inventory, extras, fuses, erosion) {
+  saveSnapshot(x, y, z, phase, worldState, anchors, inventory, extras, fuses, erosion, newGamePlus) {
     const e = (extras && typeof extras === 'object') ? extras : {};
     return this.saveGame(x, y, z, phase, {
       worldState: worldState || {},
@@ -312,6 +315,10 @@ export class SaveSystem {
       // key (legacy blob), `_coerceErosion` returns {} and the
       // world's applyErosionState short-circuits.
       erosion: this._coerceErosion(erosion),
+      // Phase 10.14: persist the New Game+ state. Back-compat:
+      // missing `newGamePlus` key (legacy §10.8 blobs) returns
+      // the default state via _coerceNewGamePlus.
+      newGamePlus: this._coerceNewGamePlus(newGamePlus),
     });
   }
 
@@ -404,7 +411,69 @@ export class SaveSystem {
       lookPitch: Number.isFinite(raw.lookPitch) ? raw.lookPitch : 0,
       energy: Number.isFinite(raw.energy) ? raw.energy : 100,
       fatigue: Number.isFinite(raw.fatigue) ? raw.fatigue : 0,
+      newGamePlus: this._coerceNewGamePlus(raw.newGamePlus),
       timestamp: stamp,
+    };
+  }
+
+  /**
+   * Phase 10.14: coerce the New Game+ state from a save blob.
+   * Defensive — rejects non-objects, NaN / negative seeds, and
+   * non-boolean ironman flags so a tampered save cannot poison
+   * the run. Returns the default state for missing / null /
+   * non-object input (back-compat with §1.7 / §2.4 / §2.7 /
+   * §4.4 blobs that don't include newGamePlus).
+   */
+  _coerceNewGamePlus(value) {
+    const fresh = { phaseDominanceSeed: 0, ironman: false };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return fresh;
+    if (Number.isFinite(value.phaseDominanceSeed)) {
+      const seed = Math.floor(value.phaseDominanceSeed);
+      fresh.phaseDominanceSeed = Math.max(0, seed);
+    }
+    if (typeof value.ironman === 'boolean') {
+      fresh.ironman = value.ironman;
+    }
+    return fresh;
+  }
+
+  /**
+   * Phase 10.14: start a New Game+ run. Returns a fresh save
+   * blob with the existing player state (position, phase,
+   * energy, inventory) but a new phase-dominance seed and the
+   * ironman flag (if specified). The caller is expected to
+   * delete the current save and re-init the game state.
+   *
+   * The helper is the canonical "Start New Game+" entry point
+   * — the pause menu button calls this, the ironman checkbox
+   * toggles the flag, the seed is rolled fresh so the
+   * per-biome shuffle is different from the first run.
+   */
+  startNewGamePlus(existingState, options) {
+    const cur = (existingState && typeof existingState === 'object') ? existingState : this._getFreshState();
+    const opts = (options && typeof options === 'object') ? options : {};
+    const seed = Number.isFinite(opts.phaseDominanceSeed)
+      ? Math.max(1, Math.floor(opts.phaseDominanceSeed))
+      : Math.floor(Math.random() * 0x7fffffff) + 1;
+    const ironman = typeof opts.ironman === 'boolean' ? opts.ironman : Boolean(cur.newGamePlus && cur.newGamePlus.ironman);
+    return {
+      seed: cur.seed || 42,
+      position: { x: 0, y: 20, z: 0 },
+      phase: 0,
+      energy: 100,
+      unlockedTools: Array.isArray(cur.unlockedTools) ? cur.unlockedTools : [],
+      biomesDiscovered: Array.isArray(cur.biomesDiscovered) ? cur.biomesDiscovered : [],
+      echoesFound: 0,
+      worldState: {},
+      anchors: [],
+      fuses: [],
+      inventory: { collectedEchoes: [], amplifiers: [] },
+      velocity: null,
+      lookYaw: 0,
+      lookPitch: 0,
+      fatigue: 0,
+      newGamePlus: { phaseDominanceSeed: seed, ironman },
+      timestamp: Date.now(),
     };
   }
 

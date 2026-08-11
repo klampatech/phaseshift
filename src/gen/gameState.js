@@ -46,6 +46,17 @@ export class GameState {
     // Inventory
     this.selectedSlot = 0;
     this.hotbar = [null, null, null, null, null, null, null, null, null];
+
+    // Phase 10.14: New Game+ state. Default seed = 0 (no
+    // shuffle on the first playthrough). Default ironman =
+    // false (normal mode). The pause menu's "Start New Game+"
+    // button rolls a new seed; the ironman flag is a checkbox
+    // in the new-game dialog. Both fields persist via the
+    // §10.14 save/load round-trip.
+    this.newGamePlus = {
+      phaseDominanceSeed: 0,
+      ironman: false,
+    };
   }
 
   addListener(fn) { this.listeners.push(fn); }

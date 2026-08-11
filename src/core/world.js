@@ -21,6 +21,10 @@ import {
   listFuseOverrides, serializeFuseOverrides, deserializeFuseOverrides,
   fuseOverrideCount,
 } from '../fuse/fuse.js';
+import {
+  pickPhaseDominance, pickDominantPhase, dominanceWeights,
+  DEFAULT_PHASE_DOMINANCE_SEED,
+} from '../newgameplus/newgameplus.js';
 
 // Chunk data structure: 3 Uint8Arrays (one per phase)
 class Chunk {
@@ -60,15 +64,34 @@ const BLOCK_PHASE_COLORS = {
 };
 
 export class World {
-  constructor(scene, onChunkUpdated) {
+  constructor(scene, onChunkUpdated, seed, phaseDominanceSeed) {
     this.scene = scene;
     this.chunks = new Map();
-    this.terrainGen = new TerrainGenerator(42);
+    // Phase 10.14: accept a seed + phase-dominance seed for
+    // the New Game+ shuffle. The terrain generator gets both.
+    // Defaults preserve the §1.3 1.0-ship behavior.
+    const _seed = Number.isFinite(seed) ? Math.floor(seed) : 42;
+    this.seed = _seed;
+    this.terrainGen = new TerrainGenerator(_seed, phaseDominanceSeed);
+    // Mirror on the world so save/load + the renderer overlay
+    // can read the phase-dominance seed without going through
+    // the terrain generator.
+    this.phaseDominanceSeed = Number.isFinite(phaseDominanceSeed)
+      ? Math.floor(phaseDominanceSeed)
+      : 0;
     this.nextLoadOrder = 0;
     this.onChunkUpdated = onChunkUpdated;
     this.onEroded = null; // Called when a block erodes: (x, y, z, phase, oldBlockId, newBlockId)
     this.globalBlockState = null; // Track memory: global[x,y,z,phase] = blockId
     this._globalStateMap = new Map();
+    // Phase 10.14: re-apply the phase-dominance seed at
+    // runtime. Used by the "Start New Game+" button — the
+    // game keeps the same World instance, just swaps the
+    // terrain generator so subsequent chunk loads use the
+    // new permutation. Chunks already in memory keep their
+    // pre-shuffle data (the player will see the shuffle on
+    // the next chunk load / chunk reload).
+    this.phaseDominancePermutation = null; // updated by getPhaseDominancePermutation()
     // Erosion tracking: key = `${x},${y},${z}` → { progress, lastPhase, lastTime }
     this._erosionState = new Map();
     // Stabilizer tracking: key = `${x},${y},${z}` → { x, y, z }
@@ -808,6 +831,69 @@ export class World {
       if (!Number.isInteger(lastPhase) || lastPhase < 0 || lastPhase > 2) continue;
       this._erosionState.set(key, { progress: Math.max(0, progress), lastPhase });
     }
+  }
+
+  // ── Phase 10.14: New Game+ helpers ─────────────────
+  // The world holds the phase-dominance seed; the helpers
+  // here expose the per-biome permutation to the renderer
+  // overlay + the save/load path. The permutation is
+  // recomputed on every call (cheap — 3-element array) so
+  // changes to the seed take effect immediately on the
+  // next chunk load.
+  getPhaseDominanceSeed() {
+    return Number.isFinite(this.phaseDominanceSeed)
+      ? Math.floor(this.phaseDominanceSeed)
+      : DEFAULT_PHASE_DOMINANCE_SEED;
+  }
+
+  /**
+   * Return the phase-dominance permutation for the given
+   * biome id. The result is a frozen [phase0, phase1, phase2]
+   * array. Index 0 is the dominant phase (the biome's
+   * "preferred" phase); index 2 is the rare phase (the
+   * biome's "avoided" phase). The Phase Nexus is special:
+   * the permutation is always the canonical [0, 1, 2]
+   * ordering (the §10.5 finale is deterministic).
+   */
+  getPhaseDominancePermutation(biomeId) {
+    return pickPhaseDominance(this.getPhaseDominanceSeed(), biomeId);
+  }
+
+  /**
+   * Return the dominant phase id (index 0 of the permutation)
+   * for the given biome id. The terrain generator uses this
+   * to bias per-block phase presence.
+   */
+  getDominantPhase(biomeId) {
+    return pickDominantPhase(this.getPhaseDominanceSeed(), biomeId);
+  }
+
+  /**
+   * Return the weight set the terrain generator multiplies
+   * against the base phaseSolid mask. See
+   * `dominanceWeights` in src/newgameplus/newgameplus.js
+   * for the canonical shape.
+   */
+  getDominanceWeights(biomeId) {
+    return dominanceWeights(this.getPhaseDominancePermutation(biomeId));
+  }
+
+  /**
+   * Set the phase-dominance seed at runtime. Used by the
+   * "Start New Game+" button — the game keeps the same
+   * World instance, just swaps the seed so subsequent
+   * chunk loads use the new permutation. Chunks already
+   * in memory keep their pre-shuffle data; the player
+   * sees the shuffle on the next chunk load / chunk
+   * reload.
+   */
+  setPhaseDominanceSeed(seed) {
+    const s = Number.isFinite(seed) ? Math.floor(seed) : DEFAULT_PHASE_DOMINANCE_SEED;
+    this.phaseDominanceSeed = s;
+    if (this.terrainGen && typeof this.terrainGen === 'object') {
+      this.terrainGen.phaseDominanceSeed = s;
+    }
+    return s;
   }
 
   // ── Phase Anchor (Phase 2.7) ────────────────────────────────────

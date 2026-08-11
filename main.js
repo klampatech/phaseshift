@@ -46,7 +46,8 @@ import { buildGoalState as buildGoalStatePure, currentAct as currentActPure, nea
 // Phase 3.3: Player inventory (collected Echoes + unlocked
 // amplifiers). The save/load round-trip + the per-frame pickup
 // tick both delegate to this module.
-import { createInventory, addEcho, hasEcho, listEchoes, removeEcho, addAmplifier, hasAmplifier, collectedCount, amplifierCount, serialize as serializeInventory, deserialize as deserializeInventory } from './src/inventory/inventory.js';
+import { createInventory, addEcho, hasEcho, listEchoes, removeEcho, addAmplifier, hasAmplifier, collectedCount, amplifierCount, serialize as serializeInventory, deserialize as deserializeInventory, listEchoesByBiome } from './src/inventory/inventory.js';
+import { createNewGamePlusState, pickPhaseDominance, DEFAULT_PHASE_DOMINANCE_SEED, DEFAULT_IRONMAN, isIronman, isShuffled } from './src/newgameplus/newgameplus.js';
 
 // Eye height: distance from feet to eyes. Player physics height is 1.7 (see
 // src/core/physics.js PLAYER_HEIGHT); 1.6 is a comfortable eye offset for a
@@ -66,6 +67,7 @@ let gameRunning = false;
 let gamePaused = false;
 let settings;
 let saveSystem;
+let newGamePlusState = null; // Phase 10.14: phase-dominance seed + ironman flag
 
 // Block visual cache
 const blockMeshes = new Map();
@@ -285,7 +287,20 @@ function init() {
   const _hasSave = !!_savedState;
 
   // Create world
-  world = new World(scene, (chunk) => updateChunkVisual(chunk));
+  // Phase 10.14: build the phase-dominance seed from the
+  // save blob (or default to 0 for a fresh playthrough).
+  // The world reads both the world seed + the phase-dominance
+  // seed, so this happens BEFORE the World construction.
+  const _newGamePlus = createNewGamePlusState(
+    _savedState && _savedState.newGamePlus
+  );
+  const _phaseDominanceSeed = _newGamePlus.phaseDominanceSeed;
+  // Keep a module-level handle on the newGamePlus state so the
+  // pause menu's "Start New Game+" button can read + mutate
+  // it (and so the save/load round-trip persists the latest
+  // state).
+  newGamePlusState = _newGamePlus;
+  world = new World(scene, (chunk) => updateChunkVisual(chunk), 42, _phaseDominanceSeed);
 
   // Phase 10.8: wire the world.onEroded hook so checkErosion fires
   // a visible burst + audio cue whenever a block converts. The
@@ -673,6 +688,7 @@ function setupMenuButtons() {
       + '<button id="btn-save" style="background:#222;color:#88ccff;border:1px solid #444;padding:10px 30px;margin:5px;cursor:pointer;font-family:monospace;font-size:14px;border-radius:4px;">Save Game</button>'
       + '<button id="btn-inv" style="background:#222;color:#88ccff;border:1px solid #444;padding:10px 30px;margin:5px;cursor:pointer;font-family:monospace;font-size:14px;border-radius:4px;">Inventory</button>'
       + '<button id="btn-opts" style="background:#222;color:#88ccff;border:1px solid #444;padding:10px 30px;margin:5px;cursor:pointer;font-family:monospace;font-size:14px;border-radius:4px;">Settings</button>'
+      + '<button id="btn-newgameplus" style="background:#222;color:#ffcc44;border:1px solid #664400;padding:10px 30px;margin:5px;cursor:pointer;font-family:monospace;font-size:14px;border-radius:4px;">Start New Game+</button>'
       + '<button id="btn-quit" style="background:#222;color:#88ccff;border:1px solid #444;padding:10px 30px;margin:5px;cursor:pointer;font-family:monospace;font-size:14px;border-radius:4px;">Quit to Title</button>'
       + '<div id="save-info" style="color:#4488ff;font-size:11px;margin-top:10px;"></div>';
     hud.container.appendChild(pauseMenu);
@@ -718,9 +734,59 @@ function setupMenuButtons() {
     if (blocker) blocker.classList.remove('hidden');
   });
 
+  // Phase 10.14: "Start New Game+" button. Rolls a fresh
+  // phase-dominance seed, preserves the ironman flag from
+  // the current run, resets position/energy/inventory, and
+  // persists the new state. The pause menu closes; the
+  // player is back in the game with the new shuffle.
+  safeOn('btn-newgameplus', 'click', () => {
+    if (!saveSystem || typeof saveSystem.startNewGamePlus !== 'function') {
+      if (hud) hud.showNotification('New Game+ unavailable', '#ff6644');
+      return;
+    }
+    if (!newGamePlusState) newGamePlusState = createNewGamePlusState();
+    const _seed = Math.floor(Math.random() * 0x7fffffff) + 1;
+    newGamePlusState.phaseDominanceSeed = _seed;
+    const _newState = saveSystem.startNewGamePlus(_savedState || null, {
+      phaseDominanceSeed: _seed,
+      ironman: newGamePlusState.ironman,
+    });
+    if (world && typeof world.setPhaseDominanceSeed === 'function') {
+      world.setPhaseDominanceSeed(_seed);
+    }
+    if (physicsManager && typeof physicsManager.setPosition === 'function' && spawnPoint) {
+      physicsManager.setPosition(spawnPoint.x, spawnPoint.y, spawnPoint.z);
+    }
+    if (phaseManager && typeof phaseManager.setPhase === 'function') {
+      phaseManager.setPhase(0);
+    }
+    if (world) {
+      if (typeof world.clearAnchors === 'function') world.clearAnchors();
+      if (typeof world.clearFuses === 'function') world.clearFuses();
+      if (typeof world.clearEchoes === 'function') world.clearEchoes();
+      if (typeof world.clearResonanceCores === 'function') world.clearResonanceCores();
+    }
+    saveSystem.save(_newState);
+    if (hud) hud.showNotification('NEW GAME+ shuffle locked in (seed ' + _seed + ')', '#ffcc44');
+    if (pauseMenu) pauseMenu.style.display = 'none';
+    gamePaused = false;
+  });
+
   // Inventory panel close
   safeOn('inv-close', 'click', () => {
     if (hud && typeof hud.showInventory === 'function') hud.showInventory(buildInventoryPlayerAdapter(), false);
+  });
+
+  // Phase 10.10: open the Echo Hunter panel from the inventory.
+  // The button is rendered inside the inventory panel (the
+  // §10.10 brief: "a dedicated inventory tab turns the
+  // 36-Echo narrative into a collection goal"). The
+  // safeOn() helper re-attaches the click handler on every
+  // show so the dynamic content gets the event.
+  safeOn('btn-open-echo-hunter', 'click', () => {
+    if (hud && typeof hud.showEchoHunter === 'function') {
+      hud.showEchoHunter(buildEchoHunterSummary(), (b) => biomeLabel(b));
+    }
   });
 
   // Pause on P key (when pointer is NOT locked)
@@ -1814,9 +1880,19 @@ function tickBiomesPerFrame(dt) {
     // "if the player walks through two biome regions in 0.5s,
     // the second transition starts from where the first one
     // ended, not from the original biome's target").
+    const _prevBiomeId = currentBiomeId;
     currentBiomeId = newBiomeId;
     targetBiomeTint = biomeTint(newBiomeId);
     biomeTransitionTimer = 0;
+    // Phase 10.10: show a brief "Zone: X / Y Echoes found"
+    // overlay when the player enters a new biome.
+    if (hud && typeof hud.showBiomeZoneOverlay === 'function' && _prevBiomeId !== newBiomeId) {
+      const _biomeName = biomeLabel(newBiomeId);
+      const _summary = buildEchoHunterSummary();
+      const _bTotal = (_summary && _summary.byBiomeTotal && _summary.byBiomeTotal[newBiomeId]) || 0;
+      const _bGot = (_summary && _summary.byBiomeCollected && _summary.byBiomeCollected[newBiomeId]) || 0;
+      hud.showBiomeZoneOverlay('ZONE: ' + _biomeName + ' \u2014 ' + _bGot + '/' + _bTotal + ' Echoes found', 3000);
+    }
   }
 
   // 2. Advance the transition tween. Clamp to the duration so
@@ -2211,8 +2287,51 @@ function buildInventoryPlayerAdapter() {
   return {
     getTools: () => [],
     getAmplifiers: () => Object.entries(playerInventory.amplifiers || {}).map(([toolId, owned]) => ({ toolId, owned })),
-    getEchoes: () => (playerInventory.echoes || []).map(e => ({ type: 'echo', lore: e.lore || 'Unknown resonance echo', ...e })),
+    // Phase 10.10: getEchoes reads from the canonical collectedEchoes
+    // Map (the §3.3 / §10.4 shape). The previous version read from
+    // `playerInventory.echoes` (the legacy §3.3 array), which was
+    // always empty in the current build.
+    getEchoes: () => {
+      const out = [];
+      if (playerInventory && playerInventory.collectedEchoes instanceof Map) {
+        for (const [key, lore] of playerInventory.collectedEchoes.entries()) {
+          const biomeId = (world && Array.isArray(world._echoes))
+            ? ((world._echoes.find((e) => e && e.key === key) || {}).biomeId)
+            : 0;
+          out.push({ type: 'echo', lore: lore || 'Unknown resonance echo', key, biomeId: Number.isFinite(biomeId) ? biomeId : 0 });
+        }
+      }
+      return out;
+    },
   };
+}
+
+/**
+ * Phase 10.10: build the Echo Hunter summary. Reads the
+ * player's collected Echoes + the world's `_echoes` map to
+ * compute the per-biome collected / total counts. Used by
+ * the Echo Hunter panel + the biome-transition zone overlay.
+ *
+ * The biome id for each Echo is read from the world's
+ * `_echoes` map (the canonical source of truth). Echoes not
+ * in the world map (e.g. legacy §3.3 collected Echoes without
+ * a biomeId field) fall back to 0.
+ */
+function buildEchoHunterSummary() {
+  const fresh = { byBiome: {}, collected: 0, total: 0, byBiomeCollected: {}, byBiomeTotal: {} };
+  if (!playerInventory || !(playerInventory.collectedEchoes instanceof Map)) return fresh;
+  const worldEchoes = (world && Array.isArray(world._echoes)) ? world._echoes : [];
+  const biomeByKey = new Map();
+  for (const e of worldEchoes) {
+    if (e && e.key && Number.isFinite(e.biomeId)) {
+      biomeByKey.set(e.key, e.biomeId);
+    }
+  }
+  const _loreCountForBiome = (b) => (b === 8 ? 1 : 5);
+  return listEchoesByBiome(playerInventory, (key) => {
+    const b = biomeByKey.get(key);
+    return Number.isFinite(b) ? b : 0;
+  }, _loreCountForBiome);
 }
 
 function saveGame() {
@@ -2255,7 +2374,7 @@ function saveGame() {
     lookPitch,
     energy,
     fatigue,
-  }, fuses, erosion);
+  }, fuses, erosion, newGamePlusState);
   hud.showNotification('GAME SAVED', '#4488ff');
   refreshSaveInfo();
 }
@@ -3711,7 +3830,42 @@ if (typeof window !== 'undefined') {
     // Force initialize if needed
     init() {
       if (!scene) init();
-    }
+    },
+    // Phase 10.14: New Game+ debug hooks.
+    newGamePlus: {
+      get seed() { return newGamePlusState ? newGamePlusState.phaseDominanceSeed : 0; },
+      get ironman() { return newGamePlusState ? newGamePlusState.ironman : false; },
+      get permutation() { return world && world.getPhaseDominancePermutation ? world.getPhaseDominancePermutation(currentBiomeId) : [0, 1, 2]; },
+      get isShuffled() { return newGamePlusState ? isShuffled(newGamePlusState.phaseDominanceSeed, currentBiomeId) : false; },
+      setSeed(seed) {
+        if (newGamePlusState) newGamePlusState.phaseDominanceSeed = Math.floor(seed);
+        if (world && world.setPhaseDominanceSeed) world.setPhaseDominanceSeed(seed);
+        return newGamePlusState ? newGamePlusState.phaseDominanceSeed : 0;
+      },
+      setIronman(enabled) {
+        if (newGamePlusState) newGamePlusState.ironman = Boolean(enabled);
+        return newGamePlusState ? newGamePlusState.ironman : false;
+      },
+      forceStartNewGamePlus() {
+        const btn = document.getElementById('btn-newgameplus');
+        if (btn) btn.click();
+        return true;
+      },
+    },
+    // Phase 10.10: Echo Hunter panel debug hooks.
+    echoHunter: {
+      getSummary() { return buildEchoHunterSummary(); },
+      openPanel() {
+        if (hud && typeof hud.showEchoHunter === 'function') {
+          hud.showEchoHunter(buildEchoHunterSummary(), (b) => biomeLabel(b));
+        }
+        return true;
+      },
+      closePanel() {
+        if (hud && typeof hud.hideEchoHunter === 'function') hud.hideEchoHunter();
+        return true;
+      },
+    },
   };
   console.log('[Phase Shifter] Debug hooks registered');
 }

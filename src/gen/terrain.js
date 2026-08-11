@@ -1,6 +1,7 @@
 import { BLOCK_AIR, BLOCK_STONE, BLOCK_GRASS, BLOCK_DIRT, BLOCK_SAND, BLOCK_WOOD, BLOCK_CRYSTAL, BLOCK_RUNE, BLOCK_OBSIDIAN, BLOCK_VOID, BLOCK_GLASS, BLOCK_IRON, BLOCK_GOLD_ORE, CHUNK_SIZE, CHUNK_HEIGHT, BIOME_FOREST, BIOME_RUINS, BIOME_CAVES, BIOME_DESERT, BIOME_CRYSTAL_CAVERN, BIOME_SKY_RUINS, BIOME_DEEP_VOID, BIOME_PHASE_NEXUS, NOISE_SCALE, NOISE_OCTAVES, NOISE_PERSISTENCE, NOISE_LACUNARITY } from '../core/constants.js';
 import { NoiseGenerator } from './noise.js';
 import { biomeMultipliers } from '../world/biome.js';
+import { pickPhaseDominance, pickDominantPhase, dominanceWeights } from '../newgameplus/newgameplus.js';
 
 // Biome definitions with block preferences per phase
 const BIOME_DATA = {
@@ -18,6 +19,7 @@ const BIOME_DATA = {
     // library (Phase 10.4) is the canonical source of truth
     // for the lore string; this just controls spawn density.
     echoChance: 0.0005,
+    phaseDominance: [0, 1, 2],  // default (no shuffle)
     biomeColor: [0.3, 0.55, 0.3],
   },
   [BIOME_RUINS]: {
@@ -29,6 +31,7 @@ const BIOME_DATA = {
     caveChance: 0.02,
     runeChance: 0.003,
     echoChance: 0.001, // Echo collectibles in ruins
+    phaseDominance: [0, 1, 2],  // default
     biomeColor: [0.5, 0.45, 0.4],
   },
   [BIOME_CAVES]: {
@@ -39,6 +42,7 @@ const BIOME_DATA = {
     crystalChance: 0.025,
     caveChance: 0.12,
     goldOreChance: 0.008,
+    phaseDominance: [0, 1, 2],  // default
     biomeColor: [0.35, 0.3, 0.35],
   },
   [BIOME_DESERT]: {
@@ -48,6 +52,7 @@ const BIOME_DATA = {
     woodChance: 0.005,
     crystalChance: 0.01,
     caveChance: 0.02,
+    phaseDominance: [0, 1, 2],  // default
     biomeColor: [0.8, 0.7, 0.4],
   },
   [BIOME_CRYSTAL_CAVERN]: {
@@ -59,6 +64,7 @@ const BIOME_DATA = {
     caveChance: 0.08,
     glassChance: 0.01,
     resonanceCoreChance: 0.0005, // Resonance cores in crystal caverns
+    phaseDominance: [0, 1, 2],  // default
     biomeColor: [0.4, 0.3, 0.5],
   },
   [BIOME_SKY_RUINS]: {
@@ -69,6 +75,7 @@ const BIOME_DATA = {
     crystalChance: 0.03,
     caveChance: 0.03,
     runeChance: 0.005,
+    phaseDominance: [0, 1, 2],  // default
     biomeColor: [0.4, 0.4, 0.6],
   },
   [BIOME_DEEP_VOID]: {
@@ -79,6 +86,7 @@ const BIOME_DATA = {
     crystalChance: 0.02,
     caveChance: 0.01,
     runeChance: 0.008,
+    phaseDominance: [0, 1, 2],  // default
     biomeColor: [0.1, 0.05, 0.15],
   },
   [BIOME_PHASE_NEXUS]: {
@@ -89,12 +97,21 @@ const BIOME_DATA = {
     crystalChance: 0.04,
     caveChance: 0.01,
     runeChance: 0.015,
+    phaseDominance: [0, 1, 2],  // default (Phase Nexus never shuffles)
     biomeColor: [0.6, 0.2, 0.5],
   },
 };
 
 export class TerrainGenerator {
-  constructor(seed) {
+  constructor(seed, phaseDominanceSeed) {
+    // Phase 10.14: phase-dominance seed for the New Game+
+    // shuffle. The terrain generator uses this to bias
+    // per-block phase presence. Defaults to 0 (no shuffle).
+    // The seed is mixed with the biome id in pickPhaseDominance
+    // to produce a per-biome permutation of [ALPHA, BETA, GAMMA].
+    this.phaseDominanceSeed = Number.isFinite(phaseDominanceSeed)
+      ? Math.floor(phaseDominanceSeed)
+      : 0;
     this.noise = new NoiseGenerator(seed);
     this.biomeNoise = new NoiseGenerator(seed + 1);
     this.caveNoise = new NoiseGenerator(seed + 2);
@@ -103,6 +120,13 @@ export class TerrainGenerator {
   generateChunk(chunkX, chunkZ, biomeId) {
     const data = new Uint8Array(CHUNK_SIZE * CHUNK_HEIGHT * CHUNK_SIZE);
     const biome = BIOME_DATA[biomeId] || BIOME_DATA[BIOME_FOREST];
+    // Phase 10.14: compute the per-biome phase-dominance
+    // permutation. The seed defaults to 0 (no shuffle on the
+    // first playthrough). The permutation is exposed via the
+    // chunk metadata so the renderer's overlay can highlight
+    // the dominant phase in New Game+ mode.
+    const phasePermutation = pickPhaseDominance(this.phaseDominanceSeed, biomeId);
+    const dominantPhase = pickDominantPhase(this.phaseDominanceSeed, biomeId);
     const scale = NOISE_SCALE;
     const seed = this.noise.seed;
 
@@ -241,7 +265,23 @@ export class TerrainGenerator {
       }
     }
 
-    return { data, echoes, cores };
+    return {
+      data,
+      echoes,
+      cores,
+      // Phase 10.14: per-chunk phase-dominance metadata.
+      // The permutation is the canonical (seed, biomeId) →
+      // permutation of [ALPHA, BETA, GAMMA] mapping. The
+      // dominant phase is index 0. Stored on the chunk so
+      // the renderer's overlay can highlight the dominant
+      // phase in New Game+ mode.
+      phaseDominance: {
+        seed: this.phaseDominanceSeed,
+        biomeId,
+        permutation: phasePermutation,
+        dominantPhase,
+      },
+    };
   }
 
   // Apply phase inversion for Beta/Gamma
