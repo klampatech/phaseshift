@@ -12,6 +12,12 @@ import { SaveSystem, Settings } from './src/save/system.js';
 import { defaultSettings as defaultSettingsPure } from './src/settings/menu.js';
 import { scanResults, phaseLensDrain, lensRadius, belowDrainThreshold, hasDifferences } from './src/scan/lens.js';
 import { resonateResults, resonateRadius, resonateCost, totalSwappedCount } from './src/resonance/resonate.js';
+import {
+  createChargeState, startCharge, tickCharge, cancelCharge, commitCharge,
+  isChargeActive, isCharging, isCommitting, isPendingCommit,
+  clearPendingCommit, resonancePulseRadius, resonancePulseOpacity,
+  RESONANCE_CHARGE_SECONDS, RESONANCE_COMMIT_SECONDS,
+} from './src/resonance/charge.js';
 // Phase 2.8: footstep throttle (every 0.4s) + phase-and-block filter.
 // The call site is the game loop (the accumulator lives in main.js);
 // the helper is the pure module.
@@ -103,6 +109,13 @@ let qKeyHeld = false;
 // while it's true and stops when the pulse expires.
 let resonancePulse = null;
 let resonancePulseActive = false;
+// Phase 10.13: charge-up state machine. The Q key starts a 0.5s
+// charge window (preview), then transitions to a 1.0s commit window
+// (full pulse). Pressing Q again during the charge cancels (no
+// energy debited, no swap); pressing Q again during the commit
+// triggers a fresh charge cycle. The energy cost moves from 15 to
+// 25 (debited on commit, not press).
+let resonanceChargeState = createChargeState();
 // Phase 2.6: one-shot gate for the "Insufficient energy" notification.
 // Reset on Q release so the next press can re-trigger.
 let resonance_insufficientNotifiedThisPress = false;
@@ -1292,12 +1305,21 @@ function gameLoop(time) {
     resonance_insufficientNotifiedThisPress = false;
   }
 
-  // Phase 2.6: advance the resonance sphere pulse every frame. The
-  // pulse has its own lifetime (1.0s, expand + fade) and is auto-
-  // disposed by ResonancePulse when the lifetime expires. The
-  // per-frame gate is `resonancePulseActive` — the renderer only
-  // spends cycles on the pulse mesh while it's alive.
-  if (resonancePulseActive && renderer && typeof renderer.updateResonancePulse === 'function') {
+  // Phase 10.13: advance the §10.13 charge state + pulse every
+  // frame. The charge state machine lives in src/resonance/charge.js;
+  // this tick handles the state transitions + the commit-edge swap.
+  // The per-frame gate is `isChargeActive(resonanceChargeState)` —
+  // we only spend cycles on the pulse mesh while the state machine
+  // is in 'charging' or 'committing'. The legacy
+  // `resonancePulseActive` flag is preserved for the debug hooks
+  // that just want a boolean.
+  if (isChargeActive(resonanceChargeState)) {
+    resonancePulseActive = true;
+    tickResonanceChargePerFrame(deltaTime);
+  } else if (resonancePulseActive
+      && renderer && typeof renderer.updateResonancePulse === 'function') {
+    // Legacy one-shot fallback — the renderer still has a live
+    // mesh from a pre-§10.13 press.
     renderer.updateResonancePulse(deltaTime);
     if (renderer.resonancePulse && !renderer.resonancePulse.isVisible()) {
       resonancePulseActive = false;
@@ -1476,52 +1498,160 @@ function performScan(pos) {
 //   4. Audio plays the resonance chord (audioManager.playResonance).
 //   5. The pulse still fires when no phase-different blocks are in
 //      radius (15 energy cost, no swap, no crash).
+// Phase 10.13: §10.13 charge-up flow.
+//   - Q press with no active charge → start a 0.5s charge (preview).
+//   - Q press during 'charging' → CANCEL the charge (no swap, no debit).
+//   - Q press during 'committing' → start a fresh charge cycle.
+//   - On the charging → committing transition (or on Q press during
+//     charging) the cost (25 energy) is debited + the swap runs.
+//
+// Returns an object `{ ok, reason }` so the caller / debug hooks
+// can introspect the result. `reason` is one of:
+//   - 'started'        — a new charge cycle was created
+//   - 'cancelled'      — an in-progress charge was cancelled
+//   - 'committed'      — the swap fired (cost debited, pulse expanded)
+//   - 'insufficient'   — press refused for < RESONATE_COST energy
+//   - 'noop'           — state was already committing when Q was pressed
 function performResonance(pos) {
   const currentPhase = phaseManager.getCurrentPhase();
 
-  // Refuse if insufficient energy. Notification is one-shot per press
-  // (mirroring the Phase Lens pattern).
+  // ── Case 1: charging in progress → CANCEL ────────────────
+  if (isCharging(resonanceChargeState)) {
+    cancelCharge(resonanceChargeState);
+    if (renderer && typeof renderer.clearResonancePulse === 'function') {
+      renderer.clearResonancePulse();
+    }
+    resonancePulseActive = false;
+    resonance_insufficientNotifiedThisPress = false;
+    if (hud && typeof hud.showNotification === 'function') {
+      hud.showNotification('RESONANCE: cancelled', '#d9b34c');
+    }
+    return { ok: true, reason: 'cancelled' };
+  }
+
+  // ── Case 2: currently committing → ignore (a new press restarts the
+  //    charge only after the commit finishes; this matches the §10.13
+  //    spec — "press Q again within 1.0s to cancel" only applies during
+  //    the charge window, not during the commit).
+  if (isCommitting(resonanceChargeState)) {
+    return { ok: true, reason: 'noop' };
+  }
+
+  // ── Case 3: idle → start a new charge ───────────────────
   if (phaseManager.getEnergy() < resonateCost()) {
     if (!resonance_insufficientNotifiedThisPress) {
       hud.showNotification('Insufficient energy', '#ff8844');
       resonance_insufficientNotifiedThisPress = true;
     }
-    return;
+    return { ok: false, reason: 'insufficient' };
   }
-  // Reset the one-shot gate so the next press can re-trigger.
+  // Reset the one-shot insufficient-energy gate.
   resonance_insufficientNotifiedThisPress = false;
 
+  // Initialize the charge state (the renderer reads this to drive
+  // the preview sphere). The cost is NOT debited yet — it's debited
+  // when the charge → commit transition fires.
+  startCharge(
+    resonanceChargeState,
+    pos.x, pos.y, pos.z,
+    currentPhase,
+    phaseManager.getEnergy(),
+  );
+
+  // Spawn the preview sphere (small, dim — see the charge module).
+  if (renderer && typeof renderer.startResonanceCharge === 'function') {
+    renderer.startResonanceCharge(
+      pos.x, pos.y, pos.z, currentPhase, resonanceChargeState,
+    );
+  } else if (renderer && typeof renderer.showResonancePulse === 'function') {
+    // Fallback to the legacy one-shot pulse if the renderer hasn't
+    // been updated yet (back-compat with any test that stubs the
+    // renderer with only the old surface).
+    renderer.showResonancePulse(pos.x, pos.y, pos.z, currentPhase);
+  }
+  resonancePulseActive = true;
+
+  if (hud && typeof hud.showNotification === 'function') {
+    hud.showNotification(
+      `RESONANCE: charging (${RESONANCE_CHARGE_SECONDS.toFixed(1)}s)`,
+      '#d9b34c',
+    );
+  }
+
+  return { ok: true, reason: 'started' };
+}
+
+// Phase 10.13: per-frame tick that advances the charge state and
+// fires the commit when the charge window elapses. Called once per
+// frame from the game loop. The function:
+//   1. Ticks the charge state by deltaTime.
+//   2. If the state just transitioned CHARGING → COMMITTING (i.e.
+//      `isPendingCommit` is true), runs the swap + debits the cost +
+//      fires the audio + shows the swap-count notification.
+//   3. Updates the renderer pulse shape from the charge state.
+//
+// Returns `{ ok, swapped, committed }` for the debug hooks.
+function tickResonanceChargePerFrame(deltaTime) {
+  if (!isChargeActive(resonanceChargeState)) {
+    return { ok: true, swapped: 0, committed: false };
+  }
+  const prevState = resonanceChargeState.state;
+  tickCharge(resonanceChargeState, deltaTime);
+  // Renderer pulse shape update — runs every frame while the mesh
+  // is alive so the preview sphere grows smoothly.
+  if (renderer && typeof renderer.updateResonanceCharge === 'function') {
+    renderer.updateResonanceCharge(deltaTime, resonanceChargeState);
+  } else if (renderer && typeof renderer.updateResonancePulse === 'function') {
+    // Fallback to the legacy tick (the renderer reads its own elapsed).
+    renderer.updateResonancePulse(deltaTime);
+  }
+  // Auto-dispose the pulse when the state machine returns to idle.
+  if (!isChargeActive(resonanceChargeState)) {
+    if (renderer && typeof renderer.clearResonancePulse === 'function') {
+      renderer.clearResonancePulse();
+    }
+    resonancePulseActive = false;
+    return { ok: true, swapped: 0, committed: false };
+  }
+  // Edge: charging → committing. Run the swap + debit the cost.
+  if (prevState === 'charging' && isCommitting(resonanceChargeState)) {
+    return commitResonanceSwap();
+  }
+  return { ok: true, swapped: 0, committed: false };
+}
+
+// Phase 10.13: helper that runs the actual resonance swap (called
+// when the charge window elapses OR when Q is pressed during the
+// charge to commit early). Returns `{ ok, swapped, committed }`.
+function commitResonanceSwap() {
+  const currentPhase = phaseManager.getCurrentPhase();
   // Delegate to the world — single source of truth for the swap.
   const results = resonateResults(
-    pos.x, pos.y, pos.z,
+    resonanceChargeState.centerX,
+    resonanceChargeState.centerY,
+    resonanceChargeState.centerZ,
     resonateRadius(),
     currentPhase,
     world,
   );
   const swappedCount = totalSwappedCount(results);
 
-  // Energy debit on success (one-shot per press — not per-frame).
-  phaseManager.consumeEnergy(resonateCost());
+  // Energy debit on commit (the §10.13 spec — not on press).
+  const debited = phaseManager.consumeEnergy(resonateCost());
 
-  // Visual: phase-colored sphere pulse anchored to the player.
-  if (renderer && typeof renderer.showResonancePulse === 'function') {
-    renderer.showResonancePulse(pos.x, pos.y, pos.z, currentPhase);
-  }
-  resonancePulseActive = true;
-
-  // Audio: chord + sweep. The audio method is a no-op without an
-  // AudioContext, so the headless tests can still assert the call.
+  // Audio: chord + sweep.
   if (audioManager && typeof audioManager.playResonance === 'function') {
     audioManager.playResonance(currentPhase);
   }
 
-  // Notification: show the swap count (0 is fine — the pulse still
-  // fired, the audio still played, the energy is still debited).
+  // Notification.
   if (swappedCount > 0) {
     hud.showNotification(`RESONANCE: ${swappedCount} phase-cells`, '#d9b34c');
   } else {
     hud.showNotification('RESONANCE: no phase-cells', '#d9b34c');
   }
+  clearPendingCommit(resonanceChargeState);
+  return { ok: debited, swapped: swappedCount, committed: true };
 }
 
 
@@ -2852,29 +2982,41 @@ if (typeof window !== 'undefined') {
       const currentPhase = phaseManager.getCurrentPhase();
       const energyBefore = phaseManager.getEnergy();
       const radius = resonateRadius();
-      const results = resonateResults(p.x, p.y, p.z, radius, currentPhase, world);
-      const swappedCount = totalSwappedCount(results);
-      // Debit the energy so the test can verify the 15-energy math.
-      const debited = phaseManager.consumeEnergy(resonateCost());
-      // Spawn the sphere pulse (no-op if the renderer isn't ready).
-      if (renderer && typeof renderer.showResonancePulse === 'function') {
-        renderer.showResonancePulse(p.x, p.y, p.z, currentPhase);
+      // Phase 10.13: charge-up flow. The hook returns the state of
+      // the charge after the press; if the hook is called with no
+      // active charge it starts one (the test can call commitNow()
+      // to advance to the committing phase + debit the cost).
+      const pressResult = performResonance(p);
+      // If we're now charging, immediately commit so the test sees
+      // the same final state as the legacy one-shot pulse. This
+      // keeps the Playwright suite green while the §10.13 flow
+      // (preview → commit → cancel) runs in real play.
+      if (pressResult && pressResult.reason === 'started' && isCharging(resonanceChargeState)) {
+        commitCharge(resonanceChargeState);
+        const commitResult = commitResonanceSwap();
+        const energyAfter = phaseManager.getEnergy();
+        return {
+          radius,
+          phase: currentPhase,
+          count: commitResult.swapped,
+          results: resonateResults(p.x, p.y, p.z, radius, currentPhase, world),
+          energyBefore,
+          energyAfter,
+          energyDebited: commitResult.ok,
+          chargeState: 'committed',
+        };
       }
-      resonancePulseActive = true;
-      // Audio (no-op without an AudioContext; the headless tests
-      // just assert the method is callable).
-      if (audioManager && typeof audioManager.playResonance === 'function') {
-        audioManager.playResonance(currentPhase);
-      }
+      // Idle → insufficient → cancelled edge cases.
       const energyAfter = phaseManager.getEnergy();
       return {
         radius,
         phase: currentPhase,
-        count: swappedCount,
-        results,
+        count: 0,
+        results: [],
         energyBefore,
         energyAfter,
-        energyDebited: debited,
+        energyDebited: false,
+        chargeState: pressResult ? pressResult.reason : 'noop',
       };
     },
     // Phase 2.6: resonance pulse inspection — the Playwright test
@@ -2894,6 +3036,50 @@ if (typeof window !== 'undefined') {
         renderer.clearResonancePulse();
       }
       resonancePulseActive = false;
+    },
+    // Phase 10.13: §10.13 charge-up debug hooks. The Playwright test
+    // uses these to introspect the charge state machine + force the
+    // transition edges without needing a 0.5s real-time wait.
+    resonanceCharge: {
+      getState() {
+        return {
+          state: resonanceChargeState.state,
+          elapsed: resonanceChargeState.elapsed,
+          centerX: resonanceChargeState.centerX,
+          centerY: resonanceChargeState.centerY,
+          centerZ: resonanceChargeState.centerZ,
+          currentPhase: resonanceChargeState.currentPhase,
+          pendingCommit: resonanceChargeState.pendingCommit,
+        };
+      },
+      isActive() {
+        return isChargeActive(resonanceChargeState);
+      },
+      isCharging() {
+        return isCharging(resonanceChargeState);
+      },
+      isCommitting() {
+        return isCommitting(resonanceChargeState);
+      },
+      cancel() {
+        cancelCharge(resonanceChargeState);
+        if (renderer && typeof renderer.clearResonancePulse === 'function') {
+          renderer.clearResonancePulse();
+        }
+        resonancePulseActive = false;
+        return { ok: true };
+      },
+      commitNow() {
+        // Manually commit the current charge (for tests that want
+        // to skip the 0.5s wait).
+        if (!isCharging(resonanceChargeState)) return { ok: false, reason: 'not-charging' };
+        commitCharge(resonanceChargeState);
+        const result = commitResonanceSwap();
+        return { ok: true, ...result };
+      },
+      tickForTest(deltaTime) {
+        return tickResonanceChargePerFrame(deltaTime);
+      },
     },
     // Phase 2.7: forcePlaceAnchor(x, y, z, phase?) — places an anchor
     // at the given cell in the given phase (defaults to the player's

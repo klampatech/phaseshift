@@ -1752,6 +1752,60 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
   console.log('\n=== Phase 10.10 static-analysis (against source files) ===');
   console.log(JSON.stringify(phase10_10, null, 2));
 
+  // ── Phase 10.13 (Resonance charge-up) ────────────────────
+  // §10.13 acceptance: RESONANCE_CHARGE_SECONDS = 0.5,
+  // RESONANCE_COMMIT_SECONDS = 1.0, RESONATE_COST bumped from 15
+  // to 25, charge module exports the state machine helpers, renderer
+  // exposes start/updateResonanceCharge, main.js wires the flow +
+  // exposes __phaseShifter__.resonanceCharge debug hooks.
+  const chargePath2 = path.resolve(__dirname, '..', '..', 'src', 'resonance', 'charge.js');
+  const chargeText = fs2.existsSync(chargePath2) ? fs2.readFileSync(chargePath2, 'utf8') : '';
+  const phase10_13 = {
+    charge_module_exists: chargeText.length > 0,
+    charge_exports_RESONANCE_CHARGE_SECONDS: /export\s+const\s+RESONANCE_CHARGE_SECONDS\s*=\s*0\.5\b/.test(chargeText),
+    charge_exports_RESONANCE_COMMIT_SECONDS: /export\s+const\s+RESONANCE_COMMIT_SECONDS\s*=\s*1\.0\b/.test(chargeText),
+    charge_exports_RESONANCE_TOTAL_DURATION: /export\s+const\s+RESONANCE_TOTAL_DURATION\s*=/.test(chargeText),
+    charge_exports_createChargeState: /export\s+function\s+createChargeState\s*\(/.test(chargeText),
+    charge_exports_startCharge: /export\s+function\s+startCharge\s*\(/.test(chargeText),
+    charge_exports_tickCharge: /export\s+function\s+tickCharge\s*\(/.test(chargeText),
+    charge_exports_cancelCharge: /export\s+function\s+cancelCharge\s*\(/.test(chargeText),
+    charge_exports_commitCharge: /export\s+function\s+commitCharge\s*\(/.test(chargeText),
+    charge_exports_isChargeActive: /export\s+function\s+isChargeActive\s*\(/.test(chargeText),
+    charge_exports_isCharging: /export\s+function\s+isCharging\s*\(/.test(chargeText),
+    charge_exports_isCommitting: /export\s+function\s+isCommitting\s*\(/.test(chargeText),
+    charge_exports_isPendingCommit: /export\s+function\s+isPendingCommit\s*\(/.test(chargeText),
+    charge_exports_clearPendingCommit: /export\s+function\s+clearPendingCommit\s*\(/.test(chargeText),
+    charge_exports_previewAmount: /export\s+function\s+previewAmount\s*\(/.test(chargeText),
+    charge_exports_commitAmount: /export\s+function\s+commitAmount\s*\(/.test(chargeText),
+    charge_exports_resonancePulseRadius: /export\s+function\s+resonancePulseRadius\s*\(/.test(chargeText),
+    charge_exports_resonancePulseOpacity: /export\s+function\s+resonancePulseOpacity\s*\(/.test(chargeText),
+    charge_tickCharge_transitions_charging_to_committing: /tickCharge[\s\S]{0,2000}?state\s*=\s*['"]committing['"]/.test(chargeText),
+    charge_cancelCharge_during_charging: /cancelCharge[\s\S]{0,500}?state\s*=\s*['"]cancelled['"]/.test(chargeText),
+    charge_commitCharge_promotes_to_committing: /commitCharge[\s\S]{0,500}?state\s*=\s*['"]committing['"]/.test(chargeText),
+    // Constants file.
+    constants_RESONATE_COST_25: /export\s+const\s+RESONATE_COST\s*=\s*25\b/.test(constantsText),
+    constants_RESONANCE_CHARGE_SECONDS_05: /export\s+const\s+RESONANCE_CHARGE_SECONDS\s*=\s*0\.5\b/.test(constantsText),
+    constants_RESONANCE_COMMIT_SECONDS_10: /export\s+const\s+RESONANCE_COMMIT_SECONDS\s*=\s*1\.0\b/.test(constantsText),
+    // Renderer.
+    renderer_has_startResonanceCharge: /startResonanceCharge\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*currentPhase\s*,\s*chargeState\s*\)/.test(rendererText),
+    renderer_has_updateResonanceCharge: /updateResonanceCharge\s*\(\s*dt\s*,\s*chargeState\s*\)/.test(rendererText),
+    renderer_imports_charge_module: /from\s+['"]\.\.\/resonance\/charge\.js['"]/.test(rendererText),
+    renderer_Renderer_class_has_startResonanceCharge: /startResonanceCharge\s*\(\s*x\s*,\s*y\s*,\s*z\s*,\s*currentPhase\s*,\s*chargeState\s*\)\s*\{[\s\S]{0,500}?this\.resonancePulse\.startResonanceCharge/.test(rendererText),
+    renderer_Renderer_class_has_updateResonanceCharge: /updateResonanceCharge\s*\(\s*dt\s*,\s*chargeState\s*\)\s*\{[\s\S]{0,500}?this\.resonancePulse\.updateResonanceCharge/.test(rendererText),
+    // main.js.
+    main_imports_charge_module: /from\s+['"]\.\/src\/resonance\/charge\.js['"]/.test(srcText),
+    main_declares_resonanceChargeState: /resonanceChargeState\s*=\s*createChargeState/.test(srcText),
+    main_performResonance_handles_charging: /isCharging\s*\(\s*resonanceChargeState\s*\)[\s\S]{0,200}?cancelCharge/.test(srcText),
+    main_performResonance_calls_startCharge: /startCharge\s*\(\s*resonanceChargeState/.test(srcText),
+    main_has_tickResonanceChargePerFrame: /function\s+tickResonanceChargePerFrame\s*\(/.test(srcText),
+    main_game_loop_calls_tickResonanceChargePerFrame: /tickResonanceChargePerFrame\s*\(\s*deltaTime\s*\)/.test(srcText),
+    main_has_commitResonanceSwap: /function\s+commitResonanceSwap\s*\(/.test(srcText),
+    main_exports_resonanceCharge_debug_hook: /resonanceCharge:\s*\{[\s\S]{0,500}?getState/.test(srcText),
+  };
+  const phase10_13Ok = Object.values(phase10_13).every(Boolean);
+  console.log('\n=== Phase 10.13 static-analysis (against source files) ===');
+  console.log(JSON.stringify(phase10_13, null, 2));
+
   // ── Phase 4 (Polish: HUD-owns-DOM + Settings + Minimap + Save/load) ─
   // Phase 4 work: §4.1 (HUD owns its DOM), §4.2 (Settings menu with
   // localStorage persistence + live-apply), §4.3 (Minimap reads actual
@@ -1952,7 +2006,7 @@ console.log('\n=== Phase 3.1 static-analysis (against source files) ===');
     phase28Ok &&
     phase31Ok &&
     phase32Ok &&
-    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok && phase6Ok && phase9Ok && phase10_14Ok && phase10_10Ok ? 0 : 1
+    phase33Ok && phase34Ok_ && phase35Ok_ && phase36Ok && phase4Ok && phase5Ok && phase6Ok && phase9Ok && phase10_14Ok && phase10_10Ok && phase10_13Ok ? 0 : 1
   );
 })().catch(err => {
   console.error('TEST FAILED:', err.stack || err.message);

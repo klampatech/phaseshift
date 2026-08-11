@@ -183,7 +183,16 @@ export const PHASE_DRAIN_RATE_BETA = 0.5;
 export const PHASE_DRAIN_RATE_GAMMA = 1.0;
 export const MAX_FATIGUE = 100;
 export const SCAN_COST = 3;
-export const RESONATE_COST = 15;
+// Phase 10.13: the cost is debited on commit, not on press. The
+// player has RESONANCE_CHARGE_SECONDS to preview the swap and
+// RESONANCE_COMMIT_SECONDS for the pulse to fire. The cost
+// moves from 15 to 25 to compensate for the preview-then-commit
+// flow (the brief: "the cost is increased from 15 to 25 to
+// compensate for the preview-then-commit flow"). Both the
+// resonate module (src/resonance/resonate.js) and the new charge
+// module (src/resonance/charge.js) read this constant so the
+// call site can pick a single source of truth.
+export const RESONATE_COST = 25;
 // Phase 2.5: Phase Lens hold-drain (energy per second while E is held).
 export const PHASE_LENS_DRAIN_RATE = 0.5;
 // Phase 2.5: scan radius (block units, cubic). The plan's §2.5 acceptance
@@ -195,8 +204,17 @@ export const SCAN_RADIUS = 4;
 // units (cubic) — radius=1 gives a 3×3×3 area around the player. The
 // pulse duration is the total sphere-pulse lifetime (0.25s expand +
 // 0.75s fade) so the renderer can decide when to dispose the mesh.
+//
+// Phase 10.13: when the charge-up state machine is enabled (see
+// src/resonance/charge.js), the total pulse lifetime is
+// RESONANCE_CHARGE_SECONDS (0.5s preview) + RESONANCE_COMMIT_SECONDS
+// (1.0s commit) = 1.5s. The renderer reads both values directly from
+// the charge module so the two paths (legacy one-shot vs. §10.13
+// charge-up) share the same constants.
 export const RESONANCE_RADIUS = 1;
 export const RESONANCE_PULSE_DURATION = 1.0;
+export const RESONANCE_CHARGE_SECONDS = 0.5;
+export const RESONANCE_COMMIT_SECONDS = 1.0;
 // Phase 2.7: Phase Anchor (Shift+LMB) — the player-placed lock that
 // holds them on a block through a phase shift. The lifetime is the
 // number of seconds before the outline disappears (the plan's §2.7

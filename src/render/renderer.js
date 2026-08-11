@@ -3,6 +3,9 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import {
+  resonancePulseRadius, resonancePulseOpacity,
+} from '../resonance/charge.js';
 import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_GRASS, BLOCK_DIRT,
   BLOCK_WOOD, BLOCK_CRYSTAL, BLOCK_OBSIDIAN, BLOCK_VOID, BLOCK_RUNE, BLOCK_SAND,
   BLOCK_GLASS, BLOCK_IRON, BLOCK_GOLD_ORE, BLOCK_WATER, BLOCK_PHASE_COLORS,
@@ -773,6 +776,96 @@ export class ResonancePulse {
     // visual size matches.
     this._mesh.scale.setScalar(shape.radius);
     this._material.opacity = shape.opacity;
+  }
+
+  /**
+   * Phase 10.13: start a charge-up pulse at (x, y, z) tinted with
+   * `PHASE_COLORS[currentPhase]`. Unlike `showResonancePulse` this
+   * method does NOT drive the mesh — it just creates the sphere
+   * at the start radius (0.2) / opacity (0.3) and lets the per-
+   * frame `updateResonanceCharge(dt, chargeState)` drive the
+   * shape from the §10.13 charge state machine
+   * (`src/resonance/charge.js`).
+   *
+   * Disposes any existing pulse first so a back-to-back press
+   * doesn't leak meshes. The `chargeState` argument is the same
+   * state object the game loop mutates (so the renderer reads
+   * its current `state` / `elapsed` fields). Returns the same
+   * state for chaining.
+   */
+  startResonanceCharge(x, y, z, currentPhase, chargeState) {
+    this.clearResonancePulse();
+    if (!chargeState || typeof chargeState !== 'object') {
+      // Without a state object the renderer can't drive the pulse —
+      // fall back to the legacy one-shot pulse so the call doesn't
+      // silently no-op.
+      return this.showResonancePulse(x, y, z, currentPhase);
+    }
+    const phase = Number.isFinite(currentPhase) ? Math.floor(currentPhase) : 0;
+    const color = PHASE_COLORS[phase] || '#ffffff';
+    this._currentPhase = phase;
+    this._centerX = Number.isFinite(x) ? x : 0;
+    this._centerY = Number.isFinite(y) ? y : 0;
+    this._centerZ = Number.isFinite(z) ? z : 0;
+    this._elapsed = 0;
+    this._chargeState = chargeState;
+    const radius = (typeof RESONANCE_RADIUS === 'number')
+      ? RESONANCE_RADIUS
+      : 1;
+    this._geometry = new THREE.SphereGeometry(radius, 16, 16);
+    this._material = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(color),
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this._mesh = new THREE.Mesh(this._geometry, this._material);
+    this._mesh.position.set(this._centerX, this._centerY, this._centerZ);
+    this._mesh.scale.setScalar(0.2);
+    this._mesh.frustumCulled = false;
+    this.group.add(this._mesh);
+    this._alive = true;
+    return chargeState;
+  }
+
+  /**
+   * Phase 10.13: advance the charge pulse by `dt` seconds. Reads
+   * the per-frame shape from the charge helpers
+   * (`src/resonance/charge.js` `resonancePulseRadius` /
+   * `resonancePulseOpacity`) and applies it to the mesh. When the
+   * charge state transitions back to `idle` the pulse is auto-
+   * disposed.
+   */
+  updateResonanceCharge(dt, chargeState) {
+    if (!this._alive) return;
+    if (!chargeState || typeof chargeState !== 'object') {
+      this.clearResonancePulse();
+      return;
+    }
+    const d = Number.isFinite(dt) && dt > 0 ? dt : 0;
+    // The game loop calls `tickCharge(chargeState, dt)` BEFORE this
+    // method, so `chargeState.state` already reflects the latest
+    // tick. We just read the resulting radius / opacity here.
+    if (chargeState.state === 'idle' || chargeState.state === 'cancelled') {
+      this.clearResonancePulse();
+      this._chargeState = null;
+      return;
+    }
+    this._elapsed += d;
+    // Local imports of the helpers would create a circular dependency
+    // (charge.js imports from constants.js; constants.js doesn't
+    // import anything from the renderer). We import inline here so
+    // the module surface stays clean.
+    // helpers imported at top of file from src/resonance/charge.js
+    const radius = resonancePulseRadius(chargeState);
+    const opacity = resonancePulseOpacity(chargeState);
+    if (!this._mesh || !this._material) {
+      this._alive = false;
+      return;
+    }
+    this._mesh.scale.setScalar(radius);
+    this._material.opacity = opacity;
   }
 
   /**
@@ -1752,6 +1845,24 @@ export class Renderer {
 
   clearResonancePulse() {
     if (this.resonancePulse) this.resonancePulse.clearResonancePulse();
+  }
+
+  // Phase 10.13: §10.13 charge-up wrappers. The renderer is the
+  // owner of the visual; main.js is the dispatcher. The charge
+  // state machine lives in src/resonance/charge.js — the renderer
+  // reads from it to compute the per-frame sphere shape. The
+  // legacy one-shot pulse (`showResonancePulse` / `updateResonancePulse`)
+  // is preserved for back-compat with any caller that hasn't been
+  // updated to the charge-up flow.
+  startResonanceCharge(x, y, z, currentPhase, chargeState) {
+    if (this.resonancePulse) {
+      return this.resonancePulse.startResonanceCharge(x, y, z, currentPhase, chargeState);
+    }
+    return null;
+  }
+
+  updateResonanceCharge(dt, chargeState) {
+    if (this.resonancePulse) this.resonancePulse.updateResonanceCharge(dt, chargeState);
   }
 
   // Phase 2.7: thin wrappers over the AnchorOverlay so main.js has

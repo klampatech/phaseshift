@@ -271,10 +271,12 @@ function check(label, ok, extra = '') {
     `got=${resonateModule.resonateRadius()}`
   );
 
-  // 2) resonateCost() returns 15.
+  // 2) resonateCost() returns 25.
+  // Phase 10.13: the cost moves from 15 -> 25 to compensate for the
+  // preview-then-commit flow. See PHASE_10_BRIEF.md §10.13.
   check(
-    'resonateCost() returns 15',
-    resonateModule.resonateCost() === 15,
+    'resonateCost() returns 25 (Phase 10.13: 15 -> 25)',
+    resonateModule.resonateCost() === 25,
     `got=${resonateModule.resonateCost()}`
   );
 
