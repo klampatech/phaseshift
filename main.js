@@ -23,7 +23,7 @@ import { FUSE_COST, FUSE_HOLD_SECONDS, startFuse, tickFuse, cancelFuse, createFu
 // single source of truth for the per-biome tints; the renderer's
 // skybox shader + the per-frame game-loop tick both delegate to it.
 import { energyTier as energyTierFn } from './src/ui/energy-tier.js';
-import { biomeTint, biomeLabel as biomeLabelFromHelper, biomeFogDensity, lerpBiomeTints, biomeTransitionDuration,
+import { biomeTint, biomeLabel as biomeLabelFromHelper, biomeFogDensity, lerpBiomeTints, biomeTransitionDuration, biomeMultipliers,
   BIOME_TINTS, BIOME_NAMES, BIOME_FOREST, BIOME_CAVES, BIOME_DEEP_VOID, BIOME_RUINS,
   BIOME_DESERT, BIOME_CRYSTAL_CAVERN, BIOME_SKY_RUINS, BIOME_PHASE_NEXUS } from './src/world/biome.js';
 // Phase 3.2: Stabilizer placement cost, search radius, and respawn
@@ -40,7 +40,7 @@ import { COLLAPSE_DURATION, COLLAPSE_BANNER_TEXT, FALLBACK_WARNING_TEXT, COLLAPS
 import { PICKUP_RADIUS as ECHO_PICKUP_RADIUS, ECHO_LORE_LIBRARY, echoLoreForKey, pickupResult as echoPickupResult, echoKey, echoColorForBiome } from './src/collect/echo.js';
 import { PICKUP_RADIUS as AMPLIFIER_PICKUP_RADIUS, resonanceCoreKey, resonanceCoreColorForBiome, pickAmplifierForKey, pickupResult as resonancePickupResult, amplifierApplies } from './src/collect/resonance.js';
 import { AMPLIFIER_SHIFT_REDUCTION, AMPLIFIER_TRANSITIONS, AMPLIFIER_AB, AMPLIFIER_BG, AMPLIFIER_AG, AMPLIFIER_PICKUP_RADIUS as _AMP_R, AMPLIFIER_UNLOCK_TEXT } from './src/core/constants.js';
-import { LOCK_DURATION, LOCK_RADIUS, lockKey, createLock as createLockData, tickLocks as tickLocksPure, isLocked as isLockedPure, lockRegion, createGliderState, startGlider as startGliderPure, tickGlider as tickGliderPure, clearGlider as clearGliderPure } from './src/phase/lock.js';
+import { LOCK_DURATION, LOCK_RADIUS, lockKey, createLock as createLockData, tickLocks as tickLocksPure, isLocked as isLockedPure, lockRegion, createGliderState, startGlider as startGliderPure, tickGlider as tickGliderPure, clearGlider as clearGliderPure, PHASE_GLIDER_SPEED } from './src/phase/lock.js';
 import { TUTORIAL_RADIUS, TUTORIAL_HINT_DURATION, TUTORIAL_TOTAL_DURATION, TUTORIAL_HINT_TEXTS, createTutorialState, startTutorial as startTutorialPure, tickTutorial as tickTutorialPure, clearTutorial as clearTutorialPure, getHint, tutorialPositions, isWithinTutorialRing, clearTutorialAndHide as clearTutorialAndHidePure } from './src/tutorial/tutorial.js';
 import { buildGoalState as buildGoalStatePure, currentAct as currentActPure, nearestMarker as nearestMarkerPure } from './src/progression/goals.js';
 // Phase 3.3: Player inventory (collected Echoes + unlocked
@@ -1498,9 +1498,23 @@ function placeAnchor() {
     }
     return;
   }
+  // Phase 10.6: per-biome anchor lifetime multiplier. Sky Ruins
+  // = 2x, Phase Nexus = 2x, others = 1x. We consult the current
+  // biome from the player's position (the §3.1 deterministic
+  // per-region assignment) and pass the scaled lifetime into
+  // createAnchor. Falls back to anchorLifetime() (10s) on bad
+  // input.
+  let lifetime = anchorLifetime();
+  if (world && typeof world.getBiome === 'function' && physicsManager) {
+    const _pos = physicsManager.getPos();
+    if (_pos && Number.isFinite(_pos.x) && Number.isFinite(_pos.z)) {
+      const _bm = biomeMultipliers(world.getBiome(_pos.x, _pos.z));
+      lifetime = lifetime * _bm.anchorLifetimeMultiplier;
+    }
+  }
   // Idempotent: createAnchor refreshes the lifetime if the cell
   // is already anchored (the §2.7 spec — re-pressing extends the lock).
-  const created = world.createAnchor(result.x, result.y, result.z, result.phase);
+  const created = world.createAnchor(result.x, result.y, result.z, result.phase, lifetime);
   if (!created || !created.ok) {
     if (hud) hud.showNotification('Anchor placement failed', '#ff6644');
     return;
@@ -1510,7 +1524,7 @@ function placeAnchor() {
   if (renderer && typeof renderer.showAnchor === 'function') {
     renderer.showAnchor({
       x: result.x, y: result.y, z: result.z, phase: result.phase,
-      remaining: anchorLifetime(),
+      remaining: lifetime,
     });
   }
   if (hud) {
@@ -2441,6 +2455,17 @@ function tickFovBreathingPerFrame(dt) {
 
 function tickGliderPerFrame(dt) {
   if (!gliderState || !gliderState.gliding) return;
+  // Phase 10.6: apply the per-biome glider speed multiplier.
+  // Deep Void = 2x faster. Phase Nexus = 2x (the "everything"
+  // biome). All other biomes = 1x. We set the speed on the
+  // state object (the §3.5 Glider reads `s.speed` from the
+  // state), so the multiplier only fires while the player is
+  // actually gliding (no per-frame cost when not gliding).
+  if (physicsManager && world && typeof world.getBiome === 'function') {
+    const pos = physicsManager.getPos();
+    const bm = biomeMultipliers(world.getBiome(pos.x, pos.z));
+    gliderState.speed = PHASE_GLIDER_SPEED * bm.gliderSpeedMultiplier;
+  }
   const t = tickGliderPure(gliderState, dt);
   if (t.done) {
     clearGliderPure(gliderState);

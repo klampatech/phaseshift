@@ -833,13 +833,26 @@ export class World {
    * the entry was already present. Returns `{ ok: false, reason }`
    * for invalid input (non-finite coords, out-of-range phase).
    */
-  createAnchor(x, y, z, phase) {
+  /**
+   * Create a new anchor at (x, y, z) in the given phase.
+   * Phase 10.6: optional `lifetime` arg (defaults to
+   * ANCHOR_LIFETIME). The §10.6 per-biome signature mechanic
+   * consults `biomeMultipliers(biomeId).anchorLifetimeMultiplier`
+   * — Sky Ruins = 2x, Phase Nexus = 2x, others = 1x — and
+   * passes the result in here. Defensive: non-finite /
+   * non-positive lifetime values fall back to ANCHOR_LIFETIME
+   * so a bad multiplier can't give the player infinite anchors.
+   */
+  createAnchor(x, y, z, phase, lifetime) {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
       return { ok: false, reason: 'bad-input' };
     }
     if (!Number.isInteger(phase) || phase < PHASE_ALPHA || phase >= PHASE_COUNT) {
       return { ok: false, reason: 'bad-input' };
     }
+    const useLifetime = (typeof lifetime === 'number' && Number.isFinite(lifetime) && lifetime > 0)
+      ? lifetime
+      : ANCHOR_LIFETIME;
     const ix = Math.floor(x);
     const iy = Math.floor(y);
     const iz = Math.floor(z);
@@ -847,7 +860,7 @@ export class World {
     const refreshed = this._anchors.has(key);
     this._anchors.set(key, {
       x: ix, y: iy, z: iz, phase,
-      remaining: ANCHOR_LIFETIME,
+      remaining: useLifetime,
     });
     return { ok: true, refreshed, key };
   }

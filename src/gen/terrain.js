@@ -1,5 +1,6 @@
 import { BLOCK_AIR, BLOCK_STONE, BLOCK_GRASS, BLOCK_DIRT, BLOCK_SAND, BLOCK_WOOD, BLOCK_CRYSTAL, BLOCK_RUNE, BLOCK_OBSIDIAN, BLOCK_VOID, BLOCK_GLASS, BLOCK_IRON, BLOCK_GOLD_ORE, CHUNK_SIZE, CHUNK_HEIGHT, BIOME_FOREST, BIOME_RUINS, BIOME_CAVES, BIOME_DESERT, BIOME_CRYSTAL_CAVERN, BIOME_SKY_RUINS, BIOME_DEEP_VOID, BIOME_PHASE_NEXUS, NOISE_SCALE, NOISE_OCTAVES, NOISE_PERSISTENCE, NOISE_LACUNARITY } from '../core/constants.js';
 import { NoiseGenerator } from './noise.js';
+import { biomeMultipliers } from '../world/biome.js';
 
 // Biome definitions with block preferences per phase
 const BIOME_DATA = {
@@ -10,6 +11,13 @@ const BIOME_DATA = {
     woodChance: 0.08,
     crystalChance: 0.005,
     caveChance: 0.04,
+    // Phase 10.6: Forest = "remembrance" biome — Echoes are
+    // 2x more common. The base 0.0005 chance (when doubled
+    // by biomeMultipliers.echoMultiplier=2.0) becomes 0.001,
+    // matching the BIOME_RUINS rate. The 5-per-biome lore
+    // library (Phase 10.4) is the canonical source of truth
+    // for the lore string; this just controls spawn density.
+    echoChance: 0.0005,
     biomeColor: [0.3, 0.55, 0.3],
   },
   [BIOME_RUINS]: {
@@ -98,6 +106,17 @@ export class TerrainGenerator {
     const scale = NOISE_SCALE;
     const seed = this.noise.seed;
 
+    // Phase 10.6: per-biome signature multipliers bias the
+    // Echo and Resonance Core spawn rates. Forest = 2x Echoes
+    // (the "remembrance" biome), Crystal Cavern = 2x Cores
+    // (the "power" biome), Phase Nexus = 2x both (the
+    // "everything" biome), Desert = 0.5x Echoes (the "lost"
+    // biome). The base rates from BIOME_DATA are the canonical
+    // "1.0" baseline; the multiplier only amplifies / dampens.
+    const sig = biomeMultipliers(biomeId);
+    const echoChanceAdjusted = (biome.echoChance || 0) * sig.echoMultiplier;
+    const resonanceCoreChanceAdjusted = (biome.resonanceCoreChance || 0) * sig.coreMultiplier;
+
     // Collect world objects for this chunk
     const echoes = [];
     const cores = [];
@@ -184,11 +203,14 @@ export class TerrainGenerator {
           }
         }
 
-        // Place Echo collectibles in Ruins biome
-        if (biome.echoChance) {
+        // Place Echo collectibles. Phase 10.6: consult
+        // `echoChanceAdjusted` (Forest=2x, Desert=0.5x, etc.)
+        // so the per-biome signature is reflected in chunk
+        // generation.
+        if (echoChanceAdjusted > 0) {
           const worldY = surfaceY + 1; // Just above surface
           const rand = Math.abs(hash(worldX, worldY, worldZ)) / 2147483647;
-          if (rand < biome.echoChance) {
+          if (rand < echoChanceAdjusted) {
             const loreIdx = (worldX + chunkZ * 7) % loreSnippets.length;
             echoes.push({
               type: 'Echo',
@@ -200,11 +222,14 @@ export class TerrainGenerator {
           }
         }
 
-        // Place Resonance Cores in Crystal Cavern biome
-        if (biome.resonanceCoreChance) {
+        // Place Resonance Cores. Phase 10.6: consult
+        // `resonanceCoreChanceAdjusted` (Crystal Cavern=2x,
+        // Phase Nexus=2x) so the per-biome signature is
+        // reflected in chunk generation.
+        if (resonanceCoreChanceAdjusted > 0) {
           const worldY = CHUNK_HEIGHT * 0.5; // Mid-height in cavern
           const rand = Math.abs(hash(worldX, worldY, worldZ)) / 2147483647;
-          if (rand < biome.resonanceCoreChance) {
+          if (rand < resonanceCoreChanceAdjusted) {
             cores.push({
               type: 'ResonanceCore',
               x: x + chunkX * CHUNK_SIZE,

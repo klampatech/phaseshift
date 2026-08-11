@@ -99,6 +99,117 @@ export function biomeColor(biomeId) {
   return [tint.color[0], tint.color[1], tint.color[2]];
 }
 
+
+// ── Per-biome signature mechanics (Phase 10.6) ─────────────────
+//
+// The brief calls for each biome to have a "signature" mechanic so
+// they don't read as palette swaps. The signature is expressed as
+// a set of multipliers / per-biome constants the gameplay code can
+// consult at runtime:
+//
+//   echoMultiplier            — Echo spawn-rate multiplier (Forest is 2x)
+//   coreMultiplier            — Resonance Core spawn-rate multiplier (Crystal Cavern is 2x)
+//   gliderSpeedMultiplier     — Phase Glider speed multiplier (Deep Void is 2x faster)
+//   anchorLifetimeMultiplier  — Phase Anchor lifetime multiplier (Sky Ruins is 2x longer)
+//   loreIsUnique              — Desert has unique lore (the "lost" biome)
+//   nexusCombinesAll          — Phase Nexus is the "everything" biome
+//
+// The values are 1.0 for biomes without a signature, > 1.0 (or < 1.0)
+// for biomes with a tuning twist. The helper is a pure function
+// (no side effects, no Three.js) so the per-frame Glider / Anchor
+// ticks in main.js can call it cheaply. The terrain generator
+// consults it on chunk load to bias Echo / Core placement.
+//
+// Defensive: out-of-range biome ids return the Forest default
+// (echoMultiplier=1, etc.) so a bad id never spawns infinite
+// Echoes. The desert's `loreIsUnique` flag is the one bit
+// the lore system needs to look up; the others are pure
+// multiplicative tuning.
+const BIOME_SIGNATURES = Object.freeze({
+  [BIOME_FOREST]: Object.freeze({
+    echoMultiplier: 2.0,         // Forest = "remembrance" — Echoes are 2x common
+    coreMultiplier: 1.0,
+    gliderSpeedMultiplier: 1.0,
+    anchorLifetimeMultiplier: 1.0,
+    loreIsUnique: false,
+    nexusCombinesAll: false,
+  }),
+  [BIOME_CAVES]: Object.freeze({
+    echoMultiplier: 1.0,
+    coreMultiplier: 1.0,
+    gliderSpeedMultiplier: 1.0,
+    anchorLifetimeMultiplier: 1.0,
+    loreIsUnique: false,
+    nexusCombinesAll: false,
+  }),
+  [BIOME_DEEP_VOID]: Object.freeze({
+    echoMultiplier: 1.0,
+    coreMultiplier: 1.0,
+    gliderSpeedMultiplier: 2.0,   // Deep Void = Phase Glider is 2x faster
+    anchorLifetimeMultiplier: 1.0,
+    loreIsUnique: false,
+    nexusCombinesAll: false,
+  }),
+  [BIOME_RUINS]: Object.freeze({
+    echoMultiplier: 1.0,
+    coreMultiplier: 1.0,
+    gliderSpeedMultiplier: 1.0,
+    anchorLifetimeMultiplier: 1.0,
+    loreIsUnique: false,
+    nexusCombinesAll: false,
+  }),
+  [BIOME_DESERT]: Object.freeze({
+    echoMultiplier: 0.5,         // Desert = "lost" — Echoes are rarer
+    coreMultiplier: 1.0,
+    gliderSpeedMultiplier: 1.0,
+    anchorLifetimeMultiplier: 1.0,
+    loreIsUnique: true,          // Desert lore is unique
+    nexusCombinesAll: false,
+  }),
+  [BIOME_CRYSTAL_CAVERN]: Object.freeze({
+    echoMultiplier: 1.0,
+    coreMultiplier: 2.0,         // Crystal Cavern = Resonance Cores are 2x common
+    gliderSpeedMultiplier: 1.0,
+    anchorLifetimeMultiplier: 1.0,
+    loreIsUnique: false,
+    nexusCombinesAll: false,
+  }),
+  [BIOME_SKY_RUINS]: Object.freeze({
+    echoMultiplier: 1.0,
+    coreMultiplier: 1.0,
+    gliderSpeedMultiplier: 1.0,
+    anchorLifetimeMultiplier: 2.0, // Sky Ruins = Phase Anchors are 2x longer
+    loreIsUnique: false,
+    nexusCombinesAll: false,
+  }),
+  [BIOME_PHASE_NEXUS]: Object.freeze({
+    // Phase Nexus is the "everything" biome — the brief says
+    // "all of the above apply". We use 2.0 for all multipliers
+    // so the Nexus has every signature combined.
+    echoMultiplier: 2.0,
+    coreMultiplier: 2.0,
+    gliderSpeedMultiplier: 2.0,
+    anchorLifetimeMultiplier: 2.0,
+    loreIsUnique: false,
+    nexusCombinesAll: true,
+  }),
+});
+
+/**
+ * Phase 10.6: per-biome signature multipliers. Returns the
+ * canonical signature object for the given biome id. The
+ * fields are pure multiplicative tuning (or boolean flags
+ * the lore system reads) — gameplay code multiplies its base
+ * value by the relevant field. Defensive: out-of-range
+ * biome ids (NaN, negative, > 8) return the Forest default
+ * (the "1.0" baseline) so a bad id never amplifies Echoes
+ * infinitely.
+ */
+export function biomeMultipliers(biomeId) {
+  if (!isValidBiomeId(biomeId)) return BIOME_SIGNATURES[BIOME_FOREST];
+  return BIOME_SIGNATURES[biomeId];
+}
+
 // ── Transition tween ───────────────────────────────────────────
 
 /**
