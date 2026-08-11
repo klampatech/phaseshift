@@ -1,22 +1,20 @@
 /**
- * Phase 5.1 — Goals and progression (Acts + objective + compass)
+ * Phase 5.1 + 10.5 — Goals and progression (Acts + objective + compass)
  *
- * Pure module. The game has 3 "Acts" (the §5.1 brief's "three Acts"):
+ * Pure module. The game has 4 "Acts" (the §5.1 brief's three Acts +
+ * the §10.5 Convergence finale):
  *   1. Act 1: Find the First Echo — collect your first Echo.
  *   2. Act 2: Reach the Phase Nexus — explore the Phase Nexus biome.
  *   3. Act 3: Master All Phases — collect all 3 amplifiers + visit
  *      all 3 phases + place a Stabilizer.
+ *   4. Act 4: Convergence — collect all 3 amplifiers + place a
+ *      Stabilizer + collect at least 1 Echo + enter the Phase Nexus.
+ *      The Nexus opens a chamber, the final Echo plays, and the
+ *      world gets a permanent visual shimmer.
  *
  * Each Act has a completion predicate + a one-line objective string.
  * The HUD's `setObjective(text, color)` shows the current objective;
  * the compass points to the nearest unfinished objective marker.
- *
- * The §5.1 acceptance is:
- *   - Three "Acts": Find the First Echo, Reach the Phase Nexus,
- *     Master All Phases.
- *   - A persistent HUD objective ("Find the Stabilizer in the
- *     Ruins") shown above the crosshair.
- *   - Compass direction to the nearest Echo / Stabilizer / Core.
  */
 
 // ── Act / Goal definitions ─────────────────────────────────────
@@ -24,11 +22,14 @@
 export const ACT_FIND_FIRST_ECHO = 'act1_find_first_echo';
 export const ACT_REACH_PHASE_NEXUS = 'act2_reach_phase_nexus';
 export const ACT_MASTER_ALL_PHASES = 'act3_master_all_phases';
+// Phase 10.5: Act 4 Convergence finale.
+export const ACT_CONVERGENCE = 'act4_convergence';
 
 export const ACT_ORDER = Object.freeze([
   ACT_FIND_FIRST_ECHO,
   ACT_REACH_PHASE_NEXUS,
   ACT_MASTER_ALL_PHASES,
+  ACT_CONVERGENCE,
 ]);
 
 /** The objective strings (one per act; shown above the crosshair). */
@@ -36,6 +37,8 @@ export const ACT_OBJECTIVES = Object.freeze({
   [ACT_FIND_FIRST_ECHO]: 'Explore the world and collect your first Echo.',
   [ACT_REACH_PHASE_NEXUS]: 'Find the Phase Nexus biome and walk into it.',
   [ACT_MASTER_ALL_PHASES]: 'Unlock all 3 amplifiers. Place a Stabilizer.',
+  // Phase 10.5: Convergence finale objective.
+  [ACT_CONVERGENCE]: 'Convergence complete. The phases remember you.',
 });
 
 /** The completion predicates (run on every goal-state update). */
@@ -51,6 +54,20 @@ export function actCompleted(act, state) {
       const allAmps = ['amplifierAB', 'amplifierBG', 'amplifierAG']
         .every((a) => amps.includes(a));
       return allAmps && (s.stabilizerCount || 0) >= 1;
+    // Phase 10.5: Convergence requires all of Act 3 + at least 1 Echo
+    // + at least 1 Stabilizer + visited the Nexus. The Act 4 unlock
+    // happens when the player walks into the Nexus chamber once
+    // these are all met.
+    case ACT_CONVERGENCE:
+      // Act 3 conditions (all 3 amps + at least 1 Echo).
+      const amps4 = Array.isArray(s.amplifiers) ? s.amplifiers : [];
+      const allAmps4 = ['amplifierAB', 'amplifierBG', 'amplifierAG']
+        .every((a) => amps4.includes(a));
+      return allAmps4
+        && (s.collectedEchoCount || 0) >= 1
+        && (s.stabilizerCount || 0) >= 1
+        && s.hasVisitedPhaseNexus === true
+        && s.convergenceUnlocked === true;
     default:
       return false;
   }
@@ -66,6 +83,11 @@ export function currentAct(state) {
 
 /** Get the current objective string (or "All complete!" if all done). */
 export function currentObjective(state) {
+  // Phase 10.5: once Convergence is complete, show the final
+  // "phases remember you" line instead of the "explore freely" line.
+  if (actCompleted(ACT_CONVERGENCE, state)) {
+    return ACT_OBJECTIVES[ACT_CONVERGENCE];
+  }
   const act = currentAct(state);
   if (!act) return 'All complete — explore freely.';
   return ACT_OBJECTIVES[act] || 'Explore.';
@@ -75,6 +97,7 @@ export function currentObjective(state) {
 export function objectiveColor(state) {
   const act = currentAct(state);
   if (!act) return '#88ff88';
+  if (act === ACT_CONVERGENCE) return '#ddaa44';
   return '#88ccff';
 }
 
@@ -85,6 +108,9 @@ export const TARGET_NEAREST_ECHO = 'nearestEcho';
 export const TARGET_NEAREST_STABILIZER = 'nearestStabilizer';
 export const TARGET_NEAREST_CORE = 'nearestCore';
 export const TARGET_PHASE_NEXUS = 'phaseNexus';
+// Phase 10.5: the compass can also point at the Nexus chamber once
+// the Convergence act is incomplete.
+export const TARGET_NEXUS_CHAMBER = 'nexusChamber';
 
 /** A marker = `{ key: string, x: number, y: number, z: number }`. */
 export function markerKey(x, y, z) {
@@ -145,11 +171,20 @@ export function buildGoalState(playerInventory, world, biomesVisited) {
     stabilizerCount: (typeof w.getStabilizerCount === 'function')
       ? w.getStabilizerCount()
       : 0,
+    // Phase 10.5: surface the nexus-open state so the Act 4
+    // predicate can resolve.
+    nexusOpen: (typeof w.isNexusOpen === 'function')
+      ? w.isNexusOpen()
+      : false,
+    // Phase 10.5: persistence flag for the Convergence completion.
+    convergenceUnlocked: (typeof w.isConvergenceComplete === 'function')
+      ? w.isConvergenceComplete()
+      : false,
   };
 }
 
 export const GOAL_DEFAULTS = Object.freeze({
   acts: ACT_ORDER,
   objectives: ACT_OBJECTIVES,
-  targetKinds: [TARGET_NEAREST_ECHO, TARGET_NEAREST_STABILIZER, TARGET_NEAREST_CORE, TARGET_PHASE_NEXUS],
+  targetKinds: [TARGET_NEAREST_ECHO, TARGET_NEAREST_STABILIZER, TARGET_NEAREST_CORE, TARGET_PHASE_NEXUS, TARGET_NEXUS_CHAMBER],
 });

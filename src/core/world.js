@@ -95,6 +95,13 @@ export class World {
     // win over the per-block phaseSolid mask at isBlockSolid
     // lookup time.
     this._fuseOverrides = new Map();
+    // Phase 10.5: Convergence finale state. The Nexus starts
+    // sealed; opening it requires all of Act 3 + the Nexus visited.
+    // The chamber geometry (5x5x5 cleared stone + wooden floor +
+    // glowing ceiling + the final Echo) is revealed when the
+    // player has all the prerequisites + the nexusOpen flag is set.
+    this._nexusOpen = false;
+    this._convergenceComplete = false;
   }
 
   _globalKey(x, y, z, phase) {
@@ -1104,6 +1111,55 @@ export class World {
    */
   clearFuses() {
     this._fuseOverrides.clear();
+  }
+
+  // ── Phase 10.5: Convergence finale (Nexus chamber) ─────────────
+
+  /**
+   * Open the Nexus chamber. Sets the `_nexusOpen` flag to true.
+   * The flag is read by the renderer's NexusChamberOverlay and
+   * the goals module's `actCompleted(ACT_CONVERGENCE, state)`.
+   * Idempotent.
+   */
+  openNexus() {
+    this._nexusOpen = true;
+    return true;
+  }
+
+  /**
+   * Returns true if the Nexus chamber is open. Used by the
+   * goals module + the renderer.
+   */
+  isNexusOpen() {
+    return this._nexusOpen === true;
+  }
+
+  /**
+   * Mark Convergence complete. Called after the player collects
+   * the final Echo in the Nexus chamber. The flag is read by the
+   * goals module's `actCompleted(ACT_CONVERGENCE, state)` and
+   * triggers the world-shimmer effect.
+   */
+  markConvergenceComplete() {
+    this._convergenceComplete = true;
+    return true;
+  }
+
+  /**
+   * Returns true if Convergence is complete. Used by the goals
+   * module + the renderer.
+   */
+  isConvergenceComplete() {
+    return this._convergenceComplete === true;
+  }
+
+  /**
+   * Reset the Convergence state (used by the New Game+ debug hook).
+   */
+  resetConvergence() {
+    this._nexusOpen = false;
+    this._convergenceComplete = false;
+    return true;
   }
 
   /** Find the nearest stabilizer block to a position */
