@@ -10,7 +10,7 @@
 > - **GitHub Pages:** live at https://klampatech.github.io/phaseshift/ (auto-publishes on every push to `main`).
 > - **Tests:** 24 headless files, 1393 checks (Phase 9 added 57 new checks on top of Phase 8's 1336).
 > - **Build:** `npm run build` produces a 38.19 KB gzipped main entry (well under the 200 KB CI threshold).
-> - **Session goal:** Begin Phase 10 (gameplay-mechanics pass) — start with §10.1 (energy rebalance), then §10.2 (Phase Fuse), §10.3 (collapse penalty), §10.4 (sequenced lore), §10.5 (Nexus finale). See `PHASE_10_BRIEF.md`.
+> - **Session goal:** Phase 10 P0 + P1 gameplay-mechanics pass shipped. §10.1 energy rebalance, §10.2 Phase Fuse (Memory World), §10.3 collapse penalty (Echo loss), §10.4 sequenced 36-Echo narrative, §10.5 Act 4 Convergence + Nexus finale, §10.6 per-biome signature mechanics, §10.7 drop LMB/RMB + UI labels, §10.8 wire up phase erosion, §10.9 energy danger states (HUD throb + audio heartbeat + vignette + 5s Alpha grace). P2 deferred. 281 new headless checks across 9 new test files.
 > - **Last completed (summary):** Phase 9 — Firefox pointer-lock audio fix (§9.2: deferred resume + first-input fallback), edge case hardening (§9.3: PhysicsManager y-clamp, reduced-motion-color-pulse, forceCyclePhase spam guard, collapse dt clamp, World.setBlock GC-safety), Tested-browsers matrix in README, KNOWN_ISSUES Platform section updated, "🟫 Discovered in Phase 9.1" section. 57 new headless checks in `tests/headless/test-phase9.cjs` + Firefox pointer-lock Playwright test in `tests/firefox-pointer-lock.spec.js`. §9.4 performance audit was skipped (no perf complaints from §9.1). **Post-1.0 gameplay-mechanics review** completed; brief at `PHASE_10_BRIEF.md` covers the 14 recommended sub-phases.
 
 ## Current state (snapshot)
@@ -27,7 +27,7 @@
 | Phase 7 — Release prep | ✅ Done (README, KNOWN_ISSUES, CI workflow) |
 | Phase 8 — Polish + community | ✅ Done (`6495145` + `1706a94` — 7 polish items + KNOWN_ISSUES cleanup) |
 | Phase 9 — Bug bash + hardening | ✅ Done (`bdaa540` — Firefox pointer-lock audio fix + edge case hardening + perf audit skipped + docs updates) |
-| Phase 10 — Gameplay mechanics, playability & fun pass | ⏳ Brief ready at `PHASE_10_BRIEF.md`. Start with §10.1 (energy rebalance). |
+| Phase 10 — Gameplay mechanics, playability & fun pass | ✅ Done (commits `0721557`, `fdd63b8`, `71fe52b`, `6adb73f`, `f6b714f`, `206db02`, `02f5def`, `4ec298`, `c7b4723`). P0 §10.1–§10.5 + P1 §10.6, §10.8, §10.9 all shipped. P2 §10.10–§10.14 deferred (Echo Hunter, wrong-phase Echoes, phase shift preview, resonance charge-up, New Game+). 281 new headless checks. |
 | Phase 11+ — Optional platforms/features | ⏳ Pending direction from user (see "Post-1.0 roadmap" section below) |
 
 > The journal-style "What's next" sections further down were written **at the time each phase shipped** and have all been overtaken by later phases. They're kept for historical context but should NOT be read as current guidance — see the Status / Current state sections above.
@@ -35,7 +35,7 @@
 ## Post-1.0 roadmap
 
 - **§9 — Bug bash + hardening** ✅ Done (2026-08-10, commit `bdaa540`). Firefox pointer-lock + audio fix (§9.2: deferred-resume + first-input fallback) + edge case hardening (§9.3: y=0 boundary, GC-d-chunk guards, reduced-motion color pulse, forceCyclePhase spam, collapse dt clamp) + 57 new headless checks + Firefox Playwright test + Tested-browsers matrix in README + KNOWN_ISSUES Platform section updated. See `PHASE_9_BRIEF.md`. §9.4 performance audit was optionally skipped (no perf complaints from §9.1).
-- **§10 — Gameplay mechanics, playability & fun pass** ⏳ Brief ready. 14 sub-phases (§10.1 → §10.14) sequenced P0 → P1 → P2. **P0 (§10.1 → §10.5) is required for the game to be fun:** fix the energy economy (§10.1 — `PHASE_SHIFT_COST` 5 → 15, remove the `dt * 60` regen multiplier, add per-second drain in Beta/Gamma), implement Memory World via Phase Fuse (§10.2 — 3s hold + 30 energy = permanent phase swap, persists across save/load), add a real failure state (Echo loss on collapse, §10.3), sequence the 12 random lore strings into a 30+ Echo narrative (§10.4), give the Phase Nexus a finale with Act 4 Convergence (§10.5). **P1 (§10.6 → §10.9)** makes the game feel good: per-biome signature mechanics, drop LMB/RMB block edit or update the spec, wire up erosion (dead code today), energy danger states. **P2 (§10.10 → §10.14)** makes it addictive: Echo Hunter panel, wrong-phase Echoes, phase shift preview, resonance charge-up, New Game+ mode. **Recommendation:** do P0 in this arc, P1 next, P2 as scope allows. Estimated ~170 new headless checks across §10.1 → §10.14. See `PHASE_10_BRIEF.md`.
+- **§10 — Gameplay mechanics, playability & fun pass** ✅ Done (2026-08-10, 9 commits ending at `c7b4723`). P0 (§10.1 → §10.5) + P1 (§10.6, §10.8, §10.9) shipped. P2 (§10.10 → §10.14) deferred per the brief's "cut P2 if needed" note (Echo Hunter panel, wrong-phase Echoes, phase shift preview, resonance charge-up, New Game+). Highlights: (a) §10.1 — `PHASE_SHIFT_COST` 5 → 15, removed the `dt * 60` regen multiplier, per-second drain in Beta/Gamma; (b) §10.2 — Phase Fuse on F (3s hold, 30 energy) lets the player permanently swap a block's phase presence, persisted across save/load; (c) §10.3 — collapse now costs 1 random Echo (25-energy fallback when no Echoes); (d) §10.4 — 36-Echo biome-sequenced narrative (5 per biome + 1 Nexus final); (e) §10.5 — Act 4 Convergence + Nexus finale chamber + persistent visual change; (f) §10.6 — per-biome signature mechanics (Forest 2× Echoes, Crystal Cavern 2× Cores, Deep Void 2× Glider, Sky Ruins 2× Anchor lifetime, Desert rare Echoes + unique lore, Nexus = all); (g) §10.7 — dropped LMB/RMB block edit (Path A) + fixed UI labels; (h) §10.8 — wired up phase erosion (was dead code) with audio cue + wireframe burst + save/load round-trip; (i) §10.9 — energy danger states (HUD orange throb at <30, audio heartbeat at <15, screen vignette pulse at ≤0, 5s Alpha grace before collapse). 281 new headless checks across 9 new test files. P2 is documented in `PHASE_10_BRIEF.md` and the brief remains the source of truth for §10.10 → §10.14 if revisited.
 - **§11 — Optional platforms:** touch-input layer for mobile (significant scope expansion), Safari < 16 polyfills.
 - **§12 — Optional features:** cloud saves (account system required), modding/scripting API (sandbox + asset pipeline required), achievements/leaderboards (Steam integration), creative mode / level editor (in-game block editor + world export).
 - **§13 — Content expansion:** more biomes, more echoes / lore, enemy AI / hazards (none currently in the spec), expanded soundtrack, weather / day-night cycle.
@@ -48,13 +48,42 @@
 ## TL;DR
 
 - **Repo:** `/home/kyle/Development/phaseshift` (local) ⇄ `klampatech/phaseshift` (remote, public).
-- **Branch:** `main`. **Tip:** `70e894a` — "CI: split into test-gate + deploy so Playwright WebGL failures don't block deploy".
+- **Branch:** `main`. **Tip:** `c7b4723` — "CI: split into test-gate + deploy so Playwright WebGL failures don't block deploy".
 - **Phases 0 through 9 done. 1.0 released.** All §1–§9 of the remediation plan is shipped. The post-1.0 hardening arc (Phase 9) closed with Firefox pointer-lock + audio fix and edge case hardening. Live deployment is auto-published to GitHub Pages on every push to `main`. **Phase 10 is ready to start** — see `PHASE_10_BRIEF.md` for the 14 sub-phases (gameplay mechanics, playability & fun pass). Start with §10.1 (energy rebalance).
 - **Active code path:** `index.html` → `main.js` (root) → `src/core/{world,phase,physics}.js` + `src/{render,ui,input,audio,save}/*`.
 - **Quarantined reference implementation:** orphan `GameEngine` modules — see "Architectural state" below. **Do not import them.**
 - **Headless test infra** at `tests/headless/` (`smoke.cjs`, `test-safeon.cjs`, `test-camera-basis.cjs`, `test-phase12.cjs`, `test-phase13.cjs`, `safeon-unit.html`, `static-server.cjs`, `screenshots/`).
 
 ---
+
+
+## Phase 10 closure — Gameplay mechanics, playability & fun pass (P0 + P1)
+
+**Status:** ✅ P0 (§10.1 → §10.5) + P1 (§10.6, §10.8, §10.9) shipped. §10.7 (drop LMB/RMB) shipped in `fdd63b8` as part of the spec alignment pass. P2 (§10.10 → §10.14) deferred per the brief's "cut P2 if needed" note.
+
+**Why this phase mattered.** The 1.0 build was a solid tech demo of a traversal mechanic but lacked the four things that make a small game *fun*: tension (energy was free), impact (the world was static), stakes (collapse was a slap on the wrist), and a payoff (Act 3 ended in "explore freely"). Phase 10 fixes all four.
+
+**What shipped.**
+
+| § | Title | Highlight |
+|---|---|---|
+| §10.1 | Energy rebalance | `PHASE_SHIFT_COST` 5 → 15; removed the `dt * 60` regen multiplier (a hidden frame-rate-scaling bug); per-second drain in Beta (0.5/s) + Gamma (1.0/s). |
+| §10.2 | Phase Fuse (Memory World) | New F-key mechanic — hold 3s + 30 energy to permanently swap a block's phase presence. Persisted across save/load. Tutorial step added. |
+| §10.3 | Collapse penalty | Collapse now costs 1 random Echo (lore-aware toast). 25-energy fallback when the player has no Echoes. |
+| §10.4 | Sequenced lore | 36-Echo narrative — 5 per biome (Forest, Caves, Ruins, Crystal Cavern, Desert, Deep Void, Sky Ruins) + 1 Nexus final. Per-key lookup replaces the random hash. |
+| §10.5 | Act 4 Convergence | New `ACT_CONVERGENCE` + Nexus-open state. Final Echo plays the "You are the next Architect" line. Persistent visual change on completion. |
+| §10.6 | Per-biome mechanics | Forest 2× Echoes, Crystal Cavern 2× Cores, Deep Void 2× Glider speed, Sky Ruins 2× Anchor lifetime, Desert 0.5× Echoes + unique lore, Phase Nexus = all. |
+| §10.7 | Drop LMB/RMB (Path A) | Block edit removed (the spec said "no building"). Tutorial #3 + #4 replaced. UI labels fixed (F=Phase Fuse, Q=Resonance, E=Phase Lens). |
+| §10.8 | Wire up phase erosion | `World.checkErosion()` was dead code. Now called per-frame; new `ErosionBurstOverlay` (wireframe pulse) + `audioManager.playErosion` (soft crumble) + save/load round-trip. |
+| §10.9 | Energy danger states | New `energyTier(energy)` helper drives the HUD orange throb (<30), 1Hz audio heartbeat (<15), screen vignette pulse (≤0), and 5s Alpha grace before auto-collapse. |
+
+**What was deferred (P2).** §10.10 Echo Hunter panel, §10.11 wrong-phase Echoes (Phase-Lens-findable), §10.12 phase shift preview (0.5s ghost), §10.13 resonance charge-up (0.5s preview + 1.5s commit), §10.14 New Game+ mode (phase-dominance shuffle + ironman flag). The brief remains the source of truth for these if revisited.
+
+**Test count.** 281 new headless checks across 9 new test files: `test-phase10-energy.cjs` (23), `test-phase10-blockedit.cjs` (17), `test-phase10-lore.cjs` (61), `test-phase10-fuse.cjs` (41), `test-phase10-collapse.cjs` (14), `test-phase10-nexus.cjs` (19), `test-phase10-biomes.cjs` (31), `test-phase10-erosion.cjs` (36), `test-phase10-energy-states.cjs` (39).
+
+**Build size.** 41.82 KB gzipped main entry (was 38 KB at 1.0 ship; +3.8 KB for the new mechanics). Well under the 50 KB budget.
+
+**Manual browser pass needed.** The §10.1 + §10.3 + §10.5 changes are the highest-impact. Smoke test in Chrome + Firefox before the next release: shift 6 times in Alpha from full energy, force a collapse (lose an Echo), and trigger the Nexus finale.
 
 ## Sandbox quirks (read this first — they're load-bearing)
 

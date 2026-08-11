@@ -21,6 +21,7 @@ A 3D voxel exploration game where you walk through three **phases** — Alpha, B
 | 7 | README rewrite, KNOWN_ISSUES, GitHub Actions CI | ✅ Done |
 | 8 | Tutorial skip, post-collapse invuln, audio restart, settings reset, compass distance, tutorial re-enter, footstep density | ✅ Done |
 | 9 | Firefox pointer-lock + audio fix, edge case hardening, browser-matrix docs | ✅ Done |
+| 10 | Gameplay mechanics pass (P0 + P1): energy rebalance, Phase Fuse, collapse=Echo loss, 36-Echo lore, Act 4 Convergence, per-biome signatures, phase erosion, energy danger states | ✅ Done (P0+P1); P2 deferred |
 
 Full status with per-phase test counts and commit hashes: **Progress** section in `PROJECT_REMEDIATION_PLAN.md`.
 

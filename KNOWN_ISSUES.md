@@ -44,6 +44,32 @@ _None currently tracked as of the 1.0 release (Phase 8)._ All 🟧 Major and �
 
 ✅ **Fixed in Phase 8.7** (commit `6495145`). New pure module exports `footstepVolumeForDensity(neighborCount)` and `countNeighbors(world, x, y, z)` in `src/audio/footsteps.js`. The footstep tick now reads the neighbor count at footstep time and scales the per-material volume accordingly — denser vegetation / more blocks around the player = louder / softer footsteps per material.
 
+## 🟧 Gameplay mechanics (Phase 10 P2 — deferred)
+
+The following Phase 10 sub-phases were **deferred** per the `PHASE_10_BRIEF.md` "cut P2 if needed" note. P0 (§10.1 → §10.5) and P1 (§10.6, §10.8, §10.9) shipped in commits `0721557` → `c7b4723`; these five P2 items remain in the brief as the source of truth if revisited.
+
+### Echo Hunter panel (Phase 10.10) — deferred
+
+The inventory panel doesn't yet show a dedicated "Echoes" tab with all 30+ Echoes + per-biome breakdown. Players can still see the per-biome counter via `#echo-counter` in the HUD; the full panel would show `[?] The Architect's Dream (Forest 1/5)` slots and a `Forest 3/5 · Ruins 0/5 · …` breakdown. Estimated ~10 headless checks.
+
+### "Wrong phase" Echoes (Phase 10.11) — deferred
+
+There's no `WrongPhaseEcho` block type (1 per biome, 8 total) that's invisible in the wrong phase. Players must use the Phase Lens to find them. The current 36-Echo narrative (§10.4) is dense enough that this is "nice to have" rather than blocking. Estimated ~10 headless checks.
+
+### Phase shift preview (Phase 10.12) — deferred
+
+There's no 0.5s "ghost" of the target phase before the shift commits. The existing 1.5s color pulse (§2.1) covers the visual cue; the spatial preview would be a post-processing pass. Estimated ~10 headless checks.
+
+### Resonance charge-up (Phase 10.13) — deferred
+
+Resonance (Q) still fires the 1.0s sphere pulse without a 0.5s charge-up + cancel path. The current 15-energy cost is a single debit on press; the charge-up would make it a tactical decision (preview + commit-or-cancel). Estimated ~10 headless checks.
+
+### New Game+ mode (Phase 10.14) — deferred
+
+There's no NG+ from the pause menu (randomized phase-dominance per biome) or ironman flag. The 1.0 save blob would need `phaseDominanceSeed` + an ironman bit. Estimated ~15 headless checks.
+
+**Total P2 deferred:** ~55 headless checks. The brief remains the source of truth.
+
 ## 🟦 Platform
 
 ### Mobile (Android / iOS) is not supported
