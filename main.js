@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_STABILIZER, MINIMUM_RESPAWN_ENERGY, FALLBACK_ENERGY_PENALTY, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL, PHASE_SHIFT_COST, EROSION_RADIUS, EROSION_THRESHOLD } from './src/core/constants.js';
+import { CHUNK_SIZE, CHUNK_HEIGHT, BLOCK_AIR, BLOCK_STONE, BLOCK_STABILIZER, MINIMUM_RESPAWN_ENERGY, FALLBACK_ENERGY_PENALTY, PHASE_ALPHA, PHASE_BETA, PHASE_GAMMA, PHASE_COUNT, PHASE_NAMES, WORLD_SEED, BLOCK_PROPERTIES, PHASE_LENS_DRAIN_RATE, SCAN_RADIUS, RESONANCE_RADIUS, RESONANCE_PULSE_DURATION, RESONATE_COST, PLAYER_HEIGHT, FOOTSTEP_INTERVAL, PHASE_SHIFT_COST, EROSION_RADIUS, EROSION_THRESHOLD, ALPHA_GRACE_DURATION } from './src/core/constants.js';
 import { World } from './src/core/world.js';
 import { PhaseManager } from './src/core/phase.js';
 import { PhysicsManager } from './src/core/physics.js';
@@ -22,6 +22,7 @@ import { FUSE_COST, FUSE_HOLD_SECONDS, startFuse, tickFuse, cancelFuse, createFu
 // smooth cross-biome transition tween. The pure module is the
 // single source of truth for the per-biome tints; the renderer's
 // skybox shader + the per-frame game-loop tick both delegate to it.
+import { energyTier as energyTierFn } from './src/ui/energy-tier.js';
 import { biomeTint, biomeLabel as biomeLabelFromHelper, biomeFogDensity, lerpBiomeTints, biomeTransitionDuration,
   BIOME_TINTS, BIOME_NAMES, BIOME_FOREST, BIOME_CAVES, BIOME_DEEP_VOID, BIOME_RUINS,
   BIOME_DESERT, BIOME_CRYSTAL_CAVERN, BIOME_SKY_RUINS, BIOME_PHASE_NEXUS } from './src/world/biome.js';
@@ -132,6 +133,22 @@ let currentBiomeTint = biomeTint(BIOME_FOREST);
 let collapseState = createCollapseState();
 // Phase 8.2: post-collapse invuln window (5s).
 let invulnState = createInvulnState();
+// Phase 10.9: Alpha-grace timer. When the player's energy hits 0
+// in Alpha, this timer counts down from ALPHA_GRACE_DURATION (5s)
+// before forcePhaseCollapse fires. The §10.9 acceptance: "in Alpha
+// the player can tough it out at 0 for 5 seconds (the game trusts
+// you in your home phase)". When the player shifts to Beta/Gamma
+// the grace resets to 0 (the collapse can fire immediately on
+// their next 0-energy tick because they left the safe phase).
+let alphaGraceRemaining = 0;
+// Phase 10.9: heartbeat cadence tracker. The §10.9 brief calls
+// for a "subtle audio heartbeat" at energy < 15 (1Hz cadence).
+// We accumulate dt in this variable and fire playHeartbeat when
+// it crosses HEARTBEAT_INTERVAL. The timer resets on tier exit
+// (energy >= 15) so the heartbeat doesn't fire one last time
+// after the player recharges.
+let heartbeatAccum = 0;
+const HEARTBEAT_INTERVAL = 1.0;
 // Phase 8.6: track whether the player was inside the tutorial ring
 // last frame (for re-trigger edge detection).
 let wasInTutorialRing = false;
@@ -1238,6 +1255,14 @@ function gameLoop(time) {
   // EROSION_THRESHOLD so the visual + audio is sparse.
   tickErosionPerFrame(deltaTime);
 
+  // Phase 10.9: per-frame Energy Danger tick. Drives the screen
+  // vignette pulse, the 1Hz audio heartbeat, and the 5s Alpha
+  // grace + auto-collapse trigger. The HUD's energy-fill throb
+  // class is also applied here (the HUD update uses the same
+  // energyTier helper so the class is in sync with the vignette
+  // + audio).
+  tickEnergyDangerPerFrame(deltaTime);
+
   // Phase 3.1: per-frame biome tick. Mirrors the footstep + anchor
   // pattern — read the player's current biome, detect the change
   // edge, smoothly tween the scene colors toward the target tint.
@@ -1641,6 +1666,85 @@ function tickErosionPerFrame(dt) {
   world.checkErosion(d, pos.x, pos.y, pos.z, currentPhase);
   if (renderer && typeof renderer.updateErosionBursts === 'function') {
     renderer.updateErosionBursts(d);
+  }
+}
+
+// Phase 10.9: per-frame Energy Danger tick. Reads the player's
+// current energy tier ('normal' | 'low' | 'critical' | 'collapse')
+// and drives:
+//   1. The #energy-fill CSS class (the throb animation) — handled
+//      in the HUD update, not here.
+//   2. The body.energy-collapse class (the screen vignette pulse)
+//      — toggled here so the toggle isn't in the DOM-update path
+//      (cheap; only fires on tier change).
+//   3. The audioManager.playHeartbeat() cadence (1Hz in 'critical').
+//   4. The Alpha-grace timer (5s at 0 in Alpha) and the auto-
+//      collapse trigger when the grace expires.
+//
+// Defensive: every external dependency (phaseManager, audioManager,
+// document) is checked for existence before use. The tier is
+// computed once per frame and reused. The heartbeat accumulator
+// is reset on tier exit so the cue doesn't fire on the frame the
+// player recharges past 15.
+function tickEnergyDangerPerFrame(dt) {
+  if (!phaseManager) return;
+  const d = Number.isFinite(dt) && dt > 0 ? dt : 0;
+  if (d === 0) return;
+  const energy = phaseManager.getEnergy();
+  const currentPhase = phaseManager.getCurrentPhase();
+  const tier = energyTierFn(energy);
+
+  // Vignette: toggle the body class on tier change so the CSS
+  // keyframe pulse only runs while the player is in the
+  // 'collapse' tier. Cheap DOM op, runs every frame.
+  if (typeof document !== 'undefined' && document.body) {
+    const cls = 'energy-collapse';
+    const has = document.body.classList.contains(cls);
+    if (tier === 'collapse' && !has) document.body.classList.add(cls);
+    else if (tier !== 'collapse' && has) document.body.classList.remove(cls);
+  }
+
+  // Heartbeat: 1Hz audio thump in the 'critical' tier. The
+  // accumulator is reset on tier exit so the cue stops the
+  // instant the player recharges past 15.
+  if (tier === 'critical') {
+    heartbeatAccum += d;
+    while (heartbeatAccum >= HEARTBEAT_INTERVAL) {
+      heartbeatAccum -= HEARTBEAT_INTERVAL;
+      if (audioManager && typeof audioManager.playHeartbeat === 'function') {
+        audioManager.playHeartbeat();
+      }
+    }
+  } else {
+    heartbeatAccum = 0;
+  }
+
+  // Alpha grace + auto-collapse. In Alpha, the player can hold 0
+  // energy for ALPHA_GRACE_DURATION seconds. We track the grace
+  // via a countdown; when it hits 0 we call forcePhaseCollapse
+  // (which is a no-op if the player is no longer in Alpha, or if
+  // the post-collapse invuln is active).
+  if (tier === 'collapse' && currentPhase === PHASE_ALPHA) {
+    if (alphaGraceRemaining <= 0) {
+      alphaGraceRemaining = ALPHA_GRACE_DURATION;
+    } else {
+      alphaGraceRemaining -= d;
+      if (alphaGraceRemaining <= 0) {
+        // Grace expired — trigger the collapse. forcePhaseCollapse
+        // is a debug hook but it does the right thing in production
+        // too (the function gates on invuln + alpha-skip so it's
+        // safe to call any time).
+        if (typeof forcePhaseCollapse === 'function') {
+          forcePhaseCollapse();
+        }
+        alphaGraceRemaining = 0;
+      }
+    }
+  } else {
+    // Player recharged past 0, or shifted out of Alpha — reset
+    // the grace so the next 0-energy tick in Alpha starts a fresh
+    // 5s window.
+    alphaGraceRemaining = 0;
   }
 }
 

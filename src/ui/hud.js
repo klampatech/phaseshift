@@ -1,4 +1,5 @@
 // HUD rendering (DOM-based, minimal overlay)
+import { energyTier as energyTierFn } from './energy-tier.js';
 import { biomeLabel as biomeLabelFromId } from '../world/biome.js';
 import { MINIMAP_SIZE, MINIMAP_RANGE, buildMinimapSnapshot, markerColor, MARKER_ECHO, MARKER_STABILIZER, MARKER_RESONANCE_CORE, MINIMAP_DEFAULTS } from './minimap.js';
 import { SETTINGS_STORAGE_KEY, DEFAULT_KEYBINDINGS, getSetting, setSetting as setSettingPure } from '../settings/menu.js';
@@ -200,6 +201,16 @@ export class HUD {
       } else {
         energyFill.style.background = phaseColors[phase];
       }
+      // Phase 10.9: apply the energy-tier CSS class so the
+      // energy-fill throb animation fires at the right thresholds.
+      // The tier helper (src/ui/energy-tier.js) is the canonical
+      // source of truth; the HUD just maps tier -> class.
+      // Class names match the keyframes in index.html
+      // (#energy-fill.energy-low + #energy-fill.energy-critical).
+      // The 'normal' tier removes both classes.
+      const _tier = energyTierFn(energy);
+      energyFill.classList.toggle('energy-critical', _tier === 'critical');
+      energyFill.classList.toggle('energy-low', _tier === 'low');
     }
 
     // Fatigue warning (pre-existing in index.html)

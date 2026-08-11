@@ -66,6 +66,54 @@
     #energy-fill {
       height: 100%; width: 100%; background: #4488ff; transition: width 0.3s;
     }
+    /* Phase 10.9: energy-fill throb animation. The HUD adds
+       the 'energy-low' or 'energy-critical' class based on
+       the current energy tier (the §10.9 helper). The throb
+       is a 1.0s orange pulse for 'low' and a 0.5s pulse for
+       'critical'. The keyframes are CPU-cheap (just
+       background-color + opacity). */
+    #energy-fill.energy-low {
+      animation: energy-throb 1.0s ease-in-out infinite;
+    }
+    #energy-fill.energy-critical {
+      animation: energy-throb 0.5s ease-in-out infinite;
+    }
+    @keyframes energy-throb {
+      0%   { background: #ff8844; opacity: 1.0; }
+      50%  { background: #ffaa44; opacity: 0.7; }
+      100% { background: #ff8844; opacity: 1.0; }
+    }
+    /* Phase 10.9: full-screen energy vignette pulse. Driven by
+       the 'energy-collapse' class on the body. The 1Hz pulse
+       is a soft orange (rgba(255, 100, 0, 0.1)) so the player
+       feels the danger without being screamed at. The class
+       is applied by main.js when energy is in the 'collapse'
+       tier. Reduced-motion (the §9.3 setting) disables the
+       pulse via a class on the root. */
+    #energy-vignette {
+      position: fixed; inset: 0;
+      background: rgba(255, 100, 0, 0);
+      pointer-events: none; z-index: 4;
+      mix-blend-mode: multiply;
+      opacity: 0;
+    }
+    body.energy-collapse #energy-vignette {
+      animation: energy-vignette-pulse 1.0s ease-in-out infinite;
+    }
+    @keyframes energy-vignette-pulse {
+      0%   { opacity: 0.0; }
+      50%  { opacity: 0.10; }
+      100% { opacity: 0.0; }
+    }
+    /* Phase 10.9: reduced-motion disables the energy pulse
+       animations. The §9.3 reduced-motion setting adds the
+       'reduced-motion' class to the root; we re-use it here
+       to disable the energy vignette + throb. */
+    body.reduced-motion #energy-vignette,
+    body.reduced-motion #energy-fill.energy-low,
+    body.reduced-motion #energy-fill.energy-critical {
+      animation: none;
+    }
     #energy-text {
       position: absolute; bottom: 35px; left: 20px; color: #88ccff;
       font-family: monospace; font-size: 11px; z-index: 50; pointer-events: none;
@@ -202,6 +250,11 @@
   <div id="hud">
     <div id="phase-collapse-overlay"></div>
     <div id="phase-shift-overlay"></div>
+    <!-- Phase 10.9: full-screen energy vignette (orange pulse at
+         the 'collapse' tier). Sits behind the phase-shift and
+         phase-collapse overlays (z-index 4 < 5/6) so the player
+         still sees the full shift + collapse VFX. -->
+    <div id="energy-vignette"></div>
     <div id="crosshair"></div>
     <div id="phase-indicator"></div>
     <div id="phase-name"></div>

@@ -256,6 +256,13 @@ export const INITIAL_CHUNKS = 1;
 // is energy recovery + the invuln window — the 25-energy penalty
 // is on top of those (deducted from the PhaseManager).
 export const FALLBACK_ENERGY_PENALTY = 25;
+// Phase 10.9: Alpha grace window. The player can "tough it out" at
+// 0 energy in their home phase (Alpha) for this many seconds before
+// the phase collapse triggers. The §10.9 acceptance: "in Alpha the
+// player can tough it out at 0 for 5 seconds (the game trusts you in
+// your home phase)". Mirrors the §8.2 5s post-collapse invuln
+// window — same duration so the two timers feel symmetric.
+export const ALPHA_GRACE_DURATION = 5.0;
 export const MINIMUM_RESPAWN_ENERGY = 30;
 // Phase 3.3: Echo pickup radius (blocks, cubic). The §3.3 acceptance
 // is "walking within 2 blocks of an Echo collects it"; 1.5 gives

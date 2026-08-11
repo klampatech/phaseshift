@@ -352,6 +352,30 @@ export class AudioEngine {
     source.stop(now + 0.12);
   }
 
+  // Phase 10.9: Energy "heartbeat" cue. A low-frequency
+  // thump (50 Hz) that fires when the player is in the
+  // 'critical' energy tier (< 15). The gain is intentionally
+  // subtle (0.18) so it doesn't drown out the rest of the
+  // mix. The main.js game loop calls this once per second
+  // when in the 'critical' tier; the §10.9 "subtle heartbeat"
+  // acceptance is satisfied by the low gain + the 1Hz
+  // cadence.
+  playHeartbeat() {
+    if (!this.initialized) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = 50; // low thump, sub-bass rumble
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0, now);
+    gain.gain.linearRampToValueAtTime(0.18, now + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.30);
+    osc.connect(gain).connect(this.sfxGain);
+    osc.start(now);
+    osc.stop(now + 0.30);
+  }
+
   // Ambient procedural music
   startAmbientMusic(phase) {
     if (!this.initialized) return;
